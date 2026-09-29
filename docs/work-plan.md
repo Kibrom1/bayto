@@ -4,6 +4,8 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M2 are broken down to the task level; M3–M6 stay at deliverable level and get detailed when M2 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
+**Next up:** M1.8 — the `start-team` adaptation (see its note), then the M1.5a doc fix.
+
 ## Timeline
 
 | Milestone | Goal | Rough effort | Depends on |
@@ -53,12 +55,13 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [x] **M1.3** `FileTransport`, backward compatible with the workshop's `$FACTORY_DIR` layout.
 - [x] **M1.4** Conformance tests (port `scripts/tests/crew.py` and `crew-notify.sh`): concurrent `seq`, crash-before-consume redelivery, broadcast consumption, stale attempts, single-fire claims, busy wake-up returns 3, permission rejection.
 - [x] **M1.5** Compatibility check: run the workshop factory on `acp` instead of `handoff` with no behavior change.
+- [ ] **M1.5a** Fix `agent-comms/docs/m1.5-compat-check.md`: it says the bash reference's message-id suffix is "10 chars"; QA traced it to 6 random chars + the shell PID (variable length), because `set -o pipefail` makes the `|| printf "$$"` fallback fire after `head -c 6`. Done when the doc states that and the claim is re-checked against the script.
 
 **Team sandbox**
 
 - [ ] **M1.6** `kits/bayto-team/spec.yaml` (patterns: `chapters/kits/pi`, `chapters/kits/herdr`, `chapters/kits/multi-provider`): installs Claude CLI, Herdr and the `acp` CLI; network allowlist = Anthropic API only for now; credentials proxy-managed.
 - [ ] **M1.7** `envs/team.sbxenv.yaml` template (name arg, cpus, memory, kits, workspace).
-- [ ] **M1.8** (generator done in `acp.roster` + `roles/` catalog; `start-team` adaptation pending) Dynamic roster: generate `team.tsv` (role, harness, provider, model) and per-role briefs from a session roster and the role catalog; adapt the workshop's `start-team` to it, keeping the readiness acks.
+- [ ] **M1.8** (generator done in `acp.roster` + `roles/` catalog; `start-team` adaptation pending) Dynamic roster: generate `team.tsv` (role, harness, provider, model) and per-role briefs from a session roster and the role catalog; adapt the workshop's `start-team` to it, keeping the readiness acks. Lessons from the M1.5 run to build in: a role that never acks is usually stuck on a one-time Claude prompt (fullscreen renderer, "read outside working directories"), so detect `blocked` agents and report them instead of failing with `agent_not_ready`; and re-send the brief when a role hasn't acked, since a prompt sent during startup can be dropped.
 - [ ] **M1.9** (per-seat allow/deny lists generated to `tools.json`; passing them to the Claude sessions pending) Per-role tool permissions: pass allow/deny lists to each Claude session (for example a Researcher without file writes).
 - [ ] **M1.10** `spikes/m1-driver/`: a small Python driver that creates the sandbox with `sbx env create`, starts the team, then runs the floor loop: raise-hand signals from one Haiku call, `assignment` message, `crew-notify`, tail the messages, repeat until convergence, then a moderator summary; removes the sandbox with `sbx env rm`.
 - [ ] **M1.11** Test a read-write host mount for the factory directory (visibility, atomic renames, no NULL-filled files); if it fails, fall back to a sandbox-local factory directory read with `sbx exec`.
