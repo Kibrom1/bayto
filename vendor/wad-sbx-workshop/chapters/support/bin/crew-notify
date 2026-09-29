@@ -35,7 +35,12 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$ROLE" ] || { printf 'usage: crew-notify <role> [--message-id ID] [--text TEXT]\n' >&2; exit 2; }
 
-case "$ROLE" in coordinator|developer|qa) ;; *) printf 'crew-notify: %s is not a promptable role\n' "$ROLE" >&2; exit 2 ;; esac
+ROSTER="${FACTORY_DIR:-$HOME/work/factory}/roster.json"
+if [ -f "$ROSTER" ]; then
+  jq -e --arg r "$ROLE" '.roles | index($r)' "$ROSTER" >/dev/null 2>&1 || { printf 'crew-notify: %s is not a promptable role\n' "$ROLE" >&2; exit 2; }
+else
+  case "$ROLE" in coordinator|developer|qa) ;; *) printf 'crew-notify: %s is not a promptable role\n' "$ROLE" >&2; exit 2 ;; esac
+fi
 
 # Default: notify about the oldest unread message for that role.
 if [ -z "$MSG_ID" ]; then

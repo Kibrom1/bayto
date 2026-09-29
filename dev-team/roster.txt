@@ -1,0 +1,10 @@
+# One seat per line: <role id from roles/> [model]. Order matters: the coordinator is first contact.
+# The default model is claude-sonnet-5. Repeat a role for a second seat (it becomes <role>-2).
+# Each seat is one Claude session in the sandbox; check memory before adding many (work plan M1.12).
+coordinator
+product-owner
+researcher
+architect
+backend-engineer
+qa-tester
+# frontend-engineer
