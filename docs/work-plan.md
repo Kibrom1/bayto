@@ -52,7 +52,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [x] **M1.2** `acp` CLI: send, read, ack, transcript, report, claim, stage (dynamic roles via `--roles`)
 - [x] **M1.3** `FileTransport`, backward compatible with the workshop's `$FACTORY_DIR` layout.
 - [x] **M1.4** Conformance tests (port `scripts/tests/crew.py` and `crew-notify.sh`): concurrent `seq`, crash-before-consume redelivery, broadcast consumption, stale attempts, single-fire claims, busy wake-up returns 3, permission rejection.
-- [x] **M1.5** Compatibility check: run the workshop factory on `acp` instead of `handoff` with no behavior change.
+- [ ] **M1.5** Compatibility check: run the workshop factory on `acp` instead of `handoff` with no behavior change.
 
 **Team sandbox**
 
