@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bayto.dev/schema/acp/report.v1.json",
+  "title": "acp/1 report",
+  "description": "Describes the dict actually returned/persisted by FileTransport.report() / Conversation.report() in agent-comms/src/acp (there is no Pydantic model for Report yet; it is built as a plain dict). This diverges substantially from the Report record in docs/agent-communication-protocol.md's 'Core model and envelope' table (`from`, `status`, `stage`, `output_ref`, `checks[]`, `summary`); see docs/decisions.md (2026-09-29) for the full comparison. It also diverges from the *separate*, non-acp/1 report shape that the legacy handoff_compat.py shim persists to $FACTORY_DIR/reports/ (which is a much closer match to the doc, having been modeled on the workshop's own `handoff report`, predating this file). This schema covers only the acp/1 core-library shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["from", "message_id", "outcome", "checks", "summary", "verified"],
+  "properties": {
+    "from": {
+      "type": "string",
+      "description": "The doc calls this field `from`, consistent with the Envelope's sender field naming."
+    },
+    "message_id": {
+      "type": "string",
+      "description": "The message this report answers. Not in the doc's Report record at all: the doc's report is keyed by convention (current attempt + role), not tied to a specific message_id. Doc has no equivalent field."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["pass", "fail", "blocked"],
+      "description": "The doc calls this field `status` and gives it a much richer, domain-flavoured vocabulary (e.g. implemented, review-pass, review-fail, blocked-access, needs-human, failed, acknowledged -- the same terminal statuses the legacy handoff report and handoff_compat.py use). The acp/1 core library instead hard-codes a generic pass/fail/blocked outcome (see cli.py's `--outcome` choices)."
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" },
+      "description": "A map of check-name -> exit code (e.g. {\"pytest\": 0}). The doc specifies `checks[]`: an array. This schema follows the real implementation (an object), not the doc."
+    },
+    "summary": { "type": "string" },
+    "verified": {
+      "type": "boolean",
+      "description": "True when every value in `checks` is 0 (and, notably, also True when `checks` is empty -- an empty check list is 'verified' by this implementation's `all(...)` logic). Not named or described anywhere in the doc; closest in spirit to the doc's implicit 'checks_passed'."
+    }
+  }
+}
