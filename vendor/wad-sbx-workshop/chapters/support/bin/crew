@@ -11,20 +11,31 @@ base = Path(os.environ.get('FACTORY_DIR', str(Path.home() / 'work/factory')))
 os.environ['FACTORY_DIR'] = str(base)
 bin_dir = Path(__file__).resolve().parent
 
+def roles():
+    # start-team writes roster.json from team.tsv; without it, the workshop's fixed trio.
+    try:
+        return json.loads((base / 'roster.json').read_text())['roles']
+    except (OSError, ValueError, KeyError):
+        return ['coordinator', 'developer', 'qa']
+
+def entry_role():
+    return 'coordinator' if 'coordinator' in roles() else roles()[0]
+
 def run(tool, *args, capture=False):
     return subprocess.run([str(bin_dir / tool), *args], check=True,
                           text=True, stdout=subprocess.PIPE if capture else None)
 
 def ready():
-    print('Waiting for coordinator, developer and QA to acknowledge their roles…', flush=True)
+    print(f"Waiting for {', '.join(roles())} to acknowledge their roles…", flush=True)
     until = time.monotonic() + 180
-    while not all((base / 'ready' / role).exists() for role in ('coordinator', 'developer', 'qa')):
+    while not all((base / 'ready' / role).exists() for role in roles()):
         if time.monotonic() > until:
             raise RuntimeError('A role has not acknowledged. Use crew logs ROLE to inspect its login or model error.')
         time.sleep(1)
 
-def notify(role="coordinator", message_id=None):
+def notify(role=None, message_id=None):
     # Retrying a busy recipient is safe: crew-notify releases its notification claim.
+    role = role or entry_role()
     command = [str(bin_dir / 'crew-notify'), role]
     if message_id is not None:
         command.extend(['--message-id', message_id])
@@ -39,7 +50,8 @@ def notify(role="coordinator", message_id=None):
             raise RuntimeError(p.stderr + f'\nMessage is saved. Inspect crew logs {role} before retrying delivery.')
         time.sleep(2)
 
-def send(kind, body, target='coordinator', sender='human'):
+def send(kind, body, target=None, sender='human'):
+    target = target or entry_role()
     message_id = run('handoff', 'send', '--to', target, '--from', sender, '--kind', kind, '--body', body, capture=True).stdout.strip()
     if target != 'human':
         notify(target, message_id)
@@ -56,11 +68,11 @@ def main():
     command = sys.argv[1] if len(sys.argv) > 1 else 'help'
     if command == 'help':
         print('''crew submit          Give the configured task to the team (once)
-crew ask "question"  Send the coordinator a request
+crew ask "question"  Send the first-contact role (coordinator) a request
 crew watch           Follow readable messages; Ctrl-C returns to this shell
 crew status          Show the stage and messages addressed to you
 crew reply "answer"  Answer the team's product question
-crew logs ROLE       Inspect an assistant's terminal (coordinator/developer/qa)
+crew logs ROLE       Inspect an assistant's terminal (any seat in the team)
 crew deliver         Retry delivery of an already saved message''')
         return
     if not (base / 'state.json').exists():
@@ -72,16 +84,16 @@ crew deliver         Retry delivery of an already saved message''')
         # Only mark submission after storing it. Notification can be retried separately.
         task = json.loads((base / 'state.json').read_text())['task_id']
         body = f'Work on {task}. Read ~/work/PROMPT.md and your role brief. Use the task instructions there.'
-        message_id = run('handoff', 'send', '--to', 'coordinator', '--from', 'human', '--kind', 'assignment', '--body', body, capture=True).stdout.strip()
+        message_id = run('handoff', 'send', '--to', entry_role(), '--from', 'human', '--kind', 'assignment', '--body', body, capture=True).stdout.strip()
         (base / 'submitted').touch()
-        notify(message_id=message_id)
+        notify(entry_role(), message_id)
     elif command in ('ask', 'reply'):
         if len(sys.argv) < 3:
             raise RuntimeError(f'Usage: crew {command} "your message"')
         ready()
         send('decision' if command == 'reply' else 'question', ' '.join(sys.argv[2:]))
     elif command == 'send':
-        if len(sys.argv) < 4 or sys.argv[2] not in ('coordinator', 'developer', 'qa', 'human'):
+        if len(sys.argv) < 4 or sys.argv[2] not in (*roles(), 'human'):
             raise RuntimeError('Usage: crew send ROLE "message"')
         sender = os.environ.get('FACTORY_ROLE', 'human')
         send('note', ' '.join(sys.argv[3:]), target=sys.argv[2], sender=sender)
@@ -102,8 +114,8 @@ crew deliver         Retry delivery of an already saved message''')
         if not notes:
             print('No message for you yet. Use crew watch to follow the conversation.')
     elif command == 'logs':
-        if len(sys.argv) != 3 or sys.argv[2] not in ('coordinator', 'developer', 'qa'):
-            raise RuntimeError('Choose coordinator, developer or qa.')
+        if len(sys.argv) != 3 or sys.argv[2] not in roles():
+            raise RuntimeError(f"Choose one of: {', '.join(roles())}.")
         subprocess.run(['herdr', 'agent', 'read', sys.argv[2], '--source', 'visible'], check=True)
     else:
         raise RuntimeError('Unknown command. Use crew help.')

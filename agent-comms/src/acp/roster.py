@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 DEFAULT_MODEL = "claude-haiku"
+COMMS = ("acp", "crew")
 
 
 class RosterError(ValueError):
@@ -36,8 +37,15 @@ def _seat_ids(entries: list[dict]) -> list[str]:
 
 
 def build_team(entries: list[dict], catalog: dict[str, dict], out_dir: str | Path, topic: str = "",
-               default_model: str = DEFAULT_MODEL, conversation: str = "task") -> dict[str, Any]:
-    """entries: [{"role": id, "model": optional, "harness": optional, "provider": optional}, ...]"""
+               default_model: str = DEFAULT_MODEL, conversation: str = "task", comms: str = "acp",
+               extra: str = "") -> dict[str, Any]:
+    """entries: [{"role": id, "model": optional, "harness": optional, "provider": optional}, ...]
+
+    comms: "acp" briefs use the `acp` CLI; "crew" briefs use the workshop-style `handoff read` / `crew send`
+    commands that a team sandbox provides. extra: project rules appended to every brief.
+    """
+    if comms not in COMMS:
+        raise RosterError(f"unknown comms {comms!r}; known: {list(COMMS)}")
     if not entries:
         raise RosterError("roster is empty")
     for e in entries:
@@ -60,11 +68,19 @@ def build_team(entries: list[dict], catalog: dict[str, dict], out_dir: str | Pat
                       for s, e in zip(seats, entries))
     for seat, e in zip(seats, entries):
         role = catalog[e["role"]]
+        if comms == "crew":
+            talk = (f"Read with `handoff read {seat} --json`, reply with `crew send ROLE \"text\"` (ROLE is a seat above or "
+                    f"`human`; it stores the message and wakes the recipient). After sending, end your turn; never poll. "
+                    f"{'' if 'Bash' in role['tools']['allow'] else 'Bash is off limits except for `handoff` and `crew` commands.'}\n")
+        else:
+            talk = (f"Read with `acp read`, reply with `acp send --to ROLE --kind KIND \"text\"` "
+                    f"(you may send: {', '.join(role['may_send'])}). After sending, end your turn; never poll.\n")
         text = (f"{role['_brief_text'].rstrip()}\n\n## Your seat\nYou are `{seat}`. Task: {topic or '(sent by the human)'}\n\n"
                 f"## The team\n{table}\n- `human` — the person who owns the task; the only one who sends `decision`.\n\n"
-                f"## How to talk\nRead with `acp read`, reply with `acp send --to ROLE --kind KIND \"text\"` "
-                f"(you may send: {', '.join(role['may_send'])}). After sending, end your turn; never poll.\n"
+                f"## How to talk\n{talk}"
                 f"Tools you may use: {', '.join(role['tools']['allow'])}. Denied: {', '.join(role['tools']['deny']) or 'none'}.\n")
+        if extra.strip():
+            text += f"\n## Project rules\n{extra.strip()}\n"
         (out / "roles" / f"{seat}.md").write_text(text)
 
     (out / "tools.json").write_text(json.dumps(tools, indent=2))

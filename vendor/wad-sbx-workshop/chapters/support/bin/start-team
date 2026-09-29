@@ -7,6 +7,9 @@ source chapter.env
 [ ! -f "$FACTORY_DIR/team-started" ] || { echo 'Team already started: herdr agent list'; exit 0; }
 nohup herdr server > "$FACTORY_DIR/evidence/herdr.log" 2>&1 &
 for _ in $(seq 1 40); do herdr workspace list >/dev/null 2>&1 && break; sleep 0.5; done
+# Seats come from team.tsv; handoff, crew and crew-notify read them from roster.json.
+mkdir -p "$FACTORY_DIR"
+awk 'NF { print $1 }' team.tsv | jq -Rn '{conversation: "task", roles: [inputs]}' > "$FACTORY_DIR/roster.json"
 handoff init --run "$(hostname)" --task "$TASK"
 mkdir -p "$FACTORY_DIR/ready"
 ws=''

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # HOST: launch the Bayto build team in a sandbox with THIS repo mounted read-write.
-# Usage: dev-team/run.sh <sandbox-name>     e.g. dev-team/run.sh bayto-dev
+# Usage: [ROSTER=file] dev-team/run.sh <sandbox-name>     e.g. dev-team/run.sh bayto-dev
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
@@ -11,10 +11,15 @@ build="$here/.build"
 rm -rf "$build"; mkdir -p "$build"
 tar -C "$src" --exclude=.local -cf - . | tar -C "$build" -xf -
 ln -s "$src/.local" "$build/.local"
-cp "$here/roles/"*.md "$build/chapters/support/roles/"
+# Seats and briefs come from dev-team/roster.txt + the roles/ catalog, not the workshop's fixed coordinator/developer/qa.
+command -v uv >/dev/null || { echo "uv is required (https://docs.astral.sh/uv/)"; exit 2; }
+gen="$build/generated"
+uv run --no-project --quiet --with pyyaml --with pydantic "$here/build-roster.py" "$gen" "${ROSTER:-$here/roster.txt}"
+rm -f "$build/chapters/support/roles/"*.md
+cp "$gen/roles/"*.md "$build/chapters/support/roles/"
 install -m 0755 "$repo/agent-comms/src/acp/handoff_compat.py" "$build/chapters/support/bin/handoff"
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
-cp "$here/team.tsv" "$build/factory/team.tsv"
+cp "$gen/team.tsv" "$build/factory/team.tsv"
 printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=shell\n' > "$build/factory/chapter.env"
 # Claude-only, no Pi kit, no ACR kit; no ports.
 cat > "$build/factory/sbxenv.yaml" <<'YML'
@@ -35,5 +40,5 @@ kits:
   - source: ../chapters/kits/herdr
 YML
 git -C "$repo" switch main >/dev/null 2>&1 || true
-echo "Mounting $repo read-write. Agents commit to sbx/<task> branches; push from the host with scripts/push-sbx-branches.sh"
+echo "Mounting $repo read-write. Engineers commit to sbx/<task> branches, push them and open PRs (GitHub secret needed, see dev-team/README.md)"
 exec "$build/scripts/launch-factory.sh" "$name" "$repo"

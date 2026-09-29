@@ -39,7 +39,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-VALID_ROLES = ["coordinator", "developer", "qa", "human", "supervisor"]
+DEFAULT_ROLES = ["coordinator", "developer", "qa"]
+ALWAYS_ROLES = ["human", "supervisor"]
 VALID_KINDS = [
     "assignment", "question", "answer", "review-request", "review-result",
     "report", "decision-request", "decision", "resume", "note",
@@ -108,6 +109,14 @@ class Factory:
     def from_env(cls) -> "Factory":
         root = Path(os.environ.get("FACTORY_DIR", str(Path.home() / "work" / "factory")))
         return cls(root)
+
+    def roles(self) -> list[str]:
+        """Seats from $FACTORY_DIR/roster.json (written by start-team from team.tsv), else the workshop trio."""
+        try:
+            seats = json.loads((self.root / "roster.json").read_text())["roles"]
+        except (OSError, ValueError, KeyError, TypeError):
+            seats = DEFAULT_ROLES
+        return list(seats) + ALWAYS_ROLES
 
     def require_init(self) -> None:
         if not self.state_file.exists():
@@ -180,7 +189,7 @@ def cmd_init(fac: Factory, args: list[str]) -> int:
     for d in (fac.messages, fac.reports, fac.claims, fac.root / "decisions",
               fac.root / "task", fac.root / "evidence"):
         d.mkdir(parents=True, exist_ok=True)
-    for role in VALID_ROLES:
+    for role in fac.roles():
         (fac.consumed / role).mkdir(parents=True, exist_ok=True)
 
     if fac.state_file.exists():
@@ -228,10 +237,10 @@ def cmd_send(fac: Factory, args: list[str]) -> int:
         else:
             raise Die(f"send: unexpected argument {a}")
 
-    if not in_list(to, VALID_ROLES):
-        raise Die(f"send: --to must be one of: {' '.join(VALID_ROLES)}")
-    if not in_list(frm, VALID_ROLES):
-        raise Die(f"send: --from must be one of: {' '.join(VALID_ROLES)}")
+    if not in_list(to, fac.roles()):
+        raise Die(f"send: --to must be one of: {' '.join(fac.roles())}")
+    if not in_list(frm, fac.roles()):
+        raise Die(f"send: --from must be one of: {' '.join(fac.roles())}")
     if not in_list(kind, VALID_KINDS):
         raise Die(f"send: --kind must be one of: {' '.join(VALID_KINDS)}")
     if body_file:
@@ -300,11 +309,11 @@ def _print_messages(paths: list[Path]) -> None:
         print()
 
 
-def _parse_role_kind_json(args: list[str], cmd: str) -> tuple[str, str, bool]:
+def _parse_role_kind_json(fac: Factory, args: list[str], cmd: str) -> tuple[str, str, bool]:
     if not args or args[0].startswith("--"):
         raise Die(f"{cmd}: ROLE is required")
     role = args[0]
-    if not in_list(role, VALID_ROLES):
+    if not in_list(role, fac.roles()):
         raise Die(f"{cmd}: unknown role {role}")
     kind = ""
     as_json = False
@@ -322,7 +331,7 @@ def _parse_role_kind_json(args: list[str], cmd: str) -> tuple[str, str, bool]:
 
 def cmd_inbox(fac: Factory, args: list[str]) -> int:
     fac.require_init()
-    role, kind, as_json = _parse_role_kind_json(args, "inbox")
+    role, kind, as_json = _parse_role_kind_json(fac, args, "inbox")
     paths = _inbox_paths(fac, role, kind)
     if as_json:
         print(json.dumps([json.loads(p.read_text()) for p in paths], indent=2))
@@ -333,7 +342,7 @@ def cmd_inbox(fac: Factory, args: list[str]) -> int:
 
 def cmd_read(fac: Factory, args: list[str]) -> int:
     fac.require_init()
-    role, kind, as_json = _parse_role_kind_json(args, "read")
+    role, kind, as_json = _parse_role_kind_json(fac, args, "read")
     paths = _inbox_paths(fac, role, kind)
     if as_json:
         print(json.dumps([json.loads(p.read_text()) for p in paths], indent=2))
@@ -354,7 +363,7 @@ def cmd_ack(fac: Factory, args: list[str]) -> int:
     if len(args) < 2:
         raise Die("ack: ROLE and MESSAGE_ID are required")
     role, msg_id = args[0], args[1]
-    if not in_list(role, VALID_ROLES):
+    if not in_list(role, fac.roles()):
         raise Die(f"ack: unknown role {role}")
     d = fac.consumed / role
     d.mkdir(parents=True, exist_ok=True)
@@ -427,8 +436,8 @@ def cmd_report(fac: Factory, args: list[str]) -> int:
         else:
             raise Die(f"report: unexpected argument {a}")
 
-    if not in_list(frm, VALID_ROLES):
-        raise Die(f"report: --from must be one of: {' '.join(VALID_ROLES)}")
+    if not in_list(frm, fac.roles()):
+        raise Die(f"report: --from must be one of: {' '.join(fac.roles())}")
     if not in_list(status, VALID_STATUS):
         raise Die(f"report: --status must be one of: {' '.join(VALID_STATUS)}")
     if not attempt:
