@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Small human interface to the workshop's file messages and Herdr sessions."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+base = Path(os.environ.get('FACTORY_DIR', str(Path.home() / 'work/factory')))
+os.environ['FACTORY_DIR'] = str(base)
+bin_dir = Path(__file__).resolve().parent
+
+def run(tool, *args, capture=False):
+    return subprocess.run([str(bin_dir / tool), *args], check=True,
+                          text=True, stdout=subprocess.PIPE if capture else None)
+
+def ready():
+    print('Waiting for coordinator, developer and QA to acknowledge their roles…', flush=True)
+    until = time.monotonic() + 180
+    while not all((base / 'ready' / role).exists() for role in ('coordinator', 'developer', 'qa')):
+        if time.monotonic() > until:
+            raise RuntimeError('A role has not acknowledged. Use crew logs ROLE to inspect its login or model error.')
+        time.sleep(1)
+
+def notify(role="coordinator", message_id=None):
+    # Retrying a busy recipient is safe: crew-notify releases its notification claim.
+    command = [str(bin_dir / 'crew-notify'), role]
+    if message_id is not None:
+        command.extend(['--message-id', message_id])
+    until = time.monotonic() + 120
+    while True:
+        p = subprocess.run(command, text=True, capture_output=True)
+        if p.returncode in (0, 9):
+            print('Message delivered.' if os.environ.get('FACTORY_ROLE') else
+                  'Message delivered. Use crew watch to follow the team.')
+            return
+        if p.returncode != 3 or time.monotonic() > until:
+            raise RuntimeError(p.stderr + f'\nMessage is saved. Inspect crew logs {role} before retrying delivery.')
+        time.sleep(2)
+
+def send(kind, body, target='coordinator', sender='human'):
+    message_id = run('handoff', 'send', '--to', target, '--from', sender, '--kind', kind, '--body', body, capture=True).stdout.strip()
+    if target != 'human':
+        notify(target, message_id)
+
+def messages(seen):
+    for path in sorted((base / 'messages').glob('*.json')):
+        if path.name in seen:
+            continue
+        data = json.loads(path.read_text())
+        print(f"\n{data['from']} → {data['to']} ({data['kind']})\n{data['body']}", flush=True)
+        seen.add(path.name)
+
+def main():
+    command = sys.argv[1] if len(sys.argv) > 1 else 'help'
+    if command == 'help':
+        print('''crew submit          Give the configured task to the team (once)
+crew ask "question"  Send the coordinator a request
+crew watch           Follow readable messages; Ctrl-C returns to this shell
+crew status          Show the stage and messages addressed to you
+crew reply "answer"  Answer the team's product question
+crew logs ROLE       Inspect an assistant's terminal (coordinator/developer/qa)
+crew deliver         Retry delivery of an already saved message''')
+        return
+    if not (base / 'state.json').exists():
+        raise RuntimeError('Start the team first with start-team.')
+    if command == 'submit':
+        ready()
+        if (base / 'submitted').exists():
+            raise RuntimeError('Task already submitted. Use crew watch, or crew ask for a follow-up.')
+        # Only mark submission after storing it. Notification can be retried separately.
+        task = json.loads((base / 'state.json').read_text())['task_id']
+        body = f'Work on {task}. Read ~/work/PROMPT.md and your role brief. Use the task instructions there.'
+        message_id = run('handoff', 'send', '--to', 'coordinator', '--from', 'human', '--kind', 'assignment', '--body', body, capture=True).stdout.strip()
+        (base / 'submitted').touch()
+        notify(message_id=message_id)
+    elif command in ('ask', 'reply'):
+        if len(sys.argv) < 3:
+            raise RuntimeError(f'Usage: crew {command} "your message"')
+        ready()
+        send('decision' if command == 'reply' else 'question', ' '.join(sys.argv[2:]))
+    elif command == 'send':
+        if len(sys.argv) < 4 or sys.argv[2] not in ('coordinator', 'developer', 'qa', 'human'):
+            raise RuntimeError('Usage: crew send ROLE "message"')
+        sender = os.environ.get('FACTORY_ROLE', 'human')
+        send('note', ' '.join(sys.argv[3:]), target=sys.argv[2], sender=sender)
+    elif command == 'deliver':
+        notify()
+    elif command == 'watch':
+        print('Team messages (Ctrl-C returns to the shell; agents keep working).', flush=True)
+        seen = set()
+        while True:
+            messages(seen)
+            time.sleep(1)
+    elif command == 'status':
+        state = json.loads((base / 'state.json').read_text())
+        print(f"Task: {state.get('task_id')}   Stage: {state.get('stage')}")
+        notes = json.loads(run('handoff', 'inbox', 'human', '--json', capture=True).stdout)
+        for note in notes:
+            print(f"\n{note['from']}: {note['body']}")
+        if not notes:
+            print('No message for you yet. Use crew watch to follow the conversation.')
+    elif command == 'logs':
+        if len(sys.argv) != 3 or sys.argv[2] not in ('coordinator', 'developer', 'qa'):
+            raise RuntimeError('Choose coordinator, developer or qa.')
+        subprocess.run(['herdr', 'agent', 'read', sys.argv[2], '--source', 'visible'], check=True)
+    else:
+        raise RuntimeError('Unknown command. Use crew help.')
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print('\nBack to your sandbox shell.')
+    except (RuntimeError, subprocess.CalledProcessError, OSError, KeyError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        sys.exit(1)

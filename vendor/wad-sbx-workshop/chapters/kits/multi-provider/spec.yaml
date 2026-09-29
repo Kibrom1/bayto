@@ -1,0 +1,232 @@
+# Credential declarations and harness seed setup ported from Herdr's crew kit.
+# OAuth declarations require a sandbox kit; SBX forbids them in mixins.
+schemaVersion: "2"
+kind: sandbox
+name: wad-multi-provider
+description: Workshop Claude, Codex and Pi crew using host-side SBX credentials.
+args:
+  google_secret_service:
+    default: google
+    description: Existing SBX secret service for Google API access (google, or legacy gemini)
+    pattern: '^(gemini|google)$'
+  codex_version:
+    default: "0.154.0"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+sandbox:
+  image: docker/sandbox-templates:claude-code-docker
+  entrypoint: [bash, -l]
+credentials:
+  # Credential bindings ported from Herdr dd4e3770, kits/herdr-crew/spec.yaml.
+  # proxyManaged keys mean the real secret never enters the VM; the oauth
+  # blocks let the proxy intercept subscription logins (Claude Pro/Max,
+  # ChatGPT Plus/Pro) at the token endpoint, keep real tokens host-side, and
+  # substitute sentinels in the sandbox. SBX selects the available auth mode;
+  # the setup below follows SBX_CRED_<SERVICE>_MODE.
+  # NOTE: anthropic/openai deliberately do NOT set proxyManaged (matching the
+  # official kits): a sentinel in ANTHROPIC_API_KEY/OPENAI_API_KEY would force
+  # the CLIs down the API-key path even in OAuth mode, sending the literal
+  # sentinel upstream ("Invalid API key"). API-key mode is handled by the
+  # seeded settings/auth files gated on SBX_CRED_<SERVICE>_MODE instead.
+  # gemini keeps proxyManaged because pi requires the env var to be present
+  # before it attempts a Google request.
+  - service: anthropic
+    apiKey:
+      name: ANTHROPIC_API_KEY
+      inject:
+        - domain: api.anthropic.com
+          header: x-api-key
+          format: "%s"
+        - domain: claude.ai
+          header: x-api-key
+          format: "%s"
+        - domain: console.anthropic.com
+          header: x-api-key
+          format: "%s"
+    oauth:
+      tokenEndpoint:
+        host: platform.claude.com
+        path: /v1/oauth/token
+      sentinels:
+        accessToken: sk-ant-oat01-proxy-managed
+        refreshToken: sk-ant-ort01-proxy-managed
+      credentialFile:
+        path: "~/.claude/.credentials.json"
+        template: '{"claudeAiOauth":{"accessToken":"{{.AccessToken}}","refreshToken":"{{.RefreshToken}}","expiresAt":{{.ExpiresAt}},"scopes":{{.ScopesJSON}}}{{if .PrimaryApiKey}},"primaryApiKey":"{{.PrimaryApiKey}}"{{end}}}'
+      skipIfEnv:
+        - ANTHROPIC_API_KEY
+  - service: openai
+    apiKey:
+      name: OPENAI_API_KEY
+      inject:
+        - domain: api.openai.com
+          header: Authorization
+          format: Bearer %s
+        - domain: openai.com
+          header: Authorization
+          format: Bearer %s
+    oauth:
+      tokenEndpoint:
+        host: auth.openai.com
+        path: /oauth/token
+      resourceHosts:
+        - chatgpt.com
+      sentinels:
+        accessToken: oai-oat01-proxy-managed
+        refreshToken: oai-ort01-proxy-managed
+      skipIfEnv:
+        - OPENAI_API_KEY
+  - service: "${{ kit.args.google_secret_service }}"
+    required: true
+    apiKey:
+      name: GEMINI_API_KEY
+      proxyManaged: true
+      inject:
+        - domain: generativelanguage.googleapis.com
+          header: x-goog-api-key
+          format: "%s"
+
+permissions:
+  network:
+    allow:
+      # Model APIs (must match every credential injection domain above).
+      - api.anthropic.com
+      - statsig.anthropic.com
+      - claude.ai
+      - console.anthropic.com
+      - platform.claude.com
+      - downloads.claude.ai
+      - claude.com
+      - code.claude.com
+      - api.openai.com
+      - openai.com
+      - auth.openai.com
+      - chatgpt.com
+      - files.openai.com
+      - codeload.github.com
+      - generativelanguage.googleapis.com
+      # Source and packages for the actual task work.
+      - github.com
+      - api.github.com
+      - raw.githubusercontent.com
+      - objects.githubusercontent.com
+      - release-assets.githubusercontent.com
+      - registry.npmjs.org
+      # apt sources shipped in the shell-docker base (amd64 + arm64 + docker).
+      - archive.ubuntu.com
+      - security.ubuntu.com
+      - ports.ubuntu.com
+      - download.docker.com
+
+environment:
+  variables:
+    IS_SANDBOX: "1"
+    GIT_TERMINAL_PROMPT: "0"
+setup:
+  install:
+    - user: agent
+      description: Install the pinned Codex CLI without host Docker
+      command: |
+        set -eu
+        mkdir -p "$HOME/.local/bin"
+        npm install --prefix "$HOME/.local/share/wad-codex" --no-audit --fund=false "@openai/codex@${{ kit.args.codex_version }}"
+        ln -sf "$HOME/.local/share/wad-codex/node_modules/.bin/codex" "$HOME/.local/bin/codex"
+        codex --version
+    - command: |
+        set -e
+        ws="${WORKSPACE_DIR:-/}"
+        esc=$(printf '%s' "$ws" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g')
+        projects="\"/\": { \"hasTrustDialogAccepted\": true }"
+        [ "$ws" = "/" ] || projects="$projects, \"$esc\": { \"hasTrustDialogAccepted\": true }"
+        printf '%s\n' "{
+          \"bypassPermissionsModeAccepted\": true,
+          \"hasCompletedOnboarding\": true,
+          \"projects\": { $projects }
+        }" > /home/agent/.claude.json
+        chown agent:agent /home/agent/.claude.json
+      user: "0"
+      description: Seed Claude bypass/trust flags
+    - command: |
+        set -e
+        mkdir -p /home/agent/.claude
+        HELPER=''
+        if [ "${SBX_CRED_ANTHROPIC_MODE:-none}" != none ]; then
+          HELPER='  "apiKeyHelper": "echo proxy-managed",
+        '
+        fi
+        printf '%s' "{
+          \"themeId\": 1,
+          \"alwaysThinkingEnabled\": true,
+        ${HELPER}  \"permissions\": { \"defaultMode\": \"bypassPermissions\" },
+          \"bypassPermissionsModeAccepted\": true,
+          \"skipDangerousModePermissionPrompt\": true
+        }
+        " > /home/agent/.claude/settings.json
+      user: "agent"
+      description: Seed Claude settings.json from SBX_CRED_ANTHROPIC_MODE
+    - command: |
+        set -e
+        mkdir -p /home/agent/.codex
+        MODE="${SBX_CRED_OPENAI_MODE:-none}"
+        cat > /home/agent/.codex/config.toml << 'EOF'
+        approval_policy = "never"
+        sandbox_mode = "danger-full-access"
+        mcp_oauth_credentials_store = "file"
+        EOF
+        case "$MODE" in
+          oauth|apikey)
+            cat >> /home/agent/.codex/config.toml << 'EOF'
+        forced_login_method = "api"
+        EOF
+            ;;
+        esac
+        if [ "$MODE" = oauth ]; then
+          cat >> /home/agent/.codex/config.toml << 'EOF'
+        model_provider = "sandboxd"
+        [model_providers.sandboxd]
+        name = "Sandbox Proxy"
+        base_url = "https://chatgpt.com/backend-api/codex"
+        experimental_bearer_token = "oai-oat01-proxy-managed"
+        requires_openai_auth = false
+        EOF
+        fi
+        case "$MODE" in
+          oauth|apikey)
+            cat > /home/agent/.codex/auth.json << 'EOF'
+        {
+          "OPENAI_API_KEY": "proxy-managed"
+        }
+        EOF
+            ;;
+          *)
+            rm -f /home/agent/.codex/auth.json
+            ;;
+        esac
+      user: "agent"
+      description: Seed Codex config/auth from SBX_CRED_OPENAI_MODE
+
+    - user: agent
+      description: Connect Claude to the SBX MCP gateway when one is attached
+      command: |
+        set -eu
+        [ -n "${MCP_GATEWAY_URL:-}" ] || exit 0
+        node -e '
+          const fs = require("fs"), file = process.env.HOME + "/.claude.json";
+          const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+          config.mcpServers = {...config.mcpServers, "mcp-gateway": {type: "http", url: process.env.MCP_GATEWAY_URL}};
+          fs.writeFileSync(file, JSON.stringify(config, null, 2));
+        '
+  startup:
+    - user: agent
+      description: Connect Claude to the SBX MCP gateway when one is attached
+      command:
+        - sh
+        - -c
+        - |
+            set -eu
+            [ -n "${MCP_GATEWAY_URL:-}" ] || exit 0
+            node -e '
+              const fs = require("fs"), file = process.env.HOME + "/.claude.json";
+              const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+              config.mcpServers = {...config.mcpServers, "mcp-gateway": {type: "http", url: process.env.MCP_GATEWAY_URL}};
+              fs.writeFileSync(file, JSON.stringify(config, null, 2));
+            '

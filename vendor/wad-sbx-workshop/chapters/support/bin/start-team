@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# SANDBOX: start Herdr sessions and initialize role briefs; humans submit work afterward.
+set -euo pipefail
+export WORKSPACE_DIR="$HOME/work" FACTORY_DIR="$HOME/work/factory" PATH="$HOME/work/bin:$PATH"
+cd "$WORKSPACE_DIR"
+source chapter.env
+[ ! -f "$FACTORY_DIR/team-started" ] || { echo 'Team already started: herdr agent list'; exit 0; }
+nohup herdr server > "$FACTORY_DIR/evidence/herdr.log" 2>&1 &
+for _ in $(seq 1 40); do herdr workspace list >/dev/null 2>&1 && break; sleep 0.5; done
+handoff init --run "$(hostname)" --task "$TASK"
+mkdir -p "$FACTORY_DIR/ready"
+ws=''
+while read -r role harness provider model; do
+  [ -n "$role" ] || continue
+  [ -n "$model" ] || { echo "Each team row needs role, assistant, provider and model" >&2; exit 2; }
+  args=(--model "$model")
+  vars=(--env GH_TOKEN= --env GITHUB_TOKEN= --env "PATH=$PATH" --env "FACTORY_DIR=$FACTORY_DIR" --env "WORKSPACE_DIR=$WORKSPACE_DIR" --env "FACTORY_ROLE=$role")
+  if [ "$harness" = pi ]; then
+    args=(--provider "$provider" --model "$model" --approve)
+    [ ! -f "$WORKSPACE_DIR/app/AGENTS.md" ] || args+=(--append-system-prompt "$WORKSPACE_DIR/app/AGENTS.md")
+    case "$provider" in anthropic) vars+=(--env ANTHROPIC_API_KEY=proxy-managed);; google) vars+=(--env GEMINI_API_KEY=proxy-managed);; *) echo 'This example supports Pi Anthropic/Google'; exit 2;; esac
+  fi
+  if [ -z "$ws" ]; then
+    herdr workspace create --cwd "$WORKSPACE_DIR/app" --label "$TASK" --no-focus "${vars[@]}" >/dev/null
+    ws="$(herdr workspace list | jq -r '.result.workspaces[-1].workspace_id')"
+    pane="$(herdr pane list | jq -r --arg ws "$ws" '[.result.panes[] | select(.workspace_id == $ws)][-1].pane_id')"
+  else
+    pane="$(herdr tab create --workspace "$ws" --cwd "$WORKSPACE_DIR/app" --label "$role" --no-focus "${vars[@]}" | jq -r .result.root_pane.pane_id)"
+  fi
+  herdr agent start "$role" --kind "$harness" --pane "$pane" --timeout 180000 -- "${args[@]}" > "$FACTORY_DIR/evidence/start-$role.json"
+done < team.tsv
+# Initialize every role with its brief. Do not give a task until the learner submits.
+for role in coordinator developer qa; do
+  herdr agent prompt "$role" "Read $WORKSPACE_DIR/roles/$role.md. This is initialization only: acknowledge, run touch $FACTORY_DIR/ready/$role, and stop. Do not start work yet." >/dev/null
+done
+touch "$FACTORY_DIR/team-started"
+echo 'Sessions started. crew submit waits for the role acknowledgments before delivering work.'

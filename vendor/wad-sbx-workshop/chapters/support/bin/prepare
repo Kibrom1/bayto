@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# SANDBOX: wire workshop tools to the mounted project; never rebuild its Git history.
+set -euo pipefail
+cd "$HOME/work"
+source chapter.env
+chmod +x bin/*
+mkdir -p factory/evidence "$HOME/.local/bin"
+ln -sfn "$HOME/work/roles" factory/roles
+for tool in "$HOME/work/bin/"*; do ln -sf "$tool" "$HOME/.local/bin/$(basename "$tool")"; done
+export PATH="$HOME/work/bin:$PATH"
+app="$(cat app-path)"
+# ---------------------------------------------------------
+# Normalise the path in a case‑insensitive way (macOS is case‑preserving)
+# If the exact path does not exist, try a case‑insensitive glob.
+# ---------------------------------------------------------
+if [ ! -d "$app" ]; then
+  # Resolve the parent directory and look for a matching entry ignoring case
+  parent="${app%/*}"
+  base="${app##*/}"
+  # `ls` with case‑insensitive pattern; take first match
+  match=$(ls "$parent" 2>/dev/null | grep -i "^${base}$" | head -n1)
+  if [ -n "$match" ]; then
+    app="${parent}/${match}"
+  else
+    echo "Missing mounted project: $app"
+    exit 1
+  fi
+fi
+host_platform=""
+[ ! -f host-platform ] || host_platform="$(tr -d '\r' < host-platform)"
+prepare-node-modules "$app" "$host_platform"
+ln -sfn "$app" "$HOME/work/app"
+trust-workspace "$HOME/work" "$app"
+cd "$app"
+if [ "$USE_ACR" = 1 ]; then
+  if [ -f agents.yaml ]; then
+    if [ ! -s .claude/skills/acr__shelajev__coding-policy__review-change/SKILL.md ]; then
+      echo "ACR configuration found without the workshop review skill. Run install-guidance after reviewing the policy, or keep this project's own guidance."
+    fi
+  else
+    if [ -f AGENTS.md ]; then
+      echo "Existing project guidance found; leaving it in place. Use install-guidance only after reviewing the package."
+    else
+      install-guidance
+    fi
+  fi
+fi
+if [ "$MODE" = team ] || [ "$MODE" = mcp ]; then
+  start-team
+fi

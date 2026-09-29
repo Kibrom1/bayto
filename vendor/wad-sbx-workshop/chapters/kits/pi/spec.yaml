@@ -1,0 +1,42 @@
+schemaVersion: "2"
+kind: mixin
+name: workshop-pi
+description: Add Pi as a second coding assistant.
+args:
+  pi_version:
+    default: "0.85.1"
+permissions:
+  network:
+    allow: [github.com, release-assets.githubusercontent.com, objects.githubusercontent.com, api.anthropic.com, generativelanguage.googleapis.com]
+setup:
+  install:
+    - user: agent
+      command: |
+        set -eu
+        mkdir -p "$HOME/.local/bin"
+        arch="$(uname -m)"
+        if ! command -v pi >/dev/null 2>&1; then
+          case "$arch" in
+            aarch64|arm64) p=arm64 ;;
+            x86_64|amd64)  p=x64 ;;
+          esac
+          work="$(mktemp -d)"
+          # Pi ships a directory tree, not a single binary, so it is installed under
+          # $HOME/.local/share and reached through a wrapper.
+          curl -fsSL -o "$work/pi.tgz" \
+            "https://github.com/earendil-works/pi/releases/download/v${{ kit.args.pi_version }}/pi-linux-$p.tar.gz"
+          curl -fsSL -o "$work/SHA256SUMS" \
+            "https://github.com/earendil-works/pi/releases/download/v${{ kit.args.pi_version }}/SHA256SUMS"
+          expected="$(awk -v n="pi-linux-$p.tar.gz" '$2 == n { print $1 }' "$work/SHA256SUMS")"
+          test -n "$expected"
+          actual="$(sha256sum "$work/pi.tgz" | awk '{print $1}')"
+          test "$actual" = "$expected"
+          tar -xzf "$work/pi.tgz" -C "$work"
+          mkdir -p "$HOME/.local/share/pi-${{ kit.args.pi_version }}"
+          (cd "$work/pi" && tar cf - .) | (cd "$HOME/.local/share/pi-${{ kit.args.pi_version }}" && tar xf -)
+          printf '#!/bin/sh\nexport ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-proxy-managed}"\nexec "$HOME/.local/share/pi-%s/pi" "$@"\n' "${{ kit.args.pi_version }}" \
+            > "$HOME/.local/bin/pi"
+          chmod 0755 "$HOME/.local/bin/pi"
+          rm -rf "$work"
+        fi
+        pi --version

@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# HOST: mount the project, deliver workshop tools and open the learner's session.
+set -euo pipefail
+chapter="$(cd "${1:?configuration directory}" && pwd)"; shift
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$root"
+source "$root/scripts/common.sh"
+payload="$(mktemp -d)"
+trap 'rm -rf "$payload"' EXIT
+tr -d '\r' < "$chapter/chapter.env" > "$payload/chapter.env"
+source "$payload/chapter.env"
+name="${1:?sandbox name}"; shift
+app="$(cd "${1:-$root/sample-app}" && pwd)"
+[ -d "$app/.git" ] || git -C "$app" rev-parse --git-dir >/dev/null
+[ -x "$(beans_bin)" ] || { echo 'First run scripts/install-beans.sh and scripts/backlog-init.sh --disposable'; exit 2; }
+if [ "$MODE" = mcp ]; then
+  host_shell="$(command -v bash)"
+  if [ "$(host_os)" = Windows ]; then
+    host_shell="$(cygpath -am "$host_shell")"
+  fi
+fi
+# Only support files are transferred. The project itself is mounted by SBX.
+mkdir -p "$payload/bin" "$payload/roles"
+COPYFILE_DISABLE=1 tar --no-xattrs -cf - -C "$root/chapters/support" bin roles | tar xf - -C "$payload"
+cp "$chapter/PROMPT.md" "$payload/"
+[ ! -f "$chapter/team.tsv" ] || tr -d '\r' < "$chapter/team.tsv" > "$payload/team.tsv"
+printf '%s\n' "$app" > "$payload/app-path"
+printf '%s\n' "$(host_os)" > "$payload/host-platform"
+if [ "$MODE" = mcp ]; then
+  printf '%s\n' "$TASK" > "$payload/task-id"
+else
+  "$root/scripts/beans" show --json "$TASK" > "$payload/task.json"
+fi
+if [ -n "${WORKSHOP_BASE_KIT:-}" ]; then
+  tr -d '\r' < "$WORKSHOP_TEAM" > "$payload/team.tsv"
+  creation_options=(--publish 3102:8080)
+  if [ "$MODE" = mcp ]; then
+    sbx mcp add "$name-beans" --command "$host_shell" --args "\"$root/scripts/beans-mcp\"" --args=--allow-notes
+    creation_options+=(--static-mcp "$name-beans")
+  fi
+  sbx create "$WORKSHOP_BASE_KIT" "$app" --name "$name" --cpus 4 --memory 8g --skills off \
+    --kit 'git+https://github.com/shelajev/acr-sbx-kit.git#ref=f446b95bccabd879912db174c190ff09377b7c7b' \
+    --kit "$root/chapters/kits/pi" --kit "$root/chapters/kits/herdr" "${creation_options[@]}"
+else
+  env_args=(--env-arg "name=$name" --env-arg "app=$app")
+  if [ "$MODE" = mcp ]; then
+    env_args+=(--env-arg "host_shell=$host_shell")
+  fi
+  sbx env create "$chapter/sbxenv.yaml" "${env_args[@]}" --auto-approve
+fi
+COPYFILE_DISABLE=1 tar --no-xattrs -cf "$payload.tar" -C "$payload" .
+trap 'rm -rf "$payload"; rm -f "$payload.tar"' EXIT
+MSYS2_ARG_CONV_EXCL='*' sbx exec -i "$name" bash -lc 'mkdir -p "$HOME/work"; tar xf - -C "$HOME/work"' < "$payload.tar"
+MSYS2_ARG_CONV_EXCL='*' sbx exec "$name" bash -lc 'bash "$HOME/work/bin/prepare"'
+printf '\nProject mounted: %s\nOpening your SANDBOX terminal. Keep it open while working.\n' "$app"
+rm -rf "$payload"; rm -f "$payload.tar"; trap - EXIT
+if [ "${SESSION:-claude}" = shell ]; then
+  # These paths belong to the Linux sandbox, not the Git Bash installation.
+  export MSYS2_ARG_CONV_EXCL='*'
+  exec sbx exec -it -w "$app" "$name" bash --rcfile /home/agent/work/bin/shell-init -i
+else
+  exec sbx run --name "$name"
+fi

@@ -1,0 +1,7 @@
+# Loaded by the workshop's interactive sandbox shell.
+[ ! -f "$HOME/.bashrc" ] || source "$HOME/.bashrc"
+export PATH="$HOME/work/bin:$HOME/.local/bin:$PATH"
+export WORKSPACE_DIR="$HOME/work" FACTORY_DIR="$HOME/work/factory"
+export PS1='SANDBOX \w $ '
+cd "$(cat "$HOME/work/app-path")"
+printf 'Your project is mounted here. Try: crew help (after starting a team).\n'

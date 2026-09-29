@@ -1,0 +1,8 @@
+schemaVersion: 2
+agents:
+    - claude-code
+    - codex
+freshness: none
+dependencies:
+    - source: github:shelajev/coding-policy
+      requested: b85031eb0c8963b28b63eaa12efcbd34c850d32d

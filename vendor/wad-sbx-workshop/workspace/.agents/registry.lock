@@ -1,0 +1,59 @@
+schemaVersion: 2
+dependencies:
+    - source: github:shelajev/coding-policy
+      requested: b85031eb0c8963b28b63eaa12efcbd34c850d32d
+      kind: commit
+      commit: b85031eb0c8963b28b63eaa12efcbd34c850d32d
+      packageVersion: 0.1.0
+      contentHash: sha256:2a83850060674cdacdb77ecf810f069c38f1bfcbd367eebaf6569ca7cd8d9b3d
+realization:
+    schemaVersion: 1
+    targets:
+        - entries:
+            - adapter: claude-code
+              adapterVersion: 1.0.3
+              artifactId: review-change
+              artifactKind: file
+              managedHash: sha256:7e3d4a1aef3f0f73c3337bf1327a06af3aea83393164ee745d153c0753908546
+              source: github:shelajev/coding-policy
+              sourcePath: skills/review-change/SKILL.md
+          mode: 420
+          outputHash: sha256:7e3d4a1aef3f0f73c3337bf1327a06af3aea83393164ee745d153c0753908546
+          ownership: generated-only
+          path: .claude/skills/acr__shelajev__coding-policy__review-change/SKILL.md
+        - entries:
+            - adapter: codex
+              adapterVersion: 1.0.3
+              artifactId: review-change
+              artifactKind: file
+              managedHash: sha256:7e3d4a1aef3f0f73c3337bf1327a06af3aea83393164ee745d153c0753908546
+              source: github:shelajev/coding-policy
+              sourcePath: skills/review-change/SKILL.md
+          mode: 420
+          outputHash: sha256:7e3d4a1aef3f0f73c3337bf1327a06af3aea83393164ee745d153c0753908546
+          ownership: generated-only
+          path: .codex/skills/acr__shelajev__coding-policy__review-change/SKILL.md
+        - entries:
+            - adapter: codex
+              adapterVersion: 1.0.3
+              artifactId: package-rules-1eb42d31b0d896b82a0b28e29cd3690e413ad988ee9985705cb284fbf6d62980
+              artifactKind: managed-block
+              managedHash: sha256:0a93aa4954407e03f7c9254b4b649c23ff6266e3ab58fd28c0b700991eca6f04
+              source: github:shelajev/coding-policy
+              sourcePath: agent-plugin.yaml
+          mode: 420
+          outputHash: sha256:0a93aa4954407e03f7c9254b4b649c23ff6266e3ab58fd28c0b700991eca6f04
+          ownership: generated-only
+          path: AGENTS.md
+        - entries:
+            - adapter: claude-code
+              adapterVersion: 1.0.3
+              artifactId: package-rules-1eb42d31b0d896b82a0b28e29cd3690e413ad988ee9985705cb284fbf6d62980
+              artifactKind: managed-block
+              managedHash: sha256:7b044c58d893f6d1e84a6cf0cbdde2cf840ac63d05b7226e674334442aafede5
+              source: github:shelajev/coding-policy
+              sourcePath: agent-plugin.yaml
+          mode: 420
+          outputHash: sha256:7b044c58d893f6d1e84a6cf0cbdde2cf840ac63d05b7226e674334442aafede5
+          ownership: generated-only
+          path: CLAUDE.md

@@ -1,0 +1,496 @@
+#!/usr/bin/env bash
+# handoff — file-based message and report transport for the sandbox crew.
+#
+# Why this exists: Herdr lifecycle status tells you a terminal is idle, not that a task
+# is done, and status detection for some harnesses is unreliable. So agents exchange
+# explicit messages and reports through files, and the supervisor treats a valid
+# current report as the source of truth about progress.
+#
+# Guarantees this script provides:
+#   * atomic writes      — a reader never sees a partial message or report
+#   * message identity   — every message has a run/task/attempt scoped id
+#   * consumed tracking   — a message is delivered to a role exactly once
+#   * single-fire claims  — a handoff trigger can only fire once per key
+#   * bounded waiting     — `wait` has a deadline and never blocks forever
+#
+# Transport acknowledgement (`ack`) is deliberately separate from task completion
+# (`report`): acknowledging that you read an assignment says nothing about finishing it.
+#
+# Usage:
+#   handoff init --run RUN --task TASK [--attempt N]
+#   handoff send --to ROLE --from ROLE --kind KIND [--body TEXT|--body-file F]
+#                [--attempt N] [--base-commit SHA] [--output-commit SHA] [--task-version V]
+#   handoff inbox ROLE [--kind KIND] [--json]
+#   handoff read ROLE [--kind KIND] [--json]        # inbox + ack in one step
+#   handoff wait --to ROLE [--kind KIND] --timeout SECONDS [--interval SECONDS]
+#   handoff ack ROLE MESSAGE_ID
+#   handoff report --from ROLE --status STATUS [--stage STAGE] [--output-commit SHA]
+#                  [--attempt N] [--summary TEXT] [--body-file F] [--check NAME=EXIT]...
+#   handoff latest-report ROLE [--attempt N] [--json]
+#   handoff reports [--json]
+#   handoff claim KEY            # exit 0 if this caller claimed it, 9 if already claimed
+#   handoff stage [STAGE]        # read or set the crew stage
+#   handoff state                # print state.json
+#   handoff doctor               # validate the handoff directory
+set -euo pipefail
+
+FACTORY_DIR="${FACTORY_DIR:-$HOME/work/factory}"
+MESSAGES_DIR="$FACTORY_DIR/messages"
+CONSUMED_DIR="$FACTORY_DIR/consumed"
+REPORTS_DIR="$FACTORY_DIR/reports"
+CLAIMS_DIR="$FACTORY_DIR/claims"
+STATE_FILE="$FACTORY_DIR/state.json"
+
+VALID_ROLES="coordinator developer qa human supervisor"
+VALID_KINDS="assignment question answer review-request review-result report decision-request decision resume note"
+VALID_STATUS="started implemented review-pass review-fail blocked-access needs-human failed acknowledged"
+
+die() { printf 'handoff: %s\n' "$*" >&2; exit 2; }
+need_jq() { command -v jq >/dev/null 2>&1 || die "jq is required"; }
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+stamp() { date -u +%Y%m%d%H%M%S; }
+rand() { LC_ALL=C tr -dc 'a-z0-9' < /dev/urandom 2>/dev/null | head -c 6 || printf '%s' "$$"; }
+
+in_list() {
+  local needle="$1" list="$2" item
+  for item in $list; do [ "$item" = "$needle" ] && return 0; done
+  return 1
+}
+
+atomic_write() {
+  local target="$1" tmp
+  mkdir -p "$(dirname "$target")"
+  tmp="$(mktemp "${target}.tmp.XXXXXX")"
+  cat > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$target"
+}
+
+require_init() {
+  [ -f "$STATE_FILE" ] || die "no handoff directory at $FACTORY_DIR (run: handoff init --run RUN --task TASK)"
+}
+
+state_get() { jq -r --arg k "$1" '.[$k] // empty' "$STATE_FILE"; }
+
+state_set() {
+  local key="$1" value="$2"
+  jq --arg k "$key" --arg v "$value" --arg now "$(now)" \
+    '.[$k] = $v | .updated_at = $now' "$STATE_FILE" | atomic_write "$STATE_FILE"
+}
+
+# ---------------------------------------------------------------- init
+
+cmd_init() {
+  local run="" task="" attempt=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run) run="$2"; shift 2 ;;
+      --task) task="$2"; shift 2 ;;
+      --attempt) attempt="$2"; shift 2 ;;
+      *) die "init: unexpected argument $1" ;;
+    esac
+  done
+  [ -n "$run" ] || die "init: --run is required"
+  [ -n "$task" ] || die "init: --task is required"
+  mkdir -p "$MESSAGES_DIR" "$REPORTS_DIR" "$CLAIMS_DIR" "$FACTORY_DIR/decisions" \
+           "$FACTORY_DIR/task" "$FACTORY_DIR/evidence"
+  local role
+  for role in $VALID_ROLES; do mkdir -p "$CONSUMED_DIR/$role"; done
+  if [ -f "$STATE_FILE" ]; then
+    printf 'handoff already initialised for run %s\n' "$(state_get run_id)" >&2
+    return 0
+  fi
+  jq -n --arg run "$run" --arg task "$task" --arg attempt "$attempt" --arg now "$(now)" \
+    '{run_id:$run, task_id:$task, attempt:($attempt|tonumber), stage:"queued",
+      created_at:$now, updated_at:$now, seq:0}' | atomic_write "$STATE_FILE"
+  printf 'initialised handoff for run %s task %s attempt %s at %s\n' "$run" "$task" "$attempt" "$FACTORY_DIR" >&2
+}
+
+next_seq() {
+  # Serialised by a claim directory so two agents cannot take the same sequence number.
+  local lock="$CLAIMS_DIR/.seq.lock" tries=0
+  until mkdir "$lock" 2>/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -gt 100 ] && die "could not take the sequence lock at $lock"
+    sleep 0.05
+  done
+  local seq
+  seq="$(jq -r '.seq' "$STATE_FILE")"
+  seq=$((seq + 1))
+  jq --argjson s "$seq" --arg now "$(now)" '.seq = $s | .updated_at = $now' "$STATE_FILE" \
+    | atomic_write "$STATE_FILE"
+  rmdir "$lock"
+  printf '%s' "$seq"
+}
+
+# ---------------------------------------------------------------- send
+
+cmd_send() {
+  require_init
+  local to="" from="" kind="" body="" body_file="" attempt="" base="" output="" version="" requires_ack=true
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to) to="$2"; shift 2 ;;
+      --from) from="$2"; shift 2 ;;
+      --kind) kind="$2"; shift 2 ;;
+      --body) body="$2"; shift 2 ;;
+      --body-file) body_file="$2"; shift 2 ;;
+      --attempt) attempt="$2"; shift 2 ;;
+      --base-commit) base="$2"; shift 2 ;;
+      --output-commit) output="$2"; shift 2 ;;
+      --task-version) version="$2"; shift 2 ;;
+      --no-ack) requires_ack=false; shift ;;
+      *) die "send: unexpected argument $1" ;;
+    esac
+  done
+  in_list "$to" "$VALID_ROLES"   || die "send: --to must be one of: $VALID_ROLES"
+  in_list "$from" "$VALID_ROLES" || die "send: --from must be one of: $VALID_ROLES"
+  in_list "$kind" "$VALID_KINDS" || die "send: --kind must be one of: $VALID_KINDS"
+  if [ -n "$body_file" ]; then
+    [ -f "$body_file" ] || die "send: body file not found: $body_file"
+    body="$(cat "$body_file")"
+  fi
+  [ -n "$body" ] || die "send: --body or --body-file is required"
+  [ -n "$attempt" ] || attempt="$(state_get attempt)"
+
+  local run task seq msg_id created file
+  run="$(state_get run_id)"; task="$(state_get task_id)"
+  seq="$(next_seq)"
+  msg_id="msg-${run}-$(printf '%04d' "$seq")-$(rand)"
+  created="$(now)"
+  file="$MESSAGES_DIR/$(stamp)-$(printf '%04d' "$seq")-${msg_id}.json"
+
+  jq -n --arg id "$msg_id" --arg run "$run" --arg task "$task" --argjson attempt "$attempt" \
+        --arg from "$from" --arg to "$to" --arg kind "$kind" --arg created "$created" \
+        --arg body "$body" --arg base "$base" --arg output "$output" --arg version "$version" \
+        --argjson ack "$requires_ack" --argjson seq "$seq" \
+    '{message_id:$id, run_id:$run, task_id:$task, attempt:$attempt, seq:$seq,
+      from:$from, to:$to, kind:$kind, created_at:$created, requires_ack:$ack,
+      refs:{base_commit:$base, output_commit:$output, task_version:$version}
+            | with_entries(select(.value != "")),
+      body:$body}' | atomic_write "$file"
+
+  printf '%s\n' "$msg_id"
+}
+
+# ---------------------------------------------------------------- inbox / read / ack
+
+# Prints the paths of undelivered messages for a role, oldest first.
+inbox_paths() {
+  local role="$1" kind="${2:-}" f to k
+  [ -d "$MESSAGES_DIR" ] || return 0
+  for f in "$MESSAGES_DIR"/*.json; do
+    [ -e "$f" ] || continue
+    to="$(jq -r '.to' "$f" 2>/dev/null || true)"
+    [ "$to" = "$role" ] || continue
+    if [ -n "$kind" ]; then
+      k="$(jq -r '.kind' "$f")"
+      [ "$k" = "$kind" ] || continue
+    fi
+    local id; id="$(jq -r '.message_id' "$f")"
+    [ -e "$CONSUMED_DIR/$role/$id" ] && continue
+    printf '%s\n' "$f"
+  done
+}
+
+cmd_inbox() {
+  require_init
+  local role="${1:-}" kind="" as_json=0
+  shift || true
+  [ -n "$role" ] || die "inbox: ROLE is required"
+  in_list "$role" "$VALID_ROLES" || die "inbox: unknown role $role"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --kind) kind="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      *) die "inbox: unexpected argument $1" ;;
+    esac
+  done
+  local paths; paths="$(inbox_paths "$role" "$kind")"
+  [ -z "$paths" ] && { [ "$as_json" -eq 1 ] && echo '[]'; return 0; }
+  if [ "$as_json" -eq 1 ]; then
+    # shellcheck disable=SC2086
+    jq -s '.' $paths
+  else
+    local f
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      jq -r '"--- \(.message_id)  \(.kind)  \(.from) -> \(.to)  attempt \(.attempt)  \(.created_at)"' "$f"
+      jq -r '.refs | to_entries | map("    \(.key): \(.value)") | .[]' "$f"
+      jq -r '.body' "$f"
+      printf '\n'
+    done <<< "$paths"
+  fi
+}
+
+# read = inbox then ack. The messages are captured once, printed, and only then
+# marked consumed, so a crash before the ack redelivers rather than losing the message.
+cmd_read() {
+  require_init
+  local role="${1:-}" kind="" as_json=0
+  shift || true
+  [ -n "$role" ] || die "read: ROLE is required"
+  in_list "$role" "$VALID_ROLES" || die "read: unknown role $role"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --kind) kind="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      *) die "read: unexpected argument $1" ;;
+    esac
+  done
+  local paths; paths="$(inbox_paths "$role" "$kind")"
+  if [ -z "$paths" ]; then
+    [ "$as_json" -eq 1 ] && echo '[]'
+    return 0
+  fi
+  if [ "$as_json" -eq 1 ]; then
+    # shellcheck disable=SC2086
+    jq -s '.' $paths
+  else
+    local f
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      jq -r '"--- \(.message_id)  \(.kind)  \(.from) -> \(.to)  attempt \(.attempt)  \(.created_at)"' "$f"
+      jq -r '.refs | to_entries | map("    \(.key): \(.value)") | .[]' "$f"
+      jq -r '.body' "$f"
+      printf '\n'
+    done <<< "$paths"
+  fi
+  local f id
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    id="$(jq -r '.message_id' "$f")"
+    mkdir -p "$CONSUMED_DIR/$role"
+    touch "$CONSUMED_DIR/$role/$id"
+  done <<< "$paths"
+}
+
+cmd_ack() {
+  require_init
+  local role="${1:-}" id="${2:-}"
+  [ -n "$role" ] && [ -n "$id" ] || die "ack: ROLE and MESSAGE_ID are required"
+  in_list "$role" "$VALID_ROLES" || die "ack: unknown role $role"
+  mkdir -p "$CONSUMED_DIR/$role"
+  # Idempotent on purpose: a retried ack is not an error.
+  touch "$CONSUMED_DIR/$role/$id"
+  printf 'acked %s for %s\n' "$id" "$role" >&2
+}
+
+cmd_wait() {
+  require_init
+  local role="" kind="" timeout=120 interval=2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --to) role="$2"; shift 2 ;;
+      --kind) kind="$2"; shift 2 ;;
+      --timeout) timeout="$2"; shift 2 ;;
+      --interval) interval="$2"; shift 2 ;;
+      *) die "wait: unexpected argument $1" ;;
+    esac
+  done
+  [ -n "$role" ] || die "wait: --to is required"
+  local deadline=$(( $(date +%s) + timeout )) paths
+  while :; do
+    paths="$(inbox_paths "$role" "$kind")"
+    if [ -n "$paths" ]; then
+      printf '%s\n' "$paths" | head -1
+      return 0
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      printf 'handoff: timed out after %ss waiting for a %s message to %s\n' \
+        "$timeout" "${kind:-any}" "$role" >&2
+      return 3
+    fi
+    sleep "$interval"
+  done
+}
+
+# ---------------------------------------------------------------- reports
+
+cmd_report() {
+  require_init
+  local from="" status="" stage="" output="" attempt="" summary="" body_file="" checks="[]"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --from) from="$2"; shift 2 ;;
+      --status) status="$2"; shift 2 ;;
+      --stage) stage="$2"; shift 2 ;;
+      --output-commit) output="$2"; shift 2 ;;
+      --attempt) attempt="$2"; shift 2 ;;
+      --summary) summary="$2"; shift 2 ;;
+      --body-file) body_file="$2"; shift 2 ;;
+      --check)
+        local name="${2%%=*}" exit_code="${2#*=}"
+        [ "$name" != "$2" ] || die "report: --check expects NAME=EXITCODE"
+        checks="$(jq -c --arg n "$name" --argjson e "${exit_code:-1}" '. + [{name:$n, exit:$e}]' <<< "$checks")"
+        shift 2 ;;
+      *) die "report: unexpected argument $1" ;;
+    esac
+  done
+  in_list "$from" "$VALID_ROLES" || die "report: --from must be one of: $VALID_ROLES"
+  in_list "$status" "$VALID_STATUS" || die "report: --status must be one of: $VALID_STATUS"
+  [ -n "$attempt" ] || attempt="$(state_get attempt)"
+  local body=""
+  if [ -n "$body_file" ]; then
+    [ -f "$body_file" ] || die "report: body file not found: $body_file"
+    body="$(cat "$body_file")"
+  fi
+
+  local run task seq file created
+  run="$(state_get run_id)"; task="$(state_get task_id)"
+  seq="$(next_seq)"; created="$(now)"
+  file="$REPORTS_DIR/${task}-a${attempt}-${from}-$(printf '%04d' "$seq").json"
+
+  jq -n --arg run "$run" --arg task "$task" --argjson attempt "$attempt" --arg from "$from" \
+        --arg status "$status" --arg stage "$stage" --arg output "$output" \
+        --arg summary "$summary" --arg body "$body" --arg created "$created" \
+        --argjson checks "$checks" --argjson seq "$seq" \
+    '{report_id:("rep-" + $run + "-" + ($seq|tostring)), run_id:$run, task_id:$task,
+      attempt:$attempt, seq:$seq, from:$from, status:$status, stage:$stage,
+      output_commit:$output, created_at:$created, summary:$summary, body:$body,
+      checks:$checks,
+      checks_passed:(($checks|length) > 0 and all($checks[]; .exit == 0))}' \
+    | atomic_write "$file"
+
+  # latest-<role>.json is a convenience pointer, written atomically after the report
+  # itself, so a reader that finds it always finds the report too.
+  # cat, not cp: on a virtiofs-backed workspace GNU cp's copy_file_range path has been
+  # observed to produce correctly sized but NULL-filled files.
+  cat "$file" > "$REPORTS_DIR/.latest-$from.tmp" && mv -f "$REPORTS_DIR/.latest-$from.tmp" "$REPORTS_DIR/latest-$from.json"
+  printf '%s\n' "$(jq -r '.report_id' "$file")"
+}
+
+# Prints the newest report from a role for the given attempt (default: current attempt).
+# Exit 4 when the only reports found are for another attempt: that is a stale report,
+# and the caller must not treat it as progress.
+cmd_latest_report() {
+  require_init
+  local role="${1:-}" attempt="" as_json=0
+  shift || true
+  [ -n "$role" ] || die "latest-report: ROLE is required"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --attempt) attempt="$2"; shift 2 ;;
+      --json) as_json=1; shift ;;
+      *) die "latest-report: unexpected argument $1" ;;
+    esac
+  done
+  [ -n "$attempt" ] || attempt="$(state_get attempt)"
+  local task; task="$(state_get task_id)"
+  local newest="" newest_seq=-1 f seq
+  for f in "$REPORTS_DIR"/${task}-a${attempt}-${role}-*.json; do
+    [ -e "$f" ] || continue
+    seq="$(jq -r '.seq' "$f")"
+    if [ "$seq" -gt "$newest_seq" ]; then newest_seq="$seq"; newest="$f"; fi
+  done
+  if [ -z "$newest" ]; then
+    local any=0
+    for f in "$REPORTS_DIR"/${task}-a*-${role}-*.json; do [ -e "$f" ] && any=1 && break; done
+    if [ "$any" -eq 1 ]; then
+      printf 'handoff: only stale reports found for %s (no report for attempt %s)\n' "$role" "$attempt" >&2
+      return 4
+    fi
+    printf 'handoff: no report from %s yet\n' "$role" >&2
+    return 3
+  fi
+  if [ "$as_json" -eq 1 ]; then cat "$newest"; else
+    jq -r '"report \(.report_id)\nrole: \(.from)   status: \(.status)   stage: \(.stage)\nattempt: \(.attempt)   output_commit: \(.output_commit)\nchecks: \(.checks | map("\(.name)=\(.exit)") | join(" "))   checks_passed: \(.checks_passed)\n\n\(.summary)\n\n\(.body)"' "$newest"
+  fi
+}
+
+cmd_reports() {
+  require_init
+  local as_json=0
+  [ "${1:-}" = "--json" ] && as_json=1
+  local files=()
+  local f
+  for f in "$REPORTS_DIR"/*-a*-*.json; do [ -e "$f" ] && files+=("$f"); done
+  if [ "${#files[@]}" -eq 0 ]; then [ "$as_json" -eq 1 ] && echo '[]'; return 0; fi
+  if [ "$as_json" -eq 1 ]; then jq -s 'sort_by(.seq)' "${files[@]}"
+  else jq -r '"\(.created_at)  \(.from)  \(.status)  attempt=\(.attempt)  checks_passed=\(.checks_passed)  \(.output_commit)"' "${files[@]}" | sort; fi
+}
+
+# ---------------------------------------------------------------- claims / stage
+
+# mkdir is atomic on POSIX filesystems: exactly one caller creates the directory, so a
+# handoff trigger fires once even if two observers notice the same report.
+cmd_claim() {
+  require_init
+  local key="${1:-}"
+  [ -n "$key" ] || die "claim: KEY is required"
+  [[ "$key" =~ ^[a-zA-Z0-9._:-]{1,120}$ ]] || die "claim: KEY must be alphanumeric with . _ : -"
+  mkdir -p "$CLAIMS_DIR"
+  if mkdir "$CLAIMS_DIR/$key" 2>/dev/null; then
+    printf '%s\n' "$(now)" > "$CLAIMS_DIR/$key/claimed_at"
+    printf 'claimed %s\n' "$key" >&2
+    return 0
+  fi
+  printf 'handoff: %s was already claimed at %s\n' "$key" "$(cat "$CLAIMS_DIR/$key/claimed_at" 2>/dev/null || echo unknown)" >&2
+  return 9
+}
+
+cmd_stage() {
+  require_init
+  if [ $# -eq 0 ]; then state_get stage; return 0; fi
+  local stage="$1"
+  case "$stage" in
+    queued|assigned|implementing|review|correcting|blocked-access|needs-human|ready-for-acceptance|accepted|finished|failed) ;;
+    *) die "stage: unknown stage $stage" ;;
+  esac
+  state_set stage "$stage"
+  printf '%s\n' "$stage"
+}
+
+cmd_state() { require_init; cat "$STATE_FILE"; }
+
+cmd_doctor() {
+  local problems=0
+  printf 'handoff directory: %s\n' "$FACTORY_DIR"
+  for d in "$MESSAGES_DIR" "$REPORTS_DIR" "$CONSUMED_DIR" "$CLAIMS_DIR"; do
+    if [ -d "$d" ]; then printf '  ok   %s\n' "$d"; else printf '  MISS %s\n' "$d"; problems=$((problems+1)); fi
+  done
+  if [ -f "$STATE_FILE" ]; then
+    if jq -e . "$STATE_FILE" >/dev/null 2>&1; then
+      printf '  ok   state.json (run %s, task %s, attempt %s, stage %s)\n' \
+        "$(state_get run_id)" "$(state_get task_id)" "$(state_get attempt)" "$(state_get stage)"
+    else
+      printf '  BAD  state.json is not valid JSON\n'; problems=$((problems+1))
+    fi
+  else
+    printf '  MISS state.json\n'; problems=$((problems+1))
+  fi
+  local f bad=0 partial=0
+  for f in "$MESSAGES_DIR"/*.json "$REPORTS_DIR"/*.json; do
+    [ -e "$f" ] || continue
+    jq -e . "$f" >/dev/null 2>&1 || { printf '  BAD  %s is not valid JSON\n' "$f"; bad=$((bad+1)); }
+  done
+  for f in "$MESSAGES_DIR"/*.tmp.* "$REPORTS_DIR"/*.tmp.*; do
+    [ -e "$f" ] && { printf '  WARN leftover temporary file %s\n' "$f"; partial=$((partial+1)); }
+  done
+  printf 'messages: %s   reports: %s   invalid: %s   leftover temp: %s\n' \
+    "$(ls -1 "$MESSAGES_DIR" 2>/dev/null | grep -c '\.json$' || true)" \
+    "$(ls -1 "$REPORTS_DIR" 2>/dev/null | grep -c '\.json$' || true)" "$bad" "$partial"
+  [ $((problems + bad)) -eq 0 ] || return 1
+}
+
+# ---------------------------------------------------------------- dispatch
+
+need_jq
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  init)          cmd_init "$@" ;;
+  send)          cmd_send "$@" ;;
+  inbox)         cmd_inbox "$@" ;;
+  read)          cmd_read "$@" ;;
+  ack)           cmd_ack "$@" ;;
+  wait)          cmd_wait "$@" ;;
+  report)        cmd_report "$@" ;;
+  latest-report) cmd_latest_report "$@" ;;
+  reports)       cmd_reports "$@" ;;
+  claim)         cmd_claim "$@" ;;
+  stage)         cmd_stage "$@" ;;
+  state)         cmd_state "$@" ;;
+  doctor)        cmd_doctor "$@" ;;
+  ""|-h|--help)  sed -n '2,40p' "$0" ;;
+  *)             die "unknown command: $cmd (try --help)" ;;
+esac

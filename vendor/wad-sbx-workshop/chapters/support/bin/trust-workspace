@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# trust-workspace — SANDBOX: pre-accept each harness's "do you trust this folder?"
+# prompt for the run workspace.
+#
+# Why this exists: every harness asks before it will read and execute files in a
+# directory it has not seen. Started headlessly, that prompt puts the agent in a
+# `blocked` state and no prompt can be delivered. Herdr reports it correctly, but the
+# crew cannot proceed. So the workspace is trusted explicitly, once, by the script that
+# created it — a deliberate act with a visible record, not a dialog nobody sees.
+#
+# This trusts exactly one directory: the run workspace, and the mounted
+# app repository the host chose. It does not disable any other guard.
+#
+# Usage: trust-workspace <directory> [<directory>...]
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || { printf 'trust-workspace: jq is required\n' >&2; exit 2; }
+[ $# -gt 0 ] || { printf 'usage: trust-workspace <directory> [...]\n' >&2; exit 2; }
+
+for dir in "$@"; do
+  [ -d "$dir" ] || { printf 'trust-workspace: not a directory: %s\n' "$dir" >&2; exit 2; }
+  abs="$(cd "$dir" && pwd)"
+
+  # --- Claude Code: ~/.claude.json projects[<path>].hasTrustDialogAccepted
+  claude_config="${CLAUDE_CONFIG_FILE:-$HOME/.claude.json}"
+  if command -v claude >/dev/null 2>&1; then
+    [ -f "$claude_config" ] || printf '{}' > "$claude_config"
+    tmp="$(mktemp "${claude_config}.tmp.XXXXXX")"
+    jq --arg p "$abs" '.projects = ((.projects // {}) | .[$p] = ((.[$p] // {}) | .hasTrustDialogAccepted = true))' \
+      "$claude_config" > "$tmp" && mv -f "$tmp" "$claude_config"
+    printf 'trust-workspace: claude trusts %s\n' "$abs" >&2
+  fi
+
+  # --- Codex: trusted projects live in ~/.codex/config.toml
+  if command -v codex >/dev/null 2>&1; then
+    codex_config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+    mkdir -p "$(dirname "$codex_config")"
+    if ! grep -qF "[projects.\"$abs\"]" "$codex_config" 2>/dev/null; then
+      {
+        printf '\n[projects."%s"]\n' "$abs"
+        printf 'trust_level = "trusted"\n'
+      } >> "$codex_config"
+    fi
+    printf 'trust-workspace: codex trusts %s\n' "$abs" >&2
+  fi
+
+  # --- Pi: trust is a per-run flag (--approve), so crew-start passes it instead of
+  # writing a config file. Recorded here so the mechanism is documented in one place.
+  if command -v pi >/dev/null 2>&1; then
+    printf 'trust-workspace: pi is trusted per run with --approve (no persistent state)\n' >&2
+  fi
+done
