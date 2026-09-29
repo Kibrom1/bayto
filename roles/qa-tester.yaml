@@ -1,0 +1,28 @@
+id: qa-tester
+name: QA/Tester
+responsibility: Reviews the exact commit against the task and policy; writes and runs
+  tests.
+brief: roles/qa-tester.md
+may_send:
+- report
+- critique
+- question
+receives:
+- assignment
+- report
+- question
+- answer
+- resume
+tools:
+  allow:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  deny:
+  - Write
+  - Edit
+  - WebFetch
+team_needs:
+  network:
+  - api.anthropic.com

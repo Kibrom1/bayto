@@ -1,0 +1,30 @@
+id: product-owner
+name: Product Owner
+responsibility: Owns requirements, acceptance criteria and priority; accepts or rejects
+  results.
+brief: roles/product-owner.md
+may_send:
+- proposal
+- answer
+- critique
+- decision-request
+- report
+receives:
+- assignment
+- question
+- answer
+- report
+- decision
+- resume
+tools:
+  allow:
+  - Read
+  - Grep
+  - Glob
+  deny:
+  - Write
+  - Edit
+  - Bash
+team_needs:
+  network:
+  - api.anthropic.com

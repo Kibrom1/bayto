@@ -1,0 +1,29 @@
+id: architect
+name: Architect
+responsibility: System design, ADRs and interface contracts; reviews designs and big
+  changes.
+brief: roles/architect.md
+may_send:
+- proposal
+- critique
+- answer
+- report
+receives:
+- assignment
+- question
+- answer
+- report
+- decision
+- resume
+tools:
+  allow:
+  - Read
+  - Grep
+  - Glob
+  deny:
+  - Write
+  - Edit
+  - Bash
+team_needs:
+  network:
+  - api.anthropic.com

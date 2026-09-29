@@ -1,0 +1,29 @@
+id: researcher
+name: Researcher
+responsibility: Gathers facts, prior art and sources; answers open questions with
+  citations.
+brief: roles/researcher.md
+may_send:
+- note
+- answer
+- proposal
+- report
+receives:
+- assignment
+- question
+- decision
+- resume
+tools:
+  allow:
+  - Read
+  - Grep
+  - Glob
+  - WebSearch
+  - WebFetch
+  deny:
+  - Write
+  - Edit
+  - Bash
+team_needs:
+  network:
+  - api.anthropic.com

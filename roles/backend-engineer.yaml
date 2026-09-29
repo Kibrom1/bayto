@@ -1,0 +1,32 @@
+id: backend-engineer
+name: Backend Engineer
+responsibility: Implements APIs, services and the data model; runs backend tests.
+brief: roles/backend-engineer.md
+may_send:
+- report
+- question
+- answer
+- x-code.review-request
+- note
+receives:
+- assignment
+- question
+- answer
+- critique
+- decision
+- resume
+tools:
+  allow:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob
+  deny:
+  - WebFetch
+team_needs:
+  network:
+  - api.anthropic.com
+  - pypi.org
+  - files.pythonhosted.org
