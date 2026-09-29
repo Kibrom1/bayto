@@ -66,6 +66,12 @@ class FileTransport:
             out.append(Envelope.model_validate(json.loads(p.read_text())))
         return out
 
+    def messages_after(self, seq: int) -> list[Envelope]:
+        """All messages with seq > `seq`, in seq order. For a watcher that mirrors this
+        transport elsewhere (e.g. the orchestrator's M2.3 Postgres mirror) and wants to
+        resume from the last one it saw, without duplicating `all()`'s parsing."""
+        return [e for e in self.all() if e.seq is not None and e.seq > seq]
+
     def _is_consumed(self, recipient: str, message_id: str) -> bool:
         return (self.consumed / recipient / message_id).exists()
 

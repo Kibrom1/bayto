@@ -26,6 +26,15 @@ def test_concurrent_seq_unique_and_gapless(tmp_path):
     assert seqs == list(range(1, 76))
 
 
+def test_messages_after_returns_only_newer_in_seq_order(tmp_path):
+    t = FileTransport(tmp_path)
+    for i in range(5):
+        t.send(Envelope(conversation_id="c1", from_="moderator", to=["*"], kind="note", body=str(i)))
+    assert [e.seq for e in t.messages_after(0)] == [1, 2, 3, 4, 5]
+    assert [e.seq for e in t.messages_after(3)] == [4, 5]
+    assert t.messages_after(5) == []
+
+
 def test_redelivery_until_ack(tmp_path):
     c = mk(tmp_path)
     m = c.send("moderator", ["advocate"], "assignment", "go")
