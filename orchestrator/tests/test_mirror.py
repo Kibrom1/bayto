@@ -22,6 +22,27 @@ def test_pubsub_fanout_in_order():
     assert [g["data"]["seq"] for g in got] == [0, 1, 2]
 
 
+def test_pubsub_fanout_to_multiple_concurrent_subscribers():
+    pubsub = PubSub()
+    q1 = pubsub.subscribe()
+    q2 = pubsub.subscribe()
+    q3 = pubsub.subscribe()
+    for i in range(3):
+        pubsub.publish({"type": "message", "data": {"seq": i}})
+
+    for q in (q1, q2, q3):
+        got = [q.get_nowait() for _ in range(3)]
+        assert [g["data"]["seq"] for g in got] == [0, 1, 2]
+        assert q.empty()
+
+    # Unsubscribing one queue doesn't affect delivery to the others.
+    pubsub.unsubscribe(q2)
+    pubsub.publish({"type": "message", "data": {"seq": 3}})
+    assert q1.get_nowait()["data"]["seq"] == 3
+    assert q3.get_nowait()["data"]["seq"] == 3
+    assert q2.empty()
+
+
 def _send(transport: FileTransport, body: str, **kw) -> Envelope:
     return transport.send(Envelope(conversation_id="c1", from_="coordinator",
                                     to=["backend-engineer"], kind="note", body=body, **kw))
