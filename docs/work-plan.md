@@ -51,7 +51,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [ ] **M1.1** `schema/message.v1.json`, `report.v1.json`, `hand-raise.v1.json` from the protocol doc.
 - [x] **M1.2** `acp` CLI: send, read, ack, transcript, report, claim, stage (dynamic roles via `--roles`)
 - [x] **M1.3** `FileTransport`, backward compatible with the workshop's `$FACTORY_DIR` layout.
-- [ ] **M1.4** Conformance tests (port `scripts/tests/crew.py` and `crew-notify.sh`): concurrent `seq`, crash-before-consume redelivery, broadcast consumption, stale attempts, single-fire claims, busy wake-up returns 3, permission rejection.
+- [x] **M1.4** Conformance tests (port `scripts/tests/crew.py` and `crew-notify.sh`): concurrent `seq`, crash-before-consume redelivery, broadcast consumption, stale attempts, single-fire claims, busy wake-up returns 3, permission rejection.
 - [x] **M1.5** Compatibility check: run the workshop factory on `acp` instead of `handoff` with no behavior change.
 
 **Team sandbox**
@@ -96,6 +96,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 
 ## Working agreements
 
+- Tick a task (`- [x]`) in this file in the same commit that completes it, and only when its "done" check really passed (tests run, spike run, or file delivered). Partly done tasks stay unticked with a note.
 - Pin every external version (sbx, Claude CLI, kits by commit), as the workshop does.
 - Every spike ends with a short findings note in `spikes/<name>/FINDINGS.md`.
 - Keep product decisions in [decisions.md](decisions.md).
