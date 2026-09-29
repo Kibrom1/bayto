@@ -1,0 +1,31 @@
+id: coordinator
+name: Coordinator
+responsibility: Routes work, owns stage transitions and the floor in pipeline phases;
+  never writes code.
+brief: roles/coordinator.md
+may_send:
+- assignment
+- summary
+- resume
+- decision-request
+- question
+- note
+receives:
+- report
+- question
+- answer
+- hand-raise
+- decision
+tools:
+  allow:
+  - Read
+  - Grep
+  - Glob
+  deny:
+  - Write
+  - Edit
+  - Bash
+  - WebFetch
+team_needs:
+  network:
+  - api.anthropic.com

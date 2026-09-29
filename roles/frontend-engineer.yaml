@@ -1,0 +1,31 @@
+id: frontend-engineer
+name: Frontend Engineer
+responsibility: Implements the UI against the API contract; runs UI tests.
+brief: roles/frontend-engineer.md
+may_send:
+- report
+- question
+- answer
+- x-code.review-request
+- note
+receives:
+- assignment
+- question
+- answer
+- critique
+- decision
+- resume
+tools:
+  allow:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob
+  deny:
+  - WebFetch
+team_needs:
+  network:
+  - api.anthropic.com
+  - registry.npmjs.org

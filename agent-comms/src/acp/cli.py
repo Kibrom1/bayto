@@ -29,7 +29,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("transcript")
     r = sub.add_parser("report")
     r.add_argument("message_id")
-    r.add_argument("--outcome", required=True, choices=["pass", "fail", "blocked"])
+    r.add_argument("--status", required=True)
+    r.add_argument("--stage")
+    r.add_argument("--output-ref")
     r.add_argument("--check", action="append", default=[], help="CMD=EXITCODE, repeatable")
     r.add_argument("--summary", default="")
     c = sub.add_parser("claim")
@@ -54,7 +56,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[{e.seq}] {e.from_} -> {','.join(e.to)} ({e.kind}): {e.body}")
         elif args.cmd == "report":
             checks = {k: int(v) for k, _, v in (x.rpartition("=") for x in args.check)}
-            print(json.dumps(conv.report(args.role, args.message_id, args.outcome, checks, args.summary)))
+            print(json.dumps(conv.report(args.role, args.message_id, args.status, checks, args.summary,
+                                          args.stage, args.output_ref)))
         elif args.cmd == "claim":
             return 0 if conv.claim(args.name) else 9
         elif args.cmd == "stage":

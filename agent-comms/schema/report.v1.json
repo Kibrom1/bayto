@@ -2,33 +2,38 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bayto.dev/schema/acp/report.v1.json",
   "title": "acp/1 report",
-  "description": "Describes the dict actually returned/persisted by FileTransport.report() / Conversation.report() in agent-comms/src/acp (there is no Pydantic model for Report yet; it is built as a plain dict). This diverges substantially from the Report record in docs/agent-communication-protocol.md's 'Core model and envelope' table (`from`, `status`, `stage`, `output_ref`, `checks[]`, `summary`); see docs/decisions.md (2026-09-29) for the full comparison. It also diverges from the *separate*, non-acp/1 report shape that the legacy handoff_compat.py shim persists to $FACTORY_DIR/reports/ (which is a much closer match to the doc, having been modeled on the workshop's own `handoff report`, predating this file). This schema covers only the acp/1 core-library shape.",
+  "description": "Describes the dict actually returned/persisted by FileTransport.report() / Conversation.report() in agent-comms/src/acp (there is no Pydantic model for Report yet; it is built as a plain dict). Reconciled with the Report record in docs/agent-communication-protocol.md's 'Core model and envelope' table: see docs/decisions.md (2026-09-29, both the original 'M1.1 schema/implementation reconciliation' entry and its 'M1.1 schema/implementation resolutions' follow-up) for what changed on each side to get here. This is a *different* shape from the one the separate, non-acp/1 handoff_compat.py legacy shim persists to $FACTORY_DIR/reports/ (that shim keeps its own pre-existing, workshop-derived report shape and is intentionally out of scope for this schema).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["from", "message_id", "outcome", "checks", "summary", "verified"],
+  "required": ["from", "message_id", "status", "stage", "output_ref", "checks", "summary", "verified"],
   "properties": {
-    "from": {
-      "type": "string",
-      "description": "The doc calls this field `from`, consistent with the Envelope's sender field naming."
-    },
+    "from": { "type": "string" },
     "message_id": {
       "type": "string",
-      "description": "The message this report answers. Not in the doc's Report record at all: the doc's report is keyed by convention (current attempt + role), not tied to a specific message_id. Doc has no equivalent field."
+      "description": "Ties this report to the message (usually an assignment) it answers."
     },
-    "outcome": {
+    "status": {
       "type": "string",
-      "enum": ["pass", "fail", "blocked"],
-      "description": "The doc calls this field `status` and gives it a much richer, domain-flavoured vocabulary (e.g. implemented, review-pass, review-fail, blocked-access, needs-human, failed, acknowledged -- the same terminal statuses the legacy handoff report and handoff_compat.py use). The acp/1 core library instead hard-codes a generic pass/fail/blocked outcome (see cli.py's `--outcome` choices)."
+      "description": "Open string. Canonical examples from the doc (acp.models.CANONICAL_STATUSES): implemented, review-pass, review-fail, blocked-access, needs-human, failed, acknowledged. \"pass\", \"fail\" and \"blocked\" are also in live use (see checks/verified below) as a generic, domain-agnostic convention -- this is not a closed enum in either direction."
+    },
+    "stage": {
+      "type": ["string", "null"],
+      "default": null
+    },
+    "output_ref": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "E.g. \"git:<sha>\"."
     },
     "checks": {
       "type": "object",
       "additionalProperties": { "type": "integer" },
-      "description": "A map of check-name -> exit code (e.g. {\"pytest\": 0}). The doc specifies `checks[]`: an array. This schema follows the real implementation (an object), not the doc."
+      "description": "A map of check-name -> exit code (e.g. {\"pytest\": 0})."
     },
     "summary": { "type": "string" },
     "verified": {
       "type": "boolean",
-      "description": "True when every value in `checks` is 0 (and, notably, also True when `checks` is empty -- an empty check list is 'verified' by this implementation's `all(...)` logic). Not named or described anywhere in the doc; closest in spirit to the doc's implicit 'checks_passed'."
+      "description": "True when every value in `checks` is 0. By design, also True when `checks` is empty (no checks run, nothing failed) -- this is a documented, deliberate quirk of the vacuous-truth semantics of `all(...)` over an empty collection, not a bug. Reviewers (QA discipline), not this flag, are the real backstop against an empty-check report of a passing status."
     }
   }
 }

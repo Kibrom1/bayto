@@ -58,8 +58,8 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 
 - [ ] **M1.6** `kits/bayto-team/spec.yaml` (patterns: `chapters/kits/pi`, `chapters/kits/herdr`, `chapters/kits/multi-provider`): installs Claude CLI, Herdr and the `acp` CLI; network allowlist = Anthropic API only for now; credentials proxy-managed.
 - [ ] **M1.7** `envs/team.sbxenv.yaml` template (name arg, cpus, memory, kits, workspace).
-- [ ] **M1.8** Dynamic roster: generate `team.tsv` (role, harness, provider, model) and per-role briefs from a session roster and the role catalog; adapt the workshop's `start-team` to it, keeping the readiness acks.
-- [ ] **M1.9** Per-role tool permissions: pass allow/deny lists to each Claude session (for example a Researcher without file writes).
+- [ ] **M1.8** (generator done in `acp.roster` + `roles/` catalog; `start-team` adaptation pending) Dynamic roster: generate `team.tsv` (role, harness, provider, model) and per-role briefs from a session roster and the role catalog; adapt the workshop's `start-team` to it, keeping the readiness acks.
+- [ ] **M1.9** (per-seat allow/deny lists generated to `tools.json`; passing them to the Claude sessions pending) Per-role tool permissions: pass allow/deny lists to each Claude session (for example a Researcher without file writes).
 - [ ] **M1.10** `spikes/m1-driver/`: a small Python driver that creates the sandbox with `sbx env create`, starts the team, then runs the floor loop: raise-hand signals from one Haiku call, `assignment` message, `crew-notify`, tail the messages, repeat until convergence, then a moderator summary; removes the sandbox with `sbx env rm`.
 - [ ] **M1.11** Test a read-write host mount for the factory directory (visibility, atomic renames, no NULL-filled files); if it fails, fall back to a sandbox-local factory directory read with `sbx exec`.
 - [ ] **M1.12** Measure sandbox memory and CPU with 3, 5 and 7 agents, sandbox creation time, and assignment-to-first-message latency. Record the recommended sandbox size and agent cap.
@@ -75,7 +75,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [ ] **M2.2** Schema: product tables (`task`, `agent`, `mode`, `session`, `session_agent`, `sandbox`, `turn`, `artifact`) plus `message` and `report` mirror tables.
 - [ ] **M2.3** Message mirror: a file watcher on the factory directory reads new `acp` messages and reports, writes them to Postgres in `seq` order, and publishes them to SSE subscribers. It resumes from the last mirrored `seq`.
 - [ ] **M2.4** `SandboxProvider` interface + `LocalSbxSandboxProvider`: create the team sandbox for a task, start the team, wake a role, stop, remove, and reconcile with `sbx ls` at startup.
-- [ ] **M2.5** Conversation core: envelope validation, send permissions from mode files, stage state machine with claims.
+- [ ] **M2.5** Conversation core: envelope validation, send permissions from mode files, stage state machine with claims. Includes the deferred `visibility` enforcement from M1.1b: `recipients` and `moderator` are accepted/stored on the envelope today but nothing actually hides a `recipients`- or `moderator`-visibility message from anyone but its intended reader (only `all` is used by `Conversation.transcript()`).
 - [ ] **M2.6** FloorPolicies: `round-robin` and `raise-hand` (one Haiku call scoring all personas).
 - [ ] **M2.7** Moderator agent: opening, rolling summary, stop conditions (rounds, budget, convergence), final synthesis into an `artifact`.
 - [ ] **M2.8** REST API: create task, create session (roster + mode), start, interject, stop; SSE stream of messages.
