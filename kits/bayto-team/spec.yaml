@@ -57,10 +57,50 @@ setup:
         curl -fsSL "https://github.com/herdrdev/herdr/releases/download/v${{ kit.args.herdr_version }}/herdr-linux-$arch" -o "$HOME/.local/bin/herdr"
         chmod +x "$HOME/.local/bin/herdr"
         herdr --version
+    # Where the mounted project lands is genuinely unclear at kit-apply time:
+    # $WORKSPACE_DIR (if SBX sets it for kits at all) may be the project root,
+    # or a parent of it, and chapters/support/bin/launch shows setup.install
+    # runs during `sbx create`/`sbx env create`, before the workshop's own
+    # launch flow even creates $HOME/work or exports its own (unrelated,
+    # hardcoded in chapters/support/bin/shell-init and
+    # chapters/support/bin/start-team) $WORKSPACE_DIR=$HOME/work convention.
+    # So: try each plausible location, install only from one that actually
+    # exists, never guess a single hardcoded path. Best-effort here (install
+    # may run before anything is mounted); the startup step below is the
+    # one that must succeed, since chapters/support/bin/prepare (which
+    # symlinks the real project to $HOME/work/app) has already run by the
+    # time a session actually starts.
     - user: agent
-      description: Install the acp CLI editable from the mounted workspace (agent-comms/)
+      description: Install the acp CLI editable from the mounted workspace, if it is already reachable (best effort; retried at session start)
       command: |
         set -eu
-        ws="${WORKSPACE_DIR:-/}"
-        uv tool install --editable "$ws/agent-comms"
-        "$HOME/.local/bin/acp" --help >/dev/null
+        find_agent_comms() {
+          for c in "${WORKSPACE_DIR:-}/agent-comms" "${WORKSPACE_DIR:-}/app/agent-comms" "$HOME/work/app/agent-comms"; do
+            [ -n "$c" ] && [ -d "$c" ] && { printf '%s' "$c"; return 0; }
+          done
+          return 1
+        }
+        if src="$(find_agent_comms)"; then
+          uv tool install --editable "$src"
+          "$HOME/.local/bin/acp" --help >/dev/null
+        else
+          echo "bayto-team: agent-comms/ not mounted yet at kit-setup time, skipping (retried at session start)" >&2
+        fi
+  startup:
+    - user: agent
+      description: Install/refresh the acp CLI editable from the mounted workspace (agent-comms/)
+      command: |
+        set -eu
+        find_agent_comms() {
+          for c in "${WORKSPACE_DIR:-}/agent-comms" "${WORKSPACE_DIR:-}/app/agent-comms" "$HOME/work/app/agent-comms"; do
+            [ -n "$c" ] && [ -d "$c" ] && { printf '%s' "$c"; return 0; }
+          done
+          return 1
+        }
+        if src="$(find_agent_comms)"; then
+          uv tool install --editable "$src"
+          "$HOME/.local/bin/acp" --help >/dev/null
+        else
+          echo "bayto-team: agent-comms/ not found under \$WORKSPACE_DIR, \$WORKSPACE_DIR/app or \$HOME/work/app; acp CLI not installed" >&2
+          exit 1
+        fi
