@@ -1,0 +1,106 @@
+# Team sandbox kit for Bayto (M1.6). Combines the workshop's Claude CLI +
+# Herdr session control (chapters/kits/pi, chapters/kits/herdr) with our own
+# acp CLI (agent-comms/, installed editable from the mounted workspace instead
+# of a registry, since it isn't published). Single-provider (Claude/Anthropic
+# only) version of chapters/kits/multi-provider's credential/network pattern:
+# proxy-managed API key, no OAuth dance, no other providers' domains.
+schemaVersion: "2"
+kind: mixin
+name: bayto-team
+description: Install Claude CLI, Herdr and the acp CLI for a Bayto team sandbox.
+args:
+  claude_version:
+    default: "2.1.282" # versions.env: CLAUDE_CLI_VERSION
+  herdr_version:
+    default: "0.9.0" # chapters/kits/herdr default
+credentials:
+  - service: anthropic
+    apiKey:
+      name: ANTHROPIC_API_KEY
+      proxyManaged: true
+      inject:
+        - domain: api.anthropic.com
+          header: x-api-key
+          format: "%s"
+permissions:
+  network:
+    allow:
+      # Anthropic API only for now (M1.6): no other model providers, unlike
+      # chapters/kits/multi-provider.
+      - api.anthropic.com
+      # Herdr release download (chapters/kits/herdr pattern).
+      - github.com
+      - release-assets.githubusercontent.com
+      - objects.githubusercontent.com
+      # Claude CLI npm install.
+      - registry.npmjs.org
+      # acp CLI's own deps (pydantic, pyyaml) via `uv tool install`; acp
+      # itself comes from the mounted workspace, not a registry.
+      - pypi.org
+      - files.pythonhosted.org
+setup:
+  install:
+    - user: agent
+      description: Install the pinned Claude CLI
+      command: |
+        set -eu
+        if ! command -v claude >/dev/null 2>&1; then
+          npm install -g "@anthropic-ai/claude-code@${{ kit.args.claude_version }}"
+        fi
+        claude --version
+    - user: agent
+      description: Install the pinned Herdr (chapters/kits/herdr, same binary and fallback logic)
+      command: |
+        set -eu
+        mkdir -p "$HOME/.local/bin"
+        case "$(uname -m)" in aarch64|arm64) arch=aarch64;; x86_64|amd64) arch=x86_64;; *) exit 1;; esac
+        curl -fsSL "https://github.com/herdrdev/herdr/releases/download/v${{ kit.args.herdr_version }}/herdr-linux-$arch" -o "$HOME/.local/bin/herdr"
+        chmod +x "$HOME/.local/bin/herdr"
+        herdr --version
+    # Where the mounted project lands is genuinely unclear at kit-apply time:
+    # $WORKSPACE_DIR (if SBX sets it for kits at all) may be the project root,
+    # or a parent of it, and chapters/support/bin/launch shows setup.install
+    # runs during `sbx create`/`sbx env create`, before the workshop's own
+    # launch flow even creates $HOME/work or exports its own (unrelated,
+    # hardcoded in chapters/support/bin/shell-init and
+    # chapters/support/bin/start-team) $WORKSPACE_DIR=$HOME/work convention.
+    # So: try each plausible location, install only from one that actually
+    # exists, never guess a single hardcoded path. Best-effort here (install
+    # may run before anything is mounted); the startup step below is the
+    # one that must succeed, since chapters/support/bin/prepare (which
+    # symlinks the real project to $HOME/work/app) has already run by the
+    # time a session actually starts.
+    - user: agent
+      description: Install the acp CLI editable from the mounted workspace, if it is already reachable (best effort; retried at session start)
+      command: |
+        set -eu
+        find_agent_comms() {
+          for c in "${WORKSPACE_DIR:-}/agent-comms" "${WORKSPACE_DIR:-}/app/agent-comms" "$HOME/work/app/agent-comms"; do
+            [ -n "$c" ] && [ -d "$c" ] && { printf '%s' "$c"; return 0; }
+          done
+          return 1
+        }
+        if src="$(find_agent_comms)"; then
+          uv tool install --editable "$src"
+          "$HOME/.local/bin/acp" --help >/dev/null
+        else
+          echo "bayto-team: agent-comms/ not mounted yet at kit-setup time, skipping (retried at session start)" >&2
+        fi
+  startup:
+    - user: agent
+      description: Install/refresh the acp CLI editable from the mounted workspace (agent-comms/)
+      command: |
+        set -eu
+        find_agent_comms() {
+          for c in "${WORKSPACE_DIR:-}/agent-comms" "${WORKSPACE_DIR:-}/app/agent-comms" "$HOME/work/app/agent-comms"; do
+            [ -n "$c" ] && [ -d "$c" ] && { printf '%s' "$c"; return 0; }
+          done
+          return 1
+        }
+        if src="$(find_agent_comms)"; then
+          uv tool install --editable "$src"
+          "$HOME/.local/bin/acp" --help >/dev/null
+        else
+          echo "bayto-team: agent-comms/ not found under \$WORKSPACE_DIR, \$WORKSPACE_DIR/app or \$HOME/work/app; acp CLI not installed" >&2
+          exit 1
+        fi
