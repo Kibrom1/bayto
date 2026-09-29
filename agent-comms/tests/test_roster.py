@@ -8,9 +8,9 @@ from acp.roster import RosterError, build_team, load_catalog, tool_cli_args
 CATALOG = Path(__file__).resolve().parents[2] / "roles"
 
 
-def test_default_catalog_has_seven_roles():
+def test_default_catalog_has_eight_roles():
     assert set(load_catalog(CATALOG)) == {"researcher", "product-owner", "coordinator", "architect",
-                                          "backend-engineer", "frontend-engineer", "qa-tester"}
+                                          "backend-engineer", "frontend-engineer", "qa-tester", "code-reviewer"}
 
 
 def test_build_team_files(tmp_path):
