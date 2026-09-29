@@ -4,7 +4,7 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M2 are broken down to the task level; M3–M6 stay at deliverable level and get detailed when M2 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Next up:** M1.10 — the `spikes/m1-driver/` Python driver, then M1.11 (host-mount test) and the rest of M1's measurements/checks.
+**Next up:** M2.2 — the orchestrator's product + mirror schema, then M2.3 (message mirror) and the rest of M2.
 
 ## Timeline
 
@@ -70,11 +70,14 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [ ] **M1.14** Check that agent state survives a sandbox stop and start (needed for task-scoped memory).
 - [ ] **M1.15** Security check: agents can't read the real API key, the network allowlist blocks other domains, and role tool permissions actually deny what they should.
 
+**M1.10–M1.15 are skipped for now (decided 2026-09-29):** each needs the host's `sbx` CLI (`sbx env create`/`sbx env rm`, `sbx ls`) to actually create/measure/tear down a
+team sandbox, which is not available inside this dev-team sandbox. They stay unchecked until run from a host with `sbx`. M2 does not depend on them landing first.
+
 **Done when:** the M0 debate runs with roles generated from a roster, the conformance suite passes on `FileTransport`, and the M1.12–M1.14 measurements are written up.
 
 ## M2 — Orchestrator service
 
-- [ ] **M2.1** Python project `orchestrator/` managed with `uv`: FastAPI, Pydantic v2, SQLAlchemy 2 (async) + psycopg 3, Alembic migrations, `sse-starlette`, pytest + pytest-asyncio; reuse the `acp` package from M1.
+- [x] **M2.1** Python project `orchestrator/` managed with `uv`: FastAPI, Pydantic v2, SQLAlchemy 2 (async) + psycopg 3, Alembic migrations, `sse-starlette`, pytest + pytest-asyncio; reuse the `acp` package from M1. Minimal scaffold (human-scoped): project files, a `/healthz` endpoint, one passing test, a `uv.lock`; schema/migrations/mirror/API surface land in M2.2+.
 - [ ] **M2.2** Schema: product tables (`task`, `agent`, `mode`, `session`, `session_agent`, `sandbox`, `turn`, `artifact`) plus `message` and `report` mirror tables.
 - [ ] **M2.3** Message mirror: a file watcher on the factory directory reads new `acp` messages and reports, writes them to Postgres in `seq` order, and publishes them to SSE subscribers. It resumes from the last mirrored `seq`.
 - [ ] **M2.4** `SandboxProvider` interface + `LocalSbxSandboxProvider`: create the team sandbox for a task, start the team, wake a role, stop, remove, and reconcile with `sbx ls` at startup.
