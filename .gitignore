@@ -11,3 +11,6 @@ factory/
 .local/
 .build/
 dev-team/.build/
+
+# Local run records from dev-team sandboxes
+dev-team/runs/
