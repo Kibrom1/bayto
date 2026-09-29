@@ -1,8 +1,9 @@
 # orchestrator
 
 Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres, and SSE streaming.
-M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher. See `docs/work-plan.md`
-for M2.4+ (SandboxProvider, conversation core, floor policies, moderator, REST/SSE API).
+M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
+SandboxProvider seam. See `docs/work-plan.md` for M2.5+ (conversation core, floor policies, moderator,
+REST/SSE API).
 
 ## Layout
 
@@ -29,11 +30,22 @@ for M2.4+ (SandboxProvider, conversation core, floor policies, moderator, REST/S
   polling (`run_forever`); `poll_once` is the tested unit.
 - `src/orchestrator/pubsub.py` (M2.3) — a small in-process async pub/sub (`asyncio.Queue` per subscriber). Not
   the SSE HTTP endpoint (that's M2.8); this is what a future SSE handler would subscribe to.
+- `src/orchestrator/sandbox/` (M2.4) — `provider.py`: the abstract `SandboxProvider` (an ABC, not a Protocol,
+  per `docs/product-design.md`'s cloud-provider seam), `SandboxInfo` (a frozen dataclass mirroring the `sandbox`
+  row), `SandboxDrift`, and the `SandboxProviderError`/`SandboxCommandError` exceptions. `local.py`:
+  `LocalSbxSandboxProvider`, which drives the local `sbx` CLI through an injectable `SbxRunner` seam
+  (`SubprocessSbxRunner` in production) — `create`/`start_team`/`wake_role`/`stop`/`remove`/`reconcile` each
+  open one session per call against the single `sandbox` row for the task. See the module docstring for exactly
+  which `sbx` argv shapes are quoted verbatim in the docs versus extrapolated and unverified (no real `sbx`
+  binary in this dev-team sandbox — see `docs/decisions.md`, 2026-09-29). `reconcile()`'s drift detection is a
+  pure function, `_diff`, tested with zero I/O.
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
   in `conftest.py`; skip cleanly if none is reachable). `test_mirror.py::test_pubsub_fanout_in_order` needs no
-  DB at all.
+  DB at all. `test_sandbox_diff.py` (pure `_diff` unit tests, no DB), `test_sandbox_provider.py` (ABC contract,
+  no DB), `test_local_sandbox.py` (`LocalSbxSandboxProvider` against a `FakeSbxRunner`; most cases use
+  `live_sessionmaker` for real DB reads/writes, two argv-only cases need no DB at all).
 
 ## Run tests
 
@@ -58,3 +70,10 @@ and `alembic downgrade base` cleanly dropped every table.
 M2.3's mirror tests ran against the same kind of throwaway container and passed: message ordering, idempotency
 under re-polling, resume-after-restart (a brand-new `MessageMirror` instance only mirrors what's genuinely new),
 and a report correctly deferred until its message is mirrored. See the PR description for the exact commands.
+
+M2.4's `LocalSbxSandboxProvider` tests ran against the same kind of throwaway container and passed: `create` is
+idempotent and inserts/updates the one `sandbox` row per task, `stop` is no-op-safe once already stopped, a
+failed `sbx` command raises `SandboxCommandError` and leaves the DB row unmodified, and `reconcile` correctly
+marks a gone sandbox removed, syncs a live one's status, and reports (without touching) an orphan. The `sbx`
+CLI itself is stubbed with a `FakeSbxRunner` — no real `sbx` binary is available in this dev-team sandbox (see
+`docs/decisions.md`, 2026-09-29).
