@@ -21,8 +21,18 @@ install -m 0755 "$repo/agent-comms/src/acp/handoff_compat.py" "$build/chapters/s
 # The workshop blanks GH_TOKEN/GITHUB_TOKEN for seats; Bayto engineers open PRs, so let them inherit the proxy-managed placeholder.
 sed -i.bak "s/--env GH_TOKEN= --env GITHUB_TOKEN= //" "$build/chapters/support/bin/start-team" && rm "$build/chapters/support/bin/start-team.bak"
 grep -q -- "--env GH_TOKEN=" "$build/chapters/support/bin/start-team" && { echo "start-team still blanks GH_TOKEN"; exit 1; } || true
+# M1.9: the workshop never passes tool permissions to a session. For harness=claude only, inject
+# the seat's tools.json allow/deny lists as Claude Code CLI flags (`acp tool-flags` does the
+# tools.json-entry -> flags translation; this is thin bash glue around it).
+sed -i.bak '/if \[ -z "\$ws" \]; then/i\
+  if [ "$harness" = claude ] \&\& [ -f "$FACTORY_DIR/tools.json" ]; then\
+    while IFS= read -r flag; do args+=("$flag"); done < <(acp tool-flags --tools-json "$FACTORY_DIR/tools.json" --role "$role")\
+  fi' "$build/chapters/support/bin/start-team" && rm "$build/chapters/support/bin/start-team.bak"
+grep -q -- 'acp tool-flags --tools-json "\$FACTORY_DIR/tools.json" --role "\$role"' "$build/chapters/support/bin/start-team" \
+  || { echo "start-team missing the tool-permission patch"; exit 1; }
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
 cp "$gen/team.tsv" "$build/factory/team.tsv"
+cp "$gen/tools.json" "$build/factory/tools.json"
 printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=shell\n' > "$build/factory/chapter.env"
 # Claude-only, no Pi kit, no ACR kit; no ports.
 cat > "$build/factory/sbxenv.yaml" <<'YML'

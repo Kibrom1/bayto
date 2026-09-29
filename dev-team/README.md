@@ -21,7 +21,8 @@ In the sandbox shell:
 `dev-team/roster.txt` picks the seats (one `<role id> [model]` per line, from the `roles/` catalog); `run.sh` turns it into `team.tsv`,
 one brief per seat and `roster.json` via `build-roster.py` (needs `uv`), and `start-team`, `handoff`, `crew` and `crew-notify` follow that roster.
 Project-wide rules for every seat live in `team-rules.md`. Use another roster with `ROSTER=path dev-team/run.sh bayto-dev`.
-Tool allow/deny lists (`tools.json`) are written but not enforced yet (M1.9): a seat's limits are only in its brief.
+Tool allow/deny lists (`tools.json`, M1.8) are enforced (M1.9): `run.sh` copies `tools.json` into the sandbox factory dir and the patched `start-team` passes each Claude
+seat's allow/deny lists as `--allowedTools`/`--disallowedTools` CLI flags (via `acp tool-flags`), on top of the limits already stated in its brief.
 
 Agents open the PR themselves. To push branches from the Mac instead (or for the ones the team did not push):
 

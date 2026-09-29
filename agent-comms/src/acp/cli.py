@@ -8,6 +8,7 @@ import sys
 
 from .core import Conversation, PermissionError_
 from .models import Roster
+from .roster import tool_cli_args
 from .transport import FileTransport
 
 
@@ -38,7 +39,16 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("name")
     g = sub.add_parser("stage")
     g.add_argument("value", nargs="?")
+    t = sub.add_parser("tool-flags", help="tools.json seat entry -> Claude Code CLI flags (M1.9)")
+    t.add_argument("--tools-json", required=True)
+    t.add_argument("--role", required=True)
     args = p.parse_args(argv)
+
+    if args.cmd == "tool-flags":
+        entry = json.loads(open(args.tools_json).read()).get(args.role, {})
+        for flag in tool_cli_args(entry):
+            print(flag)
+        return 0
 
     roles = [r for r in args.roles.split(",") if r] or [args.role or "human"]
     conv = Conversation(args.conv, Roster(roles=roles), FileTransport(args.dir))

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from acp.roster import RosterError, build_team, load_catalog
+from acp.roster import RosterError, build_team, load_catalog, tool_cli_args
 
 CATALOG = Path(__file__).resolve().parents[2] / "roles"
 
@@ -39,3 +39,28 @@ def test_unknown_or_empty_roster_rejected(tmp_path):
         build_team([{"role": "wizard"}], cat, tmp_path)
     with pytest.raises(RosterError):
         build_team([], cat, tmp_path)
+
+
+def test_tool_cli_args_builds_claude_flags():
+    assert tool_cli_args({"allow": ["Read", "Write"], "deny": ["WebFetch"]}) == [
+        "--allowedTools", "Read", "Write", "--disallowedTools", "WebFetch",
+    ]
+
+
+def test_tool_cli_args_omits_empty_lists():
+    assert tool_cli_args({"allow": [], "deny": ["Write", "Edit", "Bash"]}) == [
+        "--disallowedTools", "Write", "Edit", "Bash",
+    ]
+    assert tool_cli_args({"allow": ["Read"], "deny": []}) == ["--allowedTools", "Read"]
+    assert tool_cli_args({}) == []
+
+
+def test_tool_cli_args_matches_tools_json_for_every_catalog_role():
+    cat = load_catalog(CATALOG)
+    for role_id, role in cat.items():
+        entry = {"allow": role["tools"]["allow"], "deny": role["tools"]["deny"]}
+        flags = tool_cli_args(entry)
+        for tool in entry["allow"]:
+            assert tool in flags
+        for tool in entry["deny"]:
+            assert tool in flags
