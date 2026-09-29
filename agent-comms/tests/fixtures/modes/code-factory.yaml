@@ -1,0 +1,15 @@
+# docs/agent-communication-protocol.md's "Reuse" example mode, extended with the M2.5
+# `moderator` field. Fixture for test_modes.py -- not wired into any running team yet.
+mode: code-factory
+floor_policy: pipeline
+roles:
+  coordinator: { may_send: [assignment, question, decision-request, summary, note] }
+  developer:   { may_send: [report, question, answer, note, x-code.review-request] }
+  qa:          { may_send: [report, critique, question, note] }
+  human:       { may_send: [decision, question, note] }
+route:
+  start: coordinator
+  developer.report.implemented: qa
+  qa.report.review-fail: developer
+  qa.report.review-pass: coordinator
+moderator: coordinator
