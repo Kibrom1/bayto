@@ -88,3 +88,16 @@ def build_team(entries: list[dict], catalog: dict[str, dict], out_dir: str | Pat
     roster = {"conversation": conversation, "roles": seats}
     (out / "roster.json").write_text(json.dumps(roster, indent=2))
     return {"seats": seats, "network": sorted(network), "tools": tools, "roster": roster}
+
+
+def tool_cli_args(entry: dict[str, list[str]]) -> list[str]:
+    """A `tools.json` seat entry ({"allow": [...], "deny": [...]}) -> Claude Code CLI flags
+    (M1.9). Empty allow/deny lists are omitted rather than passed as empty flags."""
+    args: list[str] = []
+    allow = entry.get("allow") or []
+    deny = entry.get("deny") or []
+    if allow:
+        args += ["--allowedTools", *allow]
+    if deny:
+        args += ["--disallowedTools", *deny]
+    return args
