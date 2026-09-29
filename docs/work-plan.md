@@ -55,7 +55,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [x] **M1.3** `FileTransport`, backward compatible with the workshop's `$FACTORY_DIR` layout.
 - [x] **M1.4** Conformance tests (port `scripts/tests/crew.py` and `crew-notify.sh`): concurrent `seq`, crash-before-consume redelivery, broadcast consumption, stale attempts, single-fire claims, busy wake-up returns 3, permission rejection.
 - [x] **M1.5** Compatibility check: run the workshop factory on `acp` instead of `handoff` with no behavior change.
-- [ ] **M1.5a** Fix `agent-comms/docs/m1.5-compat-check.md`: it says the bash reference's message-id suffix is "10 chars"; QA traced it to 6 random chars + the shell PID (variable length), because `set -o pipefail` makes the `|| printf "$$"` fallback fire after `head -c 6`. Done when the doc states that and the claim is re-checked against the script.
+- [x] **M1.5a** Fix `agent-comms/docs/m1.5-compat-check.md`: it says the bash reference's message-id suffix is "10 chars"; QA traced it to 6 random chars + the shell PID (variable length), because `set -o pipefail` makes the `|| printf "$$"` fallback fire after `head -c 6`. Done when the doc states that and the claim is re-checked against the script.
 
 **Team sandbox**
 
