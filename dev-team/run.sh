@@ -40,5 +40,5 @@ kits:
   - source: ../chapters/kits/herdr
 YML
 git -C "$repo" switch main >/dev/null 2>&1 || true
-echo "Mounting $repo read-write. Agents commit to sbx/<task> branches; push from the host with scripts/push-sbx-branches.sh"
+echo "Mounting $repo read-write. Engineers commit to sbx/<task> branches, push them and open PRs (GitHub secret needed, see dev-team/README.md)"
 exec "$build/scripts/launch-factory.sh" "$name" "$repo"

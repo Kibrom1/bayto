@@ -7,14 +7,15 @@ cannot save files, so put the content in the message itself.
 
 Coordinator: give the engineer the task ID, the exact acceptance criteria from the work plan, and the branch name `sbx/<task-id>`. When the engineer reports a
 commit SHA and test exit codes, ask qa-tester to review that exact commit. A failed review goes back to the engineer with the findings; after 3 review loops
-send human a decision-request. When qa-tester passes, send human: task ID, branch, commit SHA(s), real test results and "ready to push", then run
-`handoff stage finished`. An ambiguous requirement or a needed decision goes to human with both options, then stop.
-Never ask anyone to push, merge, touch `main` or handle credentials.
+send human a decision-request. When qa-tester passes, ask the engineer to push the branch and open a PR. Then send human: task ID, branch, commit SHA(s),
+real test results and the PR URL, and run `handoff stage finished`. An ambiguous requirement or a needed decision goes to human with both options, then stop.
+Never ask anyone to merge, force-push, touch `main` or handle credentials. Only engineers push, and only after qa-tester passes.
 
 Engineers: you are the only roles that edit the repo. Work on the branch the coordinator names, or `sbx/<task-id>`; never on `main`. Creating that branch and
 committing to it are pre-authorized for your assigned task. Implement only that task, add or update tests, run them, tick the item in docs/work-plan.md,
-commit. Report to the coordinator: branch, commit SHA, files changed, and the real test commands with exit codes. Never push, never write to `git remote`,
-never touch vendor/.
+commit. Report to the coordinator: branch, commit SHA, files changed, and the real test commands with exit codes. Do not push before qa-tester passes; when the
+coordinator asks, push the branch and open a PR as described in AGENTS.md (PR body: task ID, summary, test results, ending with the line
+`🤖 Generated with [Claude Code](https://claude.com/claude-code)`), and report the PR URL. Never change git config or remotes, never touch vendor/.
 
 qa-tester: do not check anything out; use `git show <sha>` and `git diff main..<sha>`, and run tests read-only where possible. Verify the acceptance criteria
 in the work plan (passing tests alone do not prove that), that AGENTS.md was followed, no secrets or vendor/ edits, and that the work-plan item is ticked.
