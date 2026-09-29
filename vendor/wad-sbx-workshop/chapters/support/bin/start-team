@@ -10,9 +10,11 @@ for _ in $(seq 1 40); do herdr workspace list >/dev/null 2>&1 && break; sleep 0.
 handoff init --run "$(hostname)" --task "$TASK"
 mkdir -p "$FACTORY_DIR/ready"
 ws=''
+roles=()
 while read -r role harness provider model; do
   [ -n "$role" ] || continue
   [ -n "$model" ] || { echo "Each team row needs role, assistant, provider and model" >&2; exit 2; }
+  roles+=("$role")
   args=(--model "$model")
   vars=(--env GH_TOKEN= --env GITHUB_TOKEN= --env "PATH=$PATH" --env "FACTORY_DIR=$FACTORY_DIR" --env "WORKSPACE_DIR=$WORKSPACE_DIR" --env "FACTORY_ROLE=$role")
   if [ "$harness" = pi ]; then
@@ -29,8 +31,8 @@ while read -r role harness provider model; do
   fi
   herdr agent start "$role" --kind "$harness" --pane "$pane" --timeout 180000 -- "${args[@]}" > "$FACTORY_DIR/evidence/start-$role.json"
 done < team.tsv
-# Initialize every role with its brief. Do not give a task until the learner submits.
-for role in coordinator developer qa; do
+# Initialize every role from team.tsv with its brief. Do not give a task until the learner submits.
+for role in "${roles[@]}"; do
   herdr agent prompt "$role" "Read $WORKSPACE_DIR/roles/$role.md. This is initialization only: acknowledge, run touch $FACTORY_DIR/ready/$role, and stop. Do not start work yet." >/dev/null
 done
 touch "$FACTORY_DIR/team-started"
