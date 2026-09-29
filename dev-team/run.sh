@@ -12,6 +12,7 @@ rm -rf "$build"; mkdir -p "$build"
 tar -C "$src" --exclude=.local -cf - . | tar -C "$build" -xf -
 ln -s "$src/.local" "$build/.local"
 cp "$here/roles/"*.md "$build/chapters/support/roles/"
+install -m 0755 "$repo/agent-comms/src/acp/handoff_compat.py" "$build/chapters/support/bin/handoff"
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
 cp "$here/team.tsv" "$build/factory/team.tsv"
 printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=shell\n' > "$build/factory/chapter.env"
