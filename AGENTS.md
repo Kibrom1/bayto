@@ -2,7 +2,7 @@
 
 Read `docs/work-plan.md` (tasks), `docs/product-design.md` and `docs/agent-communication-protocol.md` before coding.
 
-- Branch: work only on a branch named `sbx/<short-task-name>`. Never commit to `main`, never force-push, never merge a PR (a human merges).
+- Branch: work only on a branch named `sbx/<short-task-name>`. Never commit to `main`, never force-push, never merge a PR, except that the `code-reviewer` seat may merge a reviewed, QA-passed PR that meets every gate in `roles/code-reviewer.md`; a human merges all other PRs, including any PR that changes the team's own rules.
 - Git: engineers may commit, push their `sbx/*` branch and open a PR. `origin` is an SSH URL the sandbox cannot use; push over HTTPS instead: `git push https://github.com/<owner>/<repo>.git <branch>` (owner/repo from `git remote get-url origin`), then `gh pr create --repo <owner>/<repo> --head <branch> --base main --title ... --body ...`. The sandbox proxy adds the GitHub credential; `gh auth status` showing "not logged in" is expected. Never look for, print or store a token.
 - Python 3.12, `uv`, pydantic v2. The protocol package is `agent-comms/` (run tests: `cd agent-comms && uv venv --python 3.12 && uv pip install -e ".[dev]" && .venv/bin/pytest -q`).
 - Do not edit `vendor/` (copied third-party code), `docs/decisions.md` history, or anything containing credentials. Never write secrets into the repo.

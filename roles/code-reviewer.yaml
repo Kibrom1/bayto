@@ -1,0 +1,28 @@
+id: code-reviewer
+name: Code reviewer
+responsibility: Reviews the pull request diff; merges it only when every merge gate in
+  its brief holds, otherwise requests changes or hands it to the human.
+brief: roles/code-reviewer.md
+may_send:
+- report
+- critique
+- question
+receives:
+- assignment
+- report
+- question
+- answer
+- resume
+tools:
+  allow:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  deny:
+  - Write
+  - Edit
+  - WebFetch
+team_needs:
+  network:
+  - api.anthropic.com

@@ -7,4 +7,5 @@ researcher
 architect
 backend-engineer
 qa-tester
+code-reviewer
 # frontend-engineer
