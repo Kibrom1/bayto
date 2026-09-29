@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bayto.dev/schema/acp/hand-raise.v1.json",
+  "title": "acp/1 hand-raise",
+  "description": "Modeled directly on the `HandRaise` sketch in docs/agent-communication-protocol.md ('Floor control'): participant, reason, urgency, in_reply_to. UNLIKE message.v1.json and (partly) report.v1.json, there is currently NO code in agent-comms/src/acp that constructs, emits, or validates this shape -- grep for HandRaise/Reason in agent-comms/src/acp turns up nothing. Today a hand-raise signal, if sent at all, is just an ordinary Envelope with kind=\"hand-raise\" and a free-text `body`; it carries no structured `reason` or `urgency`. This schema is therefore the doc's *intended* v1 shape, not a description of any existing implementation output, because there is no implementation output to describe yet. See docs/decisions.md (2026-09-29) -- this is flagged as a gap for the FloorPolicy / M2.6 work, not fixed here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["participant", "reason", "urgency"],
+  "properties": {
+    "participant": { "type": "string", "minLength": 1 },
+    "reason": {
+      "type": "string",
+      "enum": ["addressed", "new_point", "disagree", "agree_pass"],
+      "description": "The doc's `Reason` StrEnum: ADDRESSED, NEW_POINT, DISAGREE, AGREE_PASS -- serialized here as their StrEnum values."
+    },
+    "urgency": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "0..1, per the doc."
+    },
+    "in_reply_to": {
+      "type": ["string", "null"],
+      "default": null
+    }
+  }
+}

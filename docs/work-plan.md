@@ -48,7 +48,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 
 **Protocol (`agent-comms/`)**
 
-- [ ] **M1.1** `schema/message.v1.json`, `report.v1.json`, `hand-raise.v1.json` from the protocol doc.
+- [x] **M1.1** `schema/message.v1.json`, `report.v1.json`, `hand-raise.v1.json` from the protocol doc.
 - [x] **M1.2** `acp` CLI: send, read, ack, transcript, report, claim, stage (dynamic roles via `--roles`)
 - [x] **M1.3** `FileTransport`, backward compatible with the workshop's `$FACTORY_DIR` layout.
 - [ ] **M1.4** Conformance tests (port `scripts/tests/crew.py` and `crew-notify.sh`): concurrent `seq`, crash-before-consume redelivery, broadcast consumption, stale attempts, single-fire claims, busy wake-up returns 3, permission rejection.
