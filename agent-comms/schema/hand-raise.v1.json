@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bayto.dev/schema/acp/hand-raise.v1.json",
   "title": "acp/1 hand-raise",
-  "description": "Modeled directly on the `HandRaise` sketch in docs/agent-communication-protocol.md ('Floor control'): participant, reason, urgency, in_reply_to. UNLIKE message.v1.json and (partly) report.v1.json, there is currently NO code in agent-comms/src/acp that constructs, emits, or validates this shape -- grep for HandRaise/Reason in agent-comms/src/acp turns up nothing. Today a hand-raise signal, if sent at all, is just an ordinary Envelope with kind=\"hand-raise\" and a free-text `body`; it carries no structured `reason` or `urgency`. This schema is therefore the doc's *intended* v1 shape, not a description of any existing implementation output, because there is no implementation output to describe yet. See docs/decisions.md (2026-09-29) -- this is flagged as a gap for the FloorPolicy / M2.6 work, not fixed here.",
+  "description": "Modeled directly on the `HandRaise` sketch in docs/agent-communication-protocol.md ('Floor control'): participant, reason, urgency, in_reply_to. Implemented as of M2.6 by agent-comms/src/acp/floor.py's `HandRaise`/`Reason` -- this schema is the single source of truth for both the wire shape and (via orchestrator's AnthropicHandRaiseScorer) the LLM's structured-output contract, read at runtime rather than duplicated. See agent-comms/tests/test_schemas.py's hand-raise section for the real-output validation and docs/decisions.md (2026-09-29) for the M2.6 gap closure.",
   "type": "object",
   "additionalProperties": false,
   "required": ["participant", "reason", "urgency"],
