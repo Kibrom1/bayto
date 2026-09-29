@@ -18,6 +18,9 @@ uv run --no-project --quiet --with pyyaml --with pydantic "$here/build-roster.py
 rm -f "$build/chapters/support/roles/"*.md
 cp "$gen/roles/"*.md "$build/chapters/support/roles/"
 install -m 0755 "$repo/agent-comms/src/acp/handoff_compat.py" "$build/chapters/support/bin/handoff"
+# The workshop blanks GH_TOKEN/GITHUB_TOKEN for seats; Bayto engineers open PRs, so let them inherit the proxy-managed placeholder.
+sed -i.bak "s/--env GH_TOKEN= --env GITHUB_TOKEN= //" "$build/chapters/support/bin/start-team" && rm "$build/chapters/support/bin/start-team.bak"
+grep -q -- "--env GH_TOKEN=" "$build/chapters/support/bin/start-team" && { echo "start-team still blanks GH_TOKEN"; exit 1; } || true
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
 cp "$gen/team.tsv" "$build/factory/team.tsv"
 printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=shell\n' > "$build/factory/chapter.env"
