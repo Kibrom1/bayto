@@ -4,7 +4,7 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M2 are broken down to the task level; M3–M6 stay at deliverable level and get detailed when M2 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Next up:** M1.8 — the `start-team` adaptation (see its note), then the M1.5a doc fix.
+**Next up:** M1.5a — the compat-check doc fix, then M1.6/M1.7 (team sandbox kit).
 
 ## Timeline
 
@@ -61,7 +61,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 
 - [ ] **M1.6** `kits/bayto-team/spec.yaml` (patterns: `chapters/kits/pi`, `chapters/kits/herdr`, `chapters/kits/multi-provider`): installs Claude CLI, Herdr and the `acp` CLI; network allowlist = Anthropic API only for now; credentials proxy-managed.
 - [ ] **M1.7** `envs/team.sbxenv.yaml` template (name arg, cpus, memory, kits, workspace).
-- [ ] **M1.8** (generator done in `acp.roster` + `roles/` catalog; `start-team` adaptation pending) Dynamic roster: generate `team.tsv` (role, harness, provider, model) and per-role briefs from a session roster and the role catalog; adapt the workshop's `start-team` to it, keeping the readiness acks. Lessons from the M1.5 run to build in: a role that never acks is usually stuck on a one-time Claude prompt (fullscreen renderer, "read outside working directories"), so detect `blocked` agents and report them instead of failing with `agent_not_ready`; and re-send the brief when a role hasn't acked, since a prompt sent during startup can be dropped.
+- [x] **M1.8** Dynamic roster: generate `team.tsv` (role, harness, provider, model) and per-role briefs from a session roster and the role catalog (`acp.roster` + `roles/` catalog); the workshop's `start-team` now reads its readiness-ack role list from `team.tsv` instead of a hard-coded `coordinator developer qa`, waits per role with a bounded timeout, resends the brief once in case the startup prompt was dropped, and reports a role as blocked (with the `herdr` command to inspect it) if it's stuck on Claude's one-time "read outside working directories" permission prompt, instead of only timing out.
 - [ ] **M1.9** (per-seat allow/deny lists generated to `tools.json`; passing them to the Claude sessions pending) Per-role tool permissions: pass allow/deny lists to each Claude session (for example a Researcher without file writes).
 - [ ] **M1.10** `spikes/m1-driver/`: a small Python driver that creates the sandbox with `sbx env create`, starts the team, then runs the floor loop: raise-hand signals from one Haiku call, `assignment` message, `crew-notify`, tail the messages, repeat until convergence, then a moderator summary; removes the sandbox with `sbx env rm`.
 - [ ] **M1.11** Test a read-write host mount for the factory directory (visibility, atomic renames, no NULL-filled files); if it fails, fall back to a sandbox-local factory directory read with `sbx exec`.

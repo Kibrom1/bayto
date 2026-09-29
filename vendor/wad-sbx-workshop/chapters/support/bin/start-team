@@ -10,9 +10,11 @@ for _ in $(seq 1 40); do herdr workspace list >/dev/null 2>&1 && break; sleep 0.
 handoff init --run "$(hostname)" --task "$TASK"
 mkdir -p "$FACTORY_DIR/ready"
 ws=''
+roles=()
 while read -r role harness provider model; do
   [ -n "$role" ] || continue
   [ -n "$model" ] || { echo "Each team row needs role, assistant, provider and model" >&2; exit 2; }
+  roles+=("$role")
   args=(--model "$model")
   vars=(--env GH_TOKEN= --env GITHUB_TOKEN= --env "PATH=$PATH" --env "FACTORY_DIR=$FACTORY_DIR" --env "WORKSPACE_DIR=$WORKSPACE_DIR" --env "FACTORY_ROLE=$role")
   if [ "$harness" = pi ]; then
@@ -29,9 +31,35 @@ while read -r role harness provider model; do
   fi
   herdr agent start "$role" --kind "$harness" --pane "$pane" --timeout 180000 -- "${args[@]}" > "$FACTORY_DIR/evidence/start-$role.json"
 done < team.tsv
-# Initialize every role with its brief. Do not give a task until the learner submits.
-for role in coordinator developer qa; do
-  herdr agent prompt "$role" "Read $WORKSPACE_DIR/roles/$role.md. This is initialization only: acknowledge, run touch $FACTORY_DIR/ready/$role, and stop. Do not start work yet." >/dev/null
+# Initialize every role from team.tsv with its brief and wait for its ack. Do not give a task
+# until the learner submits. A role that never acks is usually stuck on a one-time Claude
+# permission prompt (fullscreen renderer, "read outside working directories") rather than never
+# having received the brief, and a prompt sent during startup can also just be dropped — tell
+# these apart and report instead of only timing out.
+ack_timeout=60
+brief() { herdr agent prompt "$1" "Read $WORKSPACE_DIR/roles/$1.md. This is initialization only: acknowledge, run touch $FACTORY_DIR/ready/$1, and stop. Do not start work yet." >/dev/null; }
+for role in "${roles[@]}"; do
+  brief "$role"
+  SECONDS=0
+  resent=0
+  while [ ! -f "$FACTORY_DIR/ready/$role" ]; do
+    if [ "$SECONDS" -ge "$ack_timeout" ]; then
+      if [ "$resent" -eq 0 ]; then
+        echo "$role has not acknowledged after ${ack_timeout}s; resending the brief (a startup prompt can be dropped)." >&2
+        brief "$role"
+        resent=1
+        SECONDS=0
+        continue
+      fi
+      if herdr agent read "$role" --source visible 2>/dev/null | grep -qi 'read outside working directories'; then
+        echo "BLOCKED: $role is stuck on a one-time Claude permission prompt. Run: herdr agent attach $role" >&2
+      else
+        echo "$role has still not acknowledged after a resend. Run: herdr agent read $role --source visible" >&2
+      fi
+      break
+    fi
+    sleep 2
+  done
 done
 touch "$FACTORY_DIR/team-started"
 echo 'Sessions started. crew submit waits for the role acknowledgments before delivering work.'
