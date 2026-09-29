@@ -1,0 +1,14 @@
+schemaVersion: "1"
+name: "${{ env.args.name }}"
+agent: claude
+workspace: "${{ env.args.app }}"
+args:
+  name:
+    required: true
+  app:
+    default: ..
+sandboxOptions:
+  cpus: 4
+  memory: 8g
+kits:
+  - source: ../kits/bayto-team
