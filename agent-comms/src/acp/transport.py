@@ -99,15 +99,25 @@ class FileTransport:
             return False
 
     # --- reports (ack != report) ---
-    def report(self, role: str, message_id: str, outcome: str, checks: dict[str, int] | None = None, summary: str = "") -> dict:
-        """Record a result for a message. checks maps command -> real exit code."""
+    def report(self, role: str, message_id: str, status: str, checks: dict[str, int] | None = None,
+               summary: str = "", stage: str | None = None, output_ref: str | None = None) -> dict:
+        """Record a result for a message. checks maps command -> real exit code.
+
+        `status` is an open string; see acp.models.CANONICAL_STATUSES for the doc's
+        example terminal states (implemented, review-pass, ...). "pass" is special-cased
+        below as a convenience convention, not because the vocabulary is closed.
+        `verified` is vacuously true when `checks` is empty (no checks run, nothing
+        failed) -- review discipline, not this flag, is the backstop against empty-check
+        reports of a passing status.
+        """
         d = self.root / "reports"
         d.mkdir(exist_ok=True)
         checks = checks or {}
-        rec = {"from": role, "message_id": message_id, "outcome": outcome,
+        rec = {"from": role, "message_id": message_id, "status": status,
+               "stage": stage, "output_ref": output_ref,
                "checks": checks, "summary": summary,
                "verified": all(v == 0 for v in checks.values())}
-        if outcome == "pass" and not rec["verified"]:
+        if status == "pass" and not rec["verified"]:
             raise ValueError("cannot report pass with a failing check")
         _atomic_write(d / f"{message_id}.{role}.json", json.dumps(rec))
         return rec

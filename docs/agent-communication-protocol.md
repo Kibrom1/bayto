@@ -44,13 +44,13 @@ Four records make up the protocol: a **Conversation** (the workshop's run + task
 | Conversation | `conversation_id`, `topic_ref`, `attempt`, `stage`, `floor_policy`, `seq` | `state.json` |
 | Participant | `participant_id`, `role`, `kind` (agent, human, moderator, system), `runtime`, `capabilities`, `status` (ready, working, idle, blocked, gone) | fixed role list + `ready/<role>` + Herdr status |
 | Message | envelope below | `messages/*.json` |
-| Report | `from`, `status`, `stage`, `output_ref`, `checks[]`, `summary` | `reports/*.json` |
+| Report | `from`, `message_id` (optional, ties the report to the message it answers), `status`, `stage`, `output_ref`, `checks{}`, `summary`, `verified` | `reports/*.json` |
 
 **Message envelope (v1)** — a superset of the workshop's `handoff` JSON, so a file written by the workshop tools is a valid v1 message:
 
 ```json
 {
-  "protocol": "bayto-acp/1",
+  "protocol": "acp/1",
   "message_id": "msg-conv42-0017-k3f9qa",
   "conversation_id": "conv42",
   "attempt": 1,
@@ -74,6 +74,7 @@ Four records make up the protocol: a **Conversation** (the workshop's run + task
 - `in_reply_to` and `thread_id` make cross-examination and side threads explicit; the workshop inferred these from context.
 - `refs` and `meta` are open maps: domains add keys (a git commit, a COI document id) without changing the protocol.
 - The id format keeps the workshop's `msg-<run>-<seq>-<rand>` so ids sort and stay unique without coordination.
+- `checks{}` is a map of check name → real exit code (e.g. `{"pytest": 0}`), not an array: a report names each check once, keyed by what it is. `verified` is true when every value in `checks` is 0 — including, by design, when `checks` is empty (no checks run means nothing failed, a vacuous truth). This is deliberate, not an oversight: review discipline is the real backstop against an empty-check report claiming a passing status, not this flag.
 
 ## Message kinds
 
@@ -198,7 +199,7 @@ flowchart TB
 | `send(to, kind, body, in_reply_to?)` | Store a message and request a wake-up for the recipients | `crew send` |
 | `read(kind?)` | Get unconsumed messages for me, then mark them consumed | `handoff read` |
 | `ack(message_id)` | Confirm receipt only | `handoff ack` |
-| `report(status, stage?, output_ref?, checks[])` | State progress or completion | `handoff report` |
+| `report(status, stage?, output_ref?, checks{})` | State progress or completion | `handoff report` |
 | `raise_hand(reason, urgency)` | Ask for the floor | new |
 | `ask_human(question, options[])` | Send a `decision-request` and yield | `crew send human` + `stage needs-human` |
 | `transcript(since_seq?)` | Read visible history | `crew watch` |

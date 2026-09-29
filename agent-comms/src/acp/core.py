@@ -30,10 +30,11 @@ class Conversation:
         self.transport.ack(role, message_id)
 
     def transcript(self) -> list[Envelope]:
-        return [e for e in self.transport.all() if e.visibility == "room"]
+        return [e for e in self.transport.all() if e.visibility == "all"]
 
-    def report(self, role: str, message_id: str, outcome: str, checks=None, summary: str = ""):
-        return self.transport.report(role, message_id, outcome, checks, summary)
+    def report(self, role: str, message_id: str, status: str, checks=None, summary: str = "",
+               stage: str | None = None, output_ref: str | None = None):
+        return self.transport.report(role, message_id, status, checks, summary, stage, output_ref)
 
     def stage(self, new: str | None = None) -> str:
         return self.transport.stage(new)

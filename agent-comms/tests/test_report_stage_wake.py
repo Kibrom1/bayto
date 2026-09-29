@@ -54,8 +54,8 @@ def test_wake_busy_blocked_and_single_fire(tmp_path):
 
 def test_cli_report_claim_stage(tmp_path, capsys):
     base = ["--dir", str(tmp_path), "--conv", "c", "--role", "b", "--roles", "a,b"]
-    assert main(base + ["report", "m1", "--outcome", "pass", "--check", "pytest=0"]) == 0
-    assert main(base + ["report", "m1", "--outcome", "pass", "--check", "pytest=1"]) == 2
+    assert main(base + ["report", "m1", "--status", "pass", "--check", "pytest=0"]) == 0
+    assert main(base + ["report", "m1", "--status", "pass", "--check", "pytest=1"]) == 2
     assert main(base + ["claim", "x"]) == 0
     assert main(base + ["claim", "x"]) == 9
     assert main(base + ["stage", "finished"]) == 0

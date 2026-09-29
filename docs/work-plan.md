@@ -75,7 +75,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [ ] **M2.2** Schema: product tables (`task`, `agent`, `mode`, `session`, `session_agent`, `sandbox`, `turn`, `artifact`) plus `message` and `report` mirror tables.
 - [ ] **M2.3** Message mirror: a file watcher on the factory directory reads new `acp` messages and reports, writes them to Postgres in `seq` order, and publishes them to SSE subscribers. It resumes from the last mirrored `seq`.
 - [ ] **M2.4** `SandboxProvider` interface + `LocalSbxSandboxProvider`: create the team sandbox for a task, start the team, wake a role, stop, remove, and reconcile with `sbx ls` at startup.
-- [ ] **M2.5** Conversation core: envelope validation, send permissions from mode files, stage state machine with claims.
+- [ ] **M2.5** Conversation core: envelope validation, send permissions from mode files, stage state machine with claims. Includes the deferred `visibility` enforcement from M1.1b: `recipients` and `moderator` are accepted/stored on the envelope today but nothing actually hides a `recipients`- or `moderator`-visibility message from anyone but its intended reader (only `all` is used by `Conversation.transcript()`).
 - [ ] **M2.6** FloorPolicies: `round-robin` and `raise-hand` (one Haiku call scoring all personas).
 - [ ] **M2.7** Moderator agent: opening, rolling summary, stop conditions (rounds, budget, convergence), final synthesis into an `artifact`.
 - [ ] **M2.8** REST API: create task, create session (roster + mode), start, interject, stop; SSE stream of messages.

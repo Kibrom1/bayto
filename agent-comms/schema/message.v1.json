@@ -2,25 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bayto.dev/schema/acp/message.v1.json",
   "title": "acp/1 message envelope",
-  "description": "Describes the JSON that agent-comms/src/acp/models.py:Envelope actually produces via Envelope.dump() / model_dump(by_alias=True), and accepts on the way in. This is NOT a verbatim transcription of the illustrative envelope in docs/agent-communication-protocol.md ('Core model and envelope'); several fields differ from that example. See docs/decisions.md (2026-09-29, 'M1.1 schema/implementation reconciliation') for the full list, summarized per-field below.",
+  "description": "Describes the JSON that agent-comms/src/acp/models.py:Envelope actually produces via Envelope.dump() / model_dump(by_alias=True), and accepts on the way in. This has been reconciled with docs/agent-communication-protocol.md ('Core model and envelope'): the mismatches recorded in docs/decisions.md (2026-09-29, 'M1.1 schema/implementation reconciliation') were resolved in the 2026-09-29 'M1.1 schema/implementation resolutions' follow-up entry, and this file reflects the resolved shape, not the pre-resolution divergences. HandRaise (a separate, still-open gap) is not part of this file; see hand-raise.v1.json.",
   "type": "object",
   "additionalProperties": false,
-  "$comment": "The doc's example envelope also has a `body_format` field (e.g. \"markdown\"); Envelope has no such field, and pydantic silently drops unknown constructor kwargs by default, so passing body_format today has no effect and it never appears in the serialized output. `additionalProperties: false` here reflects the real, closed field set of Envelope.dump().",
   "required": [
     "protocol", "message_id", "conversation_id", "attempt", "seq", "from", "to",
     "visibility", "kind", "in_reply_to", "thread_id", "requires_ack", "refs",
-    "body", "meta", "created_at"
+    "body", "body_format", "meta", "created_at"
   ],
   "properties": {
-    "protocol": {
-      "type": "string",
-      "description": "Always \"acp/1\" today. The protocol doc's own example envelope uses \"bayto-acp/1\"; the two have never matched.",
-      "default": "acp/1"
-    },
+    "protocol": { "type": "string", "default": "acp/1" },
     "message_id": {
       "type": "string",
       "minLength": 1,
-      "description": "Defaults to a bare uuid4 hex (e.g. \"a357ac33...\"), not the doc's \"msg-<conversation>-<seq>-<rand>\" shape (that shape is what the separate, non-acp/1 handoff_compat.py legacy shim produces instead)."
+      "description": "Defaults to a bare uuid4 hex. The separate, non-acp/1 handoff_compat.py legacy shim uses a different id shape (\"msg-<run>-<seq>-<rand>\"); that shim is intentionally out of scope for this schema."
     },
     "conversation_id": { "type": "string", "minLength": 1 },
     "attempt": { "type": "integer", "minimum": 1, "default": 1 },
@@ -35,36 +30,38 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "minItems": 1,
-      "description": "Always a non-empty array in this implementation. The doc says a bare string is 'also accepted' as shorthand for a single recipient; Envelope's `to: list[str]` field actually rejects a bare string with a pydantic ValidationError, so that promise is not (yet) kept by the acp/1 model."
+      "description": "Always a non-empty array on the wire. Envelope also accepts a bare string on input (coerced to a one-element list before validation), matching the doc's 'a single string is also accepted' -- but the wire/serialized shape (what this schema validates) is always the array form."
     },
     "visibility": {
       "type": "string",
-      "default": "room",
-      "description": "Free text in this implementation (only \"room\" is ever produced; Conversation.transcript() checks for exactly that value, and \"private\" is mentioned only in a code comment). The doc instead defines a closed enum: all | recipients | moderator. The two vocabularies do not overlap."
+      "enum": ["all", "recipients", "moderator"],
+      "default": "all",
+      "description": "Closed enum per the doc's 'Floor control' section. `all` = visible to the whole room/transcript (Conversation.transcript() filters on exactly this value); `recipients` and `moderator` are accepted and stored but not yet enforced anywhere (no code hides a `recipients`- or `moderator`-visibility message from anyone but the intended reader) -- see docs/work-plan.md M2.5 for the deferred enforcement work."
     },
     "kind": {
       "type": "string",
-      "description": "Constrained by Envelope's `_kind_ok` field validator (code, not the JSON type system): one of acp.models.Kind's values, or any string starting with \"x-\" (a namespaced extension, per the doc's 'Message kinds' section). The Kind enum's values match the doc's core kind list exactly.",
+      "description": "Constrained by Envelope's `_kind_ok` field validator (code, not the JSON type system): one of acp.models.Kind's values, or any string starting with \"x-\" (a namespaced extension, per the doc's 'Message kinds' section).",
       "pattern": "^(assignment|question|answer|proposal|critique|objection|agree|hand-raise|decision-request|decision|summary|note|resume|report|x-.+)$"
     },
     "in_reply_to": { "type": ["string", "null"], "default": null },
     "thread_id": { "type": ["string", "null"], "default": null },
     "requires_ack": { "type": "boolean", "default": false },
     "refs": {
-      "type": "array",
-      "items": { "type": "string" },
-      "default": [],
-      "description": "An array of strings in this implementation, always empty in practice (nothing in agent-comms/src/acp ever populates it). The doc's example shows `refs` as an object map (e.g. {\"output_ref\": \"git:9f2c1e0\", \"topic_version\": \"3\"}); the legacy handoff_compat.py shim (a different, non-acp/1 format) also uses an object map for its own `refs`. Three different shapes for the same field name across this repo; see docs/decisions.md."
-    },
-    "body": { "type": "string", "default": "" },
-    "meta": {
       "type": "object",
       "default": {},
-      "description": "Open map, as the doc specifies."
+      "description": "Open key-value map, e.g. {\"base_commit\": \"...\", \"output_commit\": \"...\", \"task_version\": \"...\"} -- domains add keys without changing the protocol, per the doc. (The separate, non-acp/1 handoff_compat.py legacy shim has its own refs object with the same spirit but is not required to share this exact key set.)"
     },
+    "body": { "type": "string", "default": "" },
+    "body_format": {
+      "type": "string",
+      "default": "markdown",
+      "description": "Free text (e.g. \"markdown\", \"text\"); not constrained to a closed enum."
+    },
+    "meta": { "type": "object", "default": {} },
     "created_at": {
-      "type": "number",
-      "description": "Unix timestamp in seconds (time.time()), not the doc's ISO-8601 string (e.g. \"2026-09-28T14:02:11Z\")."
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 UTC timestamp (datetime.now(timezone.utc).isoformat()), e.g. \"2026-09-28T14:02:11.123456+00:00\"."
     }
   }
 }

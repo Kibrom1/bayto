@@ -1,15 +1,23 @@
 """acp/1 envelope and roster models."""
 from __future__ import annotations
 
-import time
 import uuid
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 PROTOCOL = "acp/1"
 BROADCAST = "*"
+
+# Canonical terminal states for Report.status, per docs/agent-communication-protocol.md.
+# `status` is an open string (domains may use their own), these are examples, not an
+# exhaustive enum.
+CANONICAL_STATUSES = (
+    "implemented", "review-pass", "review-fail", "blocked-access",
+    "needs-human", "failed", "acknowledged",
+)
 
 
 class Kind(str, Enum):
@@ -29,8 +37,8 @@ class Kind(str, Enum):
     report = "report"
 
 
-def _now() -> float:
-    return time.time()
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class Envelope(BaseModel):
@@ -41,15 +49,16 @@ class Envelope(BaseModel):
     seq: int | None = None  # assigned by the transport on send
     from_: str = Field(alias="from")
     to: list[str]
-    visibility: str = "room"  # room | private
+    visibility: Literal["all", "recipients", "moderator"] = "all"
     kind: str
     in_reply_to: str | None = None
     thread_id: str | None = None
     requires_ack: bool = False
-    refs: list[str] = Field(default_factory=list)
+    refs: dict[str, Any] = Field(default_factory=dict)
     body: str = ""
+    body_format: str = "markdown"
     meta: dict[str, Any] = Field(default_factory=dict)
-    created_at: float = Field(default_factory=_now)
+    created_at: str = Field(default_factory=_now)
 
     model_config = {"populate_by_name": True}
 
@@ -59,6 +68,12 @@ class Envelope(BaseModel):
         if v in {k.value for k in Kind} or v.startswith("x-"):
             return v
         raise ValueError(f"unknown kind {v!r} (use a known kind or an x-* extension)")
+
+    @field_validator("to", mode="before")
+    @classmethod
+    def _to_as_list(cls, v: Any) -> Any:
+        # A single string is shorthand for one recipient; always stored/serialized as a list.
+        return [v] if isinstance(v, str) else v
 
     @field_validator("to")
     @classmethod
