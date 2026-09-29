@@ -96,6 +96,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 
 ## Working agreements
 
+- Tick a task (`- [x]`) in this file in the same commit that completes it, and only when its "done" check really passed (tests run, spike run, or file delivered). Partly done tasks stay unticked with a note.
 - Pin every external version (sbx, Claude CLI, kits by commit), as the workshop does.
 - Every spike ends with a short findings note in `spikes/<name>/FINDINGS.md`.
 - Keep product decisions in [decisions.md](decisions.md).
