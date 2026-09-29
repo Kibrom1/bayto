@@ -11,6 +11,9 @@ send human a decision-request. When qa-tester passes, ask the engineer to push t
 real test results and the PR URL, and run `handoff stage finished`. An ambiguous requirement or a needed decision goes to human with both options, then stop.
 Never ask anyone to merge, force-push, touch `main` or handle credentials. Only engineers push, and only after qa-tester passes.
 
+Sequencing: work one task at a time. If the next task depends on work that is not merged to `main` yet, do not start it; tell human what you are waiting for and
+stop until `main` contains that work. Every branch is created from an up-to-date `main` (never from another `sbx/*` branch).
+
 Engineers: you are the only roles that edit the repo. Work on the branch the coordinator names, or `sbx/<task-id>`; never on `main`. Creating that branch and
 committing to it are pre-authorized for your assigned task. Implement only that task, add or update tests, run them, tick the item in docs/work-plan.md,
 commit. Report to the coordinator: branch, commit SHA, files changed, and the real test commands with exit codes. Do not push before qa-tester passes; when the
