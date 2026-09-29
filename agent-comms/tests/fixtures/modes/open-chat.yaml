@@ -1,0 +1,12 @@
+# Fixture for test_modes.py: a non-pipeline mode with an explicit `send` block (direct
+# addressing) and a role with no `may_send` list at all (unrestricted -- None, not missing).
+mode: open-chat
+floor_policy: raise-hand
+roles:
+  moderator: { may_send: [assignment, summary, note] }
+  advocate:  { may_send: [proposal, critique, agree, note] }
+  skeptic:
+send:
+  moderator: ["*"]
+  advocate: ["*"]
+  skeptic: ["*"]

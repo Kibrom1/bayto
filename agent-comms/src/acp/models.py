@@ -4,9 +4,12 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+if TYPE_CHECKING:
+    from .modes import ModeConfig
 
 PROTOCOL = "acp/1"
 BROADCAST = "*"
@@ -100,3 +103,18 @@ class Roster(BaseModel):
         if "*" in allowed:
             return all(r == BROADCAST or r in self.roles or r == "human" for r in recipients)
         return all(r in allowed for r in recipients)
+
+
+class SendPolicy(BaseModel):
+    """Which Envelope `kind`s a role may emit -- a different axis than `Roster.can_send`
+    (sender -> allowed recipients). A mode file's `roles.<role>.may_send` list."""
+
+    may_send: dict[str, list[str] | None]  # role -> allowed kinds; None/absent role = unrestricted
+
+    def check(self, role: str, kind: str) -> bool:
+        allowed = self.may_send.get(role)
+        return allowed is None or kind in allowed
+
+    @classmethod
+    def from_mode(cls, mode: "ModeConfig") -> "SendPolicy":
+        return cls(may_send=mode.roles)

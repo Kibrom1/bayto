@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "ack":
             conv.ack(args.role, args.message_id)
         elif args.cmd == "transcript":
-            for e in conv.transcript():
+            for e in conv.transcript(args.role):
                 print(f"[{e.seq}] {e.from_} -> {','.join(e.to)} ({e.kind}): {e.body}")
         elif args.cmd == "report":
             checks = {k: int(v) for k, _, v in (x.rpartition("=") for x in args.check)}
