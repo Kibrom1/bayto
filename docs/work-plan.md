@@ -4,7 +4,7 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M2 are broken down to the task level; M3–M6 stay at deliverable level and get detailed when M2 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Next up:** M2.2 — the orchestrator's product + mirror schema, then M2.3 (message mirror) and the rest of M2.
+**Next up:** M2.3 — the acp message/report mirror (file watcher -> Postgres -> SSE), then the rest of M2.
 
 ## Timeline
 
@@ -78,7 +78,7 @@ team sandbox, which is not available inside this dev-team sandbox. They stay unc
 ## M2 — Orchestrator service
 
 - [x] **M2.1** Python project `orchestrator/` managed with `uv`: FastAPI, Pydantic v2, SQLAlchemy 2 (async) + psycopg 3, Alembic migrations, `sse-starlette`, pytest + pytest-asyncio; reuse the `acp` package from M1. Minimal scaffold (human-scoped): project files, a `/healthz` endpoint, one passing test, a `uv.lock`; schema/migrations/mirror/API surface land in M2.2+.
-- [ ] **M2.2** Schema: product tables (`task`, `agent`, `mode`, `session`, `session_agent`, `sandbox`, `turn`, `artifact`) plus `message` and `report` mirror tables.
+- [x] **M2.2** Schema: product tables (`task`, `agent`, `mode`, `session`, `session_agent`, `sandbox`, `turn`, `artifact`) plus `message` and `report` mirror tables. `orchestrator/src/orchestrator/models.py` (SQLAlchemy 2 async) + one Alembic migration, verified against a real throwaway Postgres container.
 - [ ] **M2.3** Message mirror: a file watcher on the factory directory reads new `acp` messages and reports, writes them to Postgres in `seq` order, and publishes them to SSE subscribers. It resumes from the last mirrored `seq`.
 - [ ] **M2.4** `SandboxProvider` interface + `LocalSbxSandboxProvider`: create the team sandbox for a task, start the team, wake a role, stop, remove, and reconcile with `sbx ls` at startup.
 - [ ] **M2.5** Conversation core: envelope validation, send permissions from mode files, stage state machine with claims. Includes the deferred `visibility` enforcement from M1.1b: `recipients` and `moderator` are accepted/stored on the envelope today but nothing actually hides a `recipients`- or `moderator`-visibility message from anyone but its intended reader (only `all` is used by `Conversation.transcript()`).

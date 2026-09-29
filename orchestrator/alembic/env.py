@@ -1,10 +1,6 @@
-"""Async Alembic environment, wired to orchestrator.db (DATABASE_URL).
-
-M2.1 scaffold: no models exist yet (target_metadata is None, so `--autogenerate`
-has nothing to diff against until M2.2 defines the schema). No live Postgres was
-available to verify `alembic upgrade head` / `alembic revision --autogenerate`
-against a real database in this environment; `alembic heads`/`history`, which
-only read local script files, were used instead to confirm this config loads.
+"""Async Alembic environment, wired to orchestrator.db (DATABASE_URL) and orchestrator.models
+(M2.2 defines the schema; target_metadata now points at it, so `--autogenerate` has something
+to diff against).
 """
 import asyncio
 from logging.config import fileConfig
@@ -16,12 +12,13 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 from orchestrator.db import database_url
+from orchestrator.models import Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
