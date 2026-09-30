@@ -200,8 +200,8 @@ def test_status_is_an_open_string_not_a_closed_enum(tmp_path):
 
 
 # ---------------------------------------------------------------- hand-raise.v1.json
-# Still a documented gap: no code in agent-comms/src/acp constructs or validates this
-# shape. Not part of the M1.1b resolution (out of scope, flagged for M2.6).
+# M2.6 closes the gap this section used to guard (agent-comms/src/acp/floor.py's
+# HandRaise/Reason now construct and validate this shape).
 
 def test_sample_hand_raise_validates():
     sample = {"participant": "advocate", "reason": "disagree", "urgency": 0.6,
@@ -221,12 +221,45 @@ def test_sample_hand_raise_rejects_out_of_range_urgency():
         jsonschema.validate(sample, HAND_RAISE_SCHEMA)
 
 
-def test_no_hand_raise_model_exists_yet():
-    """Guards the schema's own claim: if this ever starts failing, a HandRaise
-    model has been added and hand-raise.v1.json should be re-checked against
-    its real output, and the docs/decisions.md gap entry should be closed."""
+def test_hand_raise_model_lives_in_floor_not_models():
+    """M2.6: HandRaise/Reason exist now (in floor.py, not models.py -- see that module's
+    docstring for why it's separate from the Envelope/Roster/SendPolicy protocol types)."""
     import acp
-    assert not hasattr(acp, "HandRaise")
+    from acp import floor
+    assert acp.HandRaise is floor.HandRaise
+    assert acp.Reason is floor.Reason
     import acp.models as models
     assert not hasattr(models, "HandRaise")
     assert not hasattr(models, "Reason")
+
+
+def test_hand_raise_real_output_validates_against_schema():
+    """Requirement (b) for hand-raise, now that real output exists: the actual Pydantic
+    model's JSON output must validate, same as message.v1.json/report.v1.json already do."""
+    from acp.floor import HandRaise
+
+    hr = HandRaise(participant="advocate", reason="disagree", urgency=0.6, in_reply_to="m1")
+    jsonschema.validate(hr.model_dump(mode="json"), HAND_RAISE_SCHEMA)
+
+
+def test_hand_raise_dump_validates_for_every_reason():
+    from acp.floor import HandRaise, Reason
+
+    for reason in Reason:
+        hr = HandRaise(participant="a", reason=reason, urgency=0.3)
+        jsonschema.validate(hr.model_dump(mode="json"), HAND_RAISE_SCHEMA)
+
+
+def test_hand_raise_json_schema_helper_returns_the_same_file():
+    from acp.floor import hand_raise_json_schema
+
+    assert hand_raise_json_schema() == HAND_RAISE_SCHEMA
+
+
+def test_hand_raise_rejects_urgency_out_of_range():
+    from acp.floor import HandRaise
+
+    with pytest.raises(Exception):
+        HandRaise(participant="a", reason="disagree", urgency=1.5)
+    with pytest.raises(Exception):
+        HandRaise(participant="a", reason="disagree", urgency=-0.1)

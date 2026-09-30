@@ -2,8 +2,8 @@
 
 Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres, and SSE streaming.
 M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
-SandboxProvider seam, M2.5 adds the conversation core wrapper. See `docs/work-plan.md` for M2.6+
-(floor policies, moderator, REST/SSE API).
+SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam. See
+`docs/work-plan.md` for M2.7+ (moderator agent, REST/SSE API).
 
 ## Layout
 
@@ -45,6 +45,23 @@ SandboxProvider seam, M2.5 adds the conversation core wrapper. See `docs/work-pl
   wrapper shape as `mirror.py`. `.create(conversation_id, factory_dir, mode, attempt=1)` builds the `Roster`
   and `SendPolicy` from an `acp.modes.ModeConfig`. See `docs/decisions.md`, 2026-09-29, for why this reuses
   `agent-comms` as-is instead of a second async-native engine.
+- `src/orchestrator/floor/` (M2.6) — the FloorPolicy seam: who speaks next. `types.py`: `ConversationView`
+  (a `recent_transcript` field was added beyond the architect's original spec — see `docs/decisions.md`),
+  the `Grant`/`Parallel`/`Converged`/`AskHuman` `FloorDecision` variants, and the `FloorPolicy` Protocol
+  (`next(view, raised) -> FloorDecision | None`, pure and side-effect-free — no I/O anywhere in this
+  package). `round_robin.py`: `next_seat()` + `RoundRobinFloorPolicy`, recomputed fresh every call (no
+  persisted cursor, so it can't drift from Turn history on replay/fork). `raise_hand.py`:
+  `RaiseHandTuning` (three product-owner-confirmed defaults: `urgency_boost_multiplier=1.3`,
+  `max_consecutive_grants=2`, `converge_after_quiet_rounds=2`) + `RaiseHandFloorPolicy` (addressed-first,
+  `AGREE_PASS` never wins, urgency ranking with a one-per-round queue-jump cap, a speaking-time cap, and
+  `Converged` after exactly K quiet rounds). `scorer.py`: `HandRaiseScorer` Protocol (genuinely async, not
+  `to_thread`-wrapped — the Anthropic API has a real async client), `AnthropicHandRaiseScorer` (one
+  Messages API call, a forced `tool_choice` on a tool whose schema is
+  `agent-comms/schema/hand-raise.v1.json` read at runtime — see `docs/decisions.md` for why it's
+  unverified against the live API), and `FakeHandRaiseScorer` (canned list, for M2.7's not-yet-built
+  turn-runner tests). The turn-runner itself — calling the scorer, merging in self-emitted hand-raise
+  envelopes, calling `policy.next()`, turning a `Grant` into an assignment + wake-up — is M2.7, out of
+  scope here.
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
@@ -53,7 +70,10 @@ SandboxProvider seam, M2.5 adds the conversation core wrapper. See `docs/work-pl
   no DB), `test_local_sandbox.py` (`LocalSbxSandboxProvider` against a `FakeSbxRunner`; most cases use
   `live_sessionmaker` for real DB reads/writes, two argv-only cases need no DB at all). `test_conversation.py`
   (`OrchestratorConversation` against a real tmp_path factory dir; no DB or sbx needed — mode-YAML parsing
-  itself is tested in `agent-comms/tests/test_modes.py`).
+  itself is tested in `agent-comms/tests/test_modes.py`). `test_floor_round_robin.py` / `test_floor_raise_hand.py`
+  (pure, no I/O — fixture `ConversationView`s and plain `HandRaise` lists). `test_floor_scorer.py` (a canned
+  `tool_use` response fixture parsed through `AnthropicHandRaiseScorer`'s real parsing code, plus a fake
+  Anthropic client verifying the request shape — no live API call or credentials needed).
 
 ## Run tests
 
@@ -85,3 +105,8 @@ failed `sbx` command raises `SandboxCommandError` and leaves the DB row unmodifi
 marks a gone sandbox removed, syncs a live one's status, and reports (without touching) an orphan. The `sbx`
 CLI itself is stubbed with a `FakeSbxRunner` — no real `sbx` binary is available in this dev-team sandbox (see
 `docs/decisions.md`, 2026-09-29).
+
+M2.6 touches no schema (`alembic check` still reports no drift). Its `FloorPolicy`/`HandRaiseScorer` tests need
+no DB at all — `AnthropicHandRaiseScorer` is verified only against a canned Anthropic `tool_use` response
+fixture, not a live API call; no `ANTHROPIC_API_KEY` or network egress is assumed available in this dev-team
+sandbox (see `docs/decisions.md`, 2026-09-29, for the same-shape disclosure as M2.4's `sbx` CLI gap).
