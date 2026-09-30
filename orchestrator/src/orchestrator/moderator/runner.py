@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 
 from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
+from opentelemetry import trace
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -71,6 +72,7 @@ from .synthesizer import Synthesizer
 from .turn_summary import TurnSummary
 
 log = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 STATUS_ACTIVE = "active"
 STATUS_NEEDS_HUMAN = "needs_human"
@@ -82,6 +84,21 @@ STATUS_FINISHED = "finished"
 # synthesize=false case and needs its own branch to skip synthesis entirely.
 STATUS_STOPPING = "stopping"
 STATUS_CANCELLING = "cancelling"
+
+# M2.10: Session.stop_reason values, set on every terminal path (product-owner: "this is a
+# natural place to record it consistently"). A deliberately separate, underscore-separated
+# naming convention from the internal hyphenated `reason` strings used elsewhere in this
+# module (RunOnceResult.reason, _check_stop_conditions' return value, log messages) --
+# "budget_exceeded" specifically is a literal product-owner acceptance-criterion string,
+# and using one consistent style for every value in this NEW field (rather than mixing
+# hyphens and underscores within it) was the more defensible call than reusing the
+# pre-existing internal spelling verbatim.
+_STOP_REASON_VALUES = {
+    "max-rounds": "max_rounds",
+    "no-new-arguments": "staleness",
+    "converged": "converged",
+    "external-status-change": "user_stop",
+}
 
 _STREAK_LOOKBACK = 50  # bounds the speaking-time-cap query; a real streak can't exceed this in practice
 
@@ -156,57 +173,70 @@ class ModeratorRunner:
                     pass
 
     async def run_once(self) -> RunOnceResult:
-        view = await self._build_view()
+        with tracer.start_as_current_span("moderator.run_once",
+                                           attributes={"bayto.session_id": str(self._session_id)}) as span:
+            view = await self._build_view()
+            span.set_attribute("bayto.round", view.round)
 
-        async with self._sessionmaker() as session:
-            status = (await session.get(SessionRow, self._session_id)).status
-        if status == STATUS_NEEDS_HUMAN:
-            # Already paused (by an earlier AskHuman escalation, or a human directly) --
-            # a pause is not a wrap-up: don't run synthesis, just stop looping until
-            # something external moves it back to active. M2.7 does not build that
-            # resume path (the architect: "do NOT build the human-notification/response
-            # channel").
-            return RunOnceResult(stopped=True, reason=STATUS_NEEDS_HUMAN)
-        if status == STATUS_CANCELLING:
-            # M2.8's POST /stop with synthesize=false: wind down WITHOUT running the
-            # Synthesizer at all -- the one stop trigger that doesn't wrap up via _finish.
-            await self._cancel_without_synthesis()
-            return RunOnceResult(stopped=True, reason=STATUS_CANCELLING)
-        if status != STATUS_ACTIVE:
-            # Genuinely external ("user-ends-it"): something already moved this session to
-            # a stopping/terminal value this runner didn't itself just set (M2.8's
-            # POST /stop with synthesize=true, the default, is the intended source; so is
-            # any other future externally-set non-active value). Unlike needs_human, this
-            # DOES wrap up.
-            await self._finish(view, "external-status-change")
-            return RunOnceResult(stopped=True, reason="external-status-change")
+            async with self._sessionmaker() as session:
+                status = (await session.get(SessionRow, self._session_id)).status
+            if status == STATUS_NEEDS_HUMAN:
+                # Already paused (by an earlier AskHuman escalation, or a human directly) --
+                # a pause is not a wrap-up: don't run synthesis, just stop looping until
+                # something external moves it back to active. M2.7 does not build that
+                # resume path (the architect: "do NOT build the human-notification/response
+                # channel").
+                return RunOnceResult(stopped=True, reason=STATUS_NEEDS_HUMAN)
+            if status == STATUS_CANCELLING:
+                # M2.8's POST /stop with synthesize=false: wind down WITHOUT running the
+                # Synthesizer at all -- the one stop trigger that doesn't wrap up via _finish.
+                await self._end_without_synthesis("user_stop")
+                return RunOnceResult(stopped=True, reason=STATUS_CANCELLING)
+            if status != STATUS_ACTIVE:
+                # Genuinely external ("user-ends-it"): something already moved this session to
+                # a stopping/terminal value this runner didn't itself just set (M2.8's
+                # POST /stop with synthesize=true, the default, is the intended source; so is
+                # any other future externally-set non-active value). Unlike needs_human, this
+                # DOES wrap up.
+                await self._finish(view, "external-status-change")
+                return RunOnceResult(stopped=True, reason="external-status-change")
 
-        pending_grant = await self._pending_grant()
-        if pending_grant is not None:
-            # M2.9: an assignment was durably sent (a Message row) but never got a
-            # response -- the process may have died between send() succeeding and either
-            # wake_role() being called or the response landing. Checked UNCONDITIONALLY
-            # here (not only after a restart) so the same code path covers a real restart
-            # and an ordinary transient hiccup mid-loop; the runner never needs to know
-            # which case it's in.
-            await self._resume_pending_grant(view, pending_grant)
-            return RunOnceResult(stopped=False)
-
-        stop_reason = await self._check_stop_conditions(view)
-        if stop_reason is not None:
-            await self._finish(view, stop_reason)
-            return RunOnceResult(stopped=True, reason=stop_reason)
-
-        if not self._opening_done:
-            pending = await self._pending_opening_participant(view)
-            if pending is not None:
-                await self._handle_grant(view, Grant(participant=pending, reason="opening"))
+            pending_grant = await self._pending_grant()
+            if pending_grant is not None:
+                # M2.9: an assignment was durably sent (a Message row) but never got a
+                # response -- the process may have died between send() succeeding and either
+                # wake_role() being called or the response landing. Checked UNCONDITIONALLY
+                # here (not only after a restart) so the same code path covers a real restart
+                # and an ordinary transient hiccup mid-loop; the runner never needs to know
+                # which case it's in.
+                await self._resume_pending_grant(view, pending_grant)
                 return RunOnceResult(stopped=False)
-            self._opening_done = True
 
-        raised = await self._collect_hand_raises(view) if self._mode.floor_policy == "raise-hand" else []
-        decision = self._policy.next(view, raised)
-        return await self._dispatch(view, decision)
+            stop_reason = await self._check_stop_conditions(view)
+            if stop_reason is not None:
+                if stop_reason == "budget-exceeded":
+                    # Product-owner-confirmed: unlike every other stop trigger, budget-exceeded
+                    # does NOT run final synthesis. /stop's synthesize=true default is a user
+                    # opting in, in the moment, to spend a bit more for a wrap-up; budget-exceeded
+                    # is the cap itself firing -- if it always overshot by one synthesis call,
+                    # the cap wouldn't actually be a cap. The session still gets a minimal,
+                    # non-LLM terminal marker (stop_reason) so a bare transcript isn't
+                    # uninterpretable, without spending anything extra.
+                    await self._end_without_synthesis("budget_exceeded")
+                else:
+                    await self._finish(view, stop_reason)
+                return RunOnceResult(stopped=True, reason=stop_reason)
+
+            if not self._opening_done:
+                pending = await self._pending_opening_participant(view)
+                if pending is not None:
+                    await self._handle_grant(view, Grant(participant=pending, reason="opening"))
+                    return RunOnceResult(stopped=False)
+                self._opening_done = True
+
+            raised = await self._collect_hand_raises(view) if self._mode.floor_policy == "raise-hand" else []
+            decision = self._policy.next(view, raised)
+            return await self._dispatch(view, decision)
 
     async def _dispatch(self, view: ConversationView, decision: FloorDecision | None) -> RunOnceResult:
         if decision is None:
@@ -466,29 +496,39 @@ class ModeratorRunner:
         await self._wake_await_and_record(view, participant)
 
     async def _wake_await_and_record(self, view: ConversationView, participant: str) -> None:
-        # Subscribe BEFORE waking: a fake/fast/same-process participant can publish its
-        # response synchronously inside wake_role() itself (as the tests' FakeSandboxProvider
-        # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only
-        # for subscribers that already exist -- subscribing after wake_role() would race and
-        # could miss it.
-        queue = self._pubsub.subscribe()
-        try:
-            await self._sandbox_provider.wake_role(self._sandbox, participant)
-            response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
-            if response is None:
-                # One retry: re-wake (not re-send -- the assignment is already sitting
-                # unread) and wait again, per the architect's "retry the same grant once
-                # more."
+        # Span scoped to wake+await+record only -- closes BEFORE _update_rolling_summary(),
+        # so moderator.summarize ends up a sibling of this span (both under
+        # moderator.run_once), not nested inside it.
+        with tracer.start_as_current_span("moderator.grant_wait", attributes={
+            "bayto.session_id": str(self._session_id), "bayto.participant": participant,
+            "timeout_s": self._config.grant_timeout_seconds,
+        }) as span:
+            # Subscribe BEFORE waking: a fake/fast/same-process participant can publish its
+            # response synchronously inside wake_role() itself (as the tests' FakeSandboxProvider
+            # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only
+            # for subscribers that already exist -- subscribing after wake_role() would race and
+            # could miss it.
+            queue = self._pubsub.subscribe()
+            try:
                 await self._sandbox_provider.wake_role(self._sandbox, participant)
                 response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
-        finally:
-            self._pubsub.unsubscribe(queue)
+                if response is None:
+                    # One retry: re-wake (not re-send -- the assignment is already sitting
+                    # unread) and wait again, per the architect's "retry the same grant once
+                    # more."
+                    await self._sandbox_provider.wake_role(self._sandbox, participant)
+                    response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+            finally:
+                self._pubsub.unsubscribe(queue)
 
-        if response is None:
-            await self._escalate_to_human(view, f"{participant} did not respond after 2 grants")
-            return
+            if response is None:
+                span.set_attribute("outcome", "timeout")
+                await self._escalate_to_human(view, f"{participant} did not respond after 2 grants")
+                return
 
-        await self._record_turn(view, participant, response)
+            span.set_attribute("outcome", "responded")
+            await self._record_turn(view, participant, response)
+
         await self._update_rolling_summary()
 
     async def _build_context(self, view: ConversationView) -> str:
@@ -529,23 +569,38 @@ class ModeratorRunner:
             log.warning("budget-accuracy degraded: %s's turn in session %s has no "
                         "tokens_in/tokens_out/cost in meta", participant, self._session_id)
 
-        async with self._sessionmaker() as session:
-            agent_id = await session.scalar(
-                select(Agent.id).join(SessionAgent, SessionAgent.agent_id == Agent.id)
-                .where(SessionAgent.session_id == self._session_id, Agent.role == participant)
-            )
-            if agent_id is None:
-                raise ValueError(f"no seated Agent with role={participant!r} for session {self._session_id}")
-            next_seq = (await session.scalar(
-                select(func.coalesce(func.max(Turn.seq), 0)).where(Turn.session_id == self._session_id)
-            )) + 1
-            round_ = self._round_for_grant(view.round, participant, view.seat_order)
-            session.add(Turn(
-                session_id=self._session_id, seq=next_seq, speaker_id=agent_id, round=round_,
-                content=envelope_data.get("body", ""), tool_calls_json=meta.get("tool_calls"),
-                tokens_in=tokens_in, tokens_out=tokens_out, cost=cost,
-            ))
-            await session.commit()
+        with tracer.start_as_current_span("turn.process", attributes={
+            "bayto.session_id": str(self._session_id), "bayto.participant": participant,
+            "bayto.round": view.round,
+        }) as span:
+            async with self._sessionmaker() as session:
+                agent_id = await session.scalar(
+                    select(Agent.id).join(SessionAgent, SessionAgent.agent_id == Agent.id)
+                    .where(SessionAgent.session_id == self._session_id, Agent.role == participant)
+                )
+                if agent_id is None:
+                    raise ValueError(f"no seated Agent with role={participant!r} for session {self._session_id}")
+                next_seq = (await session.scalar(
+                    select(func.coalesce(func.max(Turn.seq), 0)).where(Turn.session_id == self._session_id)
+                )) + 1
+                round_ = self._round_for_grant(view.round, participant, view.seat_order)
+                turn = Turn(
+                    session_id=self._session_id, seq=next_seq, speaker_id=agent_id, round=round_,
+                    content=envelope_data.get("body", ""), tool_calls_json=meta.get("tool_calls"),
+                    tokens_in=tokens_in, tokens_out=tokens_out, cost=cost,
+                )
+                session.add(turn)
+                await session.commit()
+
+            span.set_attribute("bayto.turn_id", str(turn.id))
+            # Self-reported only: omit entirely rather than estimate when the agent didn't
+            # report it (see the "budget-accuracy degraded" warning above).
+            if tokens_in is not None:
+                span.set_attribute("gen_ai.usage.input_tokens", tokens_in)
+            if tokens_out is not None:
+                span.set_attribute("gen_ai.usage.output_tokens", tokens_out)
+            if cost is not None:
+                span.set_attribute("bayto.cost_usd", cost)
 
     def _round_for_grant(self, last_round: int, participant: str, seat_order: list[str]) -> int:
         """Round semantics differ by policy (the architect's instruction: let each
@@ -572,7 +627,7 @@ class ModeratorRunner:
             if not new_turns:
                 return
             summaries = [await self._to_turn_summary(session, t) for t in new_turns]
-            result = await self._summarizer.summarize(row.rolling_summary, summaries)
+            result = await self._summarizer.summarize(self._session_id, row.rolling_summary, summaries)
             row.rolling_summary = result.summary
             row.rolling_summary_through_seq = new_turns[-1].seq
             row.stale_argument_count = 0 if result.has_new_argument else row.stale_argument_count + 1
@@ -615,13 +670,17 @@ class ModeratorRunner:
                                       source_turn_ids=result.source_turn_ids))
 
             row.status = STATUS_FINISHED
+            row.stop_reason = _STOP_REASON_VALUES.get(reason, reason)
             row.ended_at = datetime.now(timezone.utc)
             await session.commit()
 
-    async def _cancel_without_synthesis(self) -> None:
-        log.info("session %s cancelled without synthesis", self._session_id)
+    async def _end_without_synthesis(self, stop_reason: str) -> None:
+        """The stop triggers that must NOT run the Synthesizer: M2.8's /stop with
+        synthesize=false, and M2.10's budget-exceeded (see run_once())."""
+        log.info("session %s ending without synthesis: %s", self._session_id, stop_reason)
         async with self._sessionmaker() as session:
             row = await session.get(SessionRow, self._session_id)
             row.status = STATUS_FINISHED
+            row.stop_reason = stop_reason
             row.ended_at = datetime.now(timezone.utc)
             await session.commit()

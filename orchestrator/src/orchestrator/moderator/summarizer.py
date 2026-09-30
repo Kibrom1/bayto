@@ -18,15 +18,19 @@ docs/decisions.md, 2026-09-29/30.
 from __future__ import annotations
 
 import os
+import uuid
 from typing import Protocol
 
 from anthropic import AsyncAnthropic
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from .turn_summary import TurnSummary
 
 MODEL_ENV_VAR = "BAYTO_SUMMARY_MODEL"
 TOOL_NAME = "submit_summary"
+
+tracer = trace.get_tracer(__name__)
 
 
 class SummaryResult(BaseModel):
@@ -35,7 +39,8 @@ class SummaryResult(BaseModel):
 
 
 class Summarizer(Protocol):
-    async def summarize(self, previous_summary: str | None, new_turns: list[TurnSummary]) -> SummaryResult: ...
+    async def summarize(self, session_id: uuid.UUID, previous_summary: str | None,
+                         new_turns: list[TurnSummary]) -> SummaryResult: ...
 
 
 class SummarizerError(RuntimeError):
@@ -81,16 +86,23 @@ class AnthropicSummarizer:
             raise ValueError(f"no model id: pass model= or set {MODEL_ENV_VAR}")
         self._client = client or AsyncAnthropic()
 
-    async def summarize(self, previous_summary: str | None, new_turns: list[TurnSummary]) -> SummaryResult:
-        response = await self._client.messages.create(
-            model=self._model,
-            max_tokens=1024,
-            system="You maintain a rolling summary of a multi-agent conversation for context-window efficiency.",
-            messages=[{"role": "user", "content": _user_content(previous_summary, new_turns)}],
-            tools=[_tool_definition()],
-            tool_choice={"type": "tool", "name": TOOL_NAME},
-        )
-        return _parse_tool_use(response)
+    async def summarize(self, session_id: uuid.UUID, previous_summary: str | None,
+                         new_turns: list[TurnSummary]) -> SummaryResult:
+        with tracer.start_as_current_span("moderator.summarize",
+                                           attributes={"bayto.session_id": str(session_id)}) as span:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                system="You maintain a rolling summary of a multi-agent conversation for context-window efficiency.",
+                messages=[{"role": "user", "content": _user_content(previous_summary, new_turns)}],
+                tools=[_tool_definition()],
+                tool_choice={"type": "tool", "name": TOOL_NAME},
+            )
+            span.set_attribute("gen_ai.request.model", self._model)
+            if getattr(response, "usage", None) is not None:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.input_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.output_tokens)
+            return _parse_tool_use(response)
 
 
 class FakeSummarizer:
@@ -101,7 +113,8 @@ class FakeSummarizer:
         self._results = results
         self._i = 0
 
-    async def summarize(self, previous_summary: str | None, new_turns: list[TurnSummary]) -> SummaryResult:
+    async def summarize(self, session_id: uuid.UUID, previous_summary: str | None,
+                         new_turns: list[TurnSummary]) -> SummaryResult:
         result = self._results[self._i]
         self._i += 1
         return result

@@ -35,12 +35,15 @@ from .moderator.summarizer import AnthropicSummarizer
 from .moderator.synthesizer import AnthropicSynthesizer
 from .reconcile import reconcile_on_startup
 from .sandbox.local import LocalSbxSandboxProvider
+from .telemetry import configure_tracing
 
 log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_tracing()  # M2.10: must run here, not at import time -- see telemetry.py
+
     sessionmaker = get_sessionmaker()
     sandbox_provider = app.state.sandbox_provider_factory()
 

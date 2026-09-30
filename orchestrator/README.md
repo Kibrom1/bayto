@@ -3,8 +3,9 @@
 Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres, and SSE streaming.
 M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
 SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam, M2.7
-adds the moderator agent, M2.8 adds the REST/SSE API, M2.9 adds startup reconciliation and resume.
-See `docs/work-plan.md` for M2.10+ (budgets, seed data).
+adds the moderator agent, M2.8 adds the REST/SSE API, M2.9 adds startup reconciliation and resume,
+M2.10 adds the budget-exceeded-skips-synthesis rule and OpenTelemetry spans. See `docs/work-plan.md`
+for M2.11 (seed data, closing out M2).
 
 **ZERO AUTH as of M2.8:** no bearer tokens, no caller identity, no per-session ownership checks, no
 rate limiting. Anyone who can reach this service's HTTP port can create tasks/sessions and
@@ -131,6 +132,23 @@ M5 (human seat/auth) lands.
   relaunched runner resumes an outstanding, unanswered assignment instead of computing a fresh
   decision from scratch; `POST /sessions/{id}/stop` (M2.8) now also records a durable `kind="x-stop"`
   message for `reason` (see `docs/decisions.md` for why `synthesize` didn't need the same fix).
+- `src/orchestrator/telemetry.py` (M2.10) — `configure_tracing()`: a global OTel `TracerProvider`,
+  `OTLPSpanExporter` if `OTEL_EXPORTER_OTLP_ENDPOINT` is set else `ConsoleSpanExporter`, always-on
+  sampling. Called once from `app.py`'s `lifespan` (not at import time — see `docs/decisions.md` for
+  why that ordering matters for tests). Every module gets its own tracer the standard OTel way
+  (`trace.get_tracer(__name__)`), not through a constructor-injected seam. Spans, created inline at
+  each real call site: `moderator.run_once` (one per loop iteration; `bayto.session_id`,
+  `bayto.round`) → `moderator.grant_wait` (the wait-for-response step; `bayto.participant`,
+  `timeout_s`, `outcome`) → `turn.process` (Message→Turn construction; `bayto.turn_id`,
+  `bayto.participant`, `bayto.round`, plus `gen_ai.usage.input_tokens`/`output_tokens` and
+  `bayto.cost_usd` only if the agent self-reported them — never estimated). `moderator.summarize`/
+  `moderator.synthesize` (siblings of `grant_wait` under `run_once`, not nested in it) and
+  `floor.score` live inside `AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer`
+  themselves (real `gen_ai.request.model`/`gen_ai.usage.*` from the actual Anthropic response) —
+  `Fake*` seams create no spans at all. Deliberately no session-spanning umbrella span (a session
+  can outlive a process, per M2.9); every span carries `bayto.session_id` instead. `Session.stop_reason`
+  (new column) is set on every terminal path; budget-exceeded is the one stop trigger that skips
+  synthesis entirely (product-owner-confirmed) via a new `ModeratorRunner._end_without_synthesis`.
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
@@ -170,6 +188,23 @@ M5 (human seat/auth) lands.
   assignment being durably sent and its response landing — asserts the resumed runner re-wakes
   rather than re-deciding, sends no duplicate assignment, and then proceeds exactly as a single
   continuous runner would have.
+  `test_moderator_summarizer.py` / `test_moderator_synthesizer.py` (M2.10, new files — these two
+  Anthropic-backed seams previously only had indirect coverage via `FakeSummarizer`/`FakeSynthesizer`
+  in `test_moderator_runner.py`): request/response parsing against a fake injected client (no live
+  API call), plus the `moderator.summarize`/`moderator.synthesize` span tests (real usage attributes
+  from a canned response with `.usage` set, omitted when absent, and confirmation that the `Fake*`
+  seams create no spans at all). `test_floor_scorer.py` gained the equivalent three `floor.score`
+  span tests. `test_moderator_runner.py` gained `test_run_once_creates_the_expected_span_hierarchy`
+  (a real `AnthropicSummarizer` against a real Postgres session, asserting `moderator.run_once` →
+  `moderator.grant_wait` → `turn.process`, with `moderator.summarize` as a sibling of `grant_wait`,
+  not nested under it), a missing-meta span test (no `gen_ai.usage.*`/`bayto.cost_usd` attributes
+  when the participant never self-reported them), and a grant-timeout span test (`outcome="timeout"`
+  on `moderator.grant_wait`). `conftest.py` gained a session-scoped autouse fixture installing one
+  shared `InMemorySpanExporter`-backed `TracerProvider` before any test runs — OTel's
+  `set_tracer_provider` is a process-global, once-only call, and `configure_tracing()` is only
+  invoked from `app.py`'s `lifespan`, so the fixture must win that race unconditionally (see
+  `docs/decisions.md`). `test_api_sessions.py` gained `test_create_session_rejects_a_non_positive_budget`
+  (`tokens`/`dollars` ⩽ 0 → 422 via the new `Field(gt=0)` validation).
 
 ## Run tests
 
@@ -251,3 +286,24 @@ passes standalone, with neither a live `sbx` CLI nor a reachable Postgres, in ab
 `AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer` and `LocalSbxSandboxProvider`
 remain unverified against live credentials, same compound gap as always -- `SandboxProvider.reconcile()`
 is now also invoked at startup, not a new instance of the gap.
+
+M2.10 adds one migration (`85d8f94a9824_m2_10_session_stop_reason_column.py`): a single nullable
+`stop_reason` `String` column on `session` (no `server_default` needed -- nullable, same pattern as
+M2.9's `STATUS_ORPHANED`, a free-form status-adjacent value rather than an enum type change).
+Verified upgrade/check/downgrade against a real throwaway Postgres, same as every prior migration.
+The budget-cap enforcement mechanism itself was already fully built in M2.7/M2.8; this milestone's
+actual scope was narrower than the name suggests -- `Field(gt=0)` validation on `BudgetIn`'s
+`tokens`/`dollars`, the `stop_reason` column, and the OTel spans described under `telemetry.py`
+above. Mid-turn budget enforcement (a cap can only trip between turns, not interrupt one already in
+flight) is an accepted architecture limit, not a gap -- product-owner confirmed no `GET
+/sessions/{id}` endpoint was needed for this either. `test_moderator_runner.py`'s
+`test_budget_exceeded_stops_the_session` is the literal acceptance test: a session forced over
+budget produces zero additional LLM calls after the cap trips, ends with `stop_reason ==
+"budget_exceeded"` and no synthesis `Artifact` row, while `test_max_rounds_stops_and_runs_synthesis`
+in the same file confirms a max-rounds stop in the same suite still produces one. OTel spans:
+verified span hierarchy and attribute correctness against real Postgres rows (see the
+`test_moderator_runner.py`/`test_floor_scorer.py`/`test_moderator_summarizer.py`/
+`test_moderator_synthesizer.py` bullets above) using OTel SDK's own `InMemorySpanExporter` -- no
+real OTLP collector is available in this dev-team sandbox, so the `OTLPSpanExporter` branch of
+`configure_tracing()` itself is unverified live, same compound-gap disclosure as the Anthropic API
+and `sbx` CLI gaps above (see `docs/decisions.md`, 2026-09-30).

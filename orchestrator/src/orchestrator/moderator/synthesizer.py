@@ -30,6 +30,7 @@ import uuid
 from typing import Protocol
 
 from anthropic import AsyncAnthropic
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from ..floor import ConversationView
@@ -37,6 +38,8 @@ from .turn_summary import TurnSummary
 
 MODEL_ENV_VAR = "BAYTO_SYNTHESIS_MODEL"
 TOOL_NAME = "submit_synthesis"
+
+tracer = trace.get_tracer(__name__)
 
 
 class SynthesisResult(BaseModel):
@@ -107,15 +110,22 @@ class AnthropicSynthesizer:
 
     async def synthesize(self, view: ConversationView, summary: str,
                           all_turns: list[TurnSummary]) -> SynthesisResult:
-        response = await self._client.messages.create(
-            model=self._model,
-            max_tokens=4096,
-            system="You write the final synthesis artifact for a multi-agent conversation.",
-            messages=[{"role": "user", "content": _user_content(view, summary, all_turns)}],
-            tools=[_tool_definition()],
-            tool_choice={"type": "tool", "name": TOOL_NAME},
-        )
-        return _parse_tool_use(response)
+        with tracer.start_as_current_span(
+            "moderator.synthesize", attributes={"bayto.session_id": str(view.session_id)}
+        ) as span:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=4096,
+                system="You write the final synthesis artifact for a multi-agent conversation.",
+                messages=[{"role": "user", "content": _user_content(view, summary, all_turns)}],
+                tools=[_tool_definition()],
+                tool_choice={"type": "tool", "name": TOOL_NAME},
+            )
+            span.set_attribute("gen_ai.request.model", self._model)
+            if getattr(response, "usage", None) is not None:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.input_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.output_tokens)
+            return _parse_tool_use(response)
 
 
 class FakeSynthesizer:

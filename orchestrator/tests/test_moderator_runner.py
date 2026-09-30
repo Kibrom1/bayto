@@ -84,7 +84,7 @@ async def _respond(transport: FileTransport, mirror: MessageMirror, participant:
 
 
 def mk_runner(*, tmp_path, live_sessionmaker, session_id, mode, policy, on_wake=None,
-              summaries=None, synthesis=None, scorer=None, stop_rules=None) -> tuple:
+              summaries=None, synthesis=None, scorer=None, stop_rules=None, summarizer=None) -> tuple:
     conversation = OrchestratorConversation.create(conversation_id=CONV_ID, factory_dir=tmp_path, mode=mode)
     transport = FileTransport(tmp_path)
     pubsub = PubSub()
@@ -94,7 +94,8 @@ def mk_runner(*, tmp_path, live_sessionmaker, session_id, mode, policy, on_wake=
         session_id=session_id, sessionmaker=live_sessionmaker, conversation=conversation,
         sandbox_provider=sandbox_provider, sandbox=fake_sandbox(), mode=mode, policy=policy,
         stop_rules=stop_rules or StopRulesConfig(), pubsub=pubsub, personas=[],
-        summarizer=FakeSummarizer(summaries or [SummaryResult(summary="s", has_new_argument=True) for _ in range(20)]),
+        summarizer=summarizer or FakeSummarizer(
+            summaries or [SummaryResult(summary="s", has_new_argument=True) for _ in range(20)]),
         synthesizer=FakeSynthesizer(synthesis or SynthesisResult(content_json={}, source_turn_ids=[])),
         scorer=scorer, config=ModeratorConfig(grant_timeout_seconds=0.3, quiet_sleep_seconds=0.05),
     )
@@ -234,10 +235,15 @@ async def test_max_rounds_stops_and_runs_synthesis(tmp_path, live_sessionmaker):
         row = await session.get(Session, session_id)
         artifacts = (await session.execute(select(Artifact).where(Artifact.session_id == session_id))).scalars().all()
     assert row.status == "finished"
+    assert row.stop_reason == "max_rounds"  # M2.10: unlike budget-exceeded, still runs synthesis below
     assert [a.type for a in artifacts] == ["synthesis"]
 
 
 async def test_budget_exceeded_stops_the_session(tmp_path, live_sessionmaker):
+    """M2.10 product-owner-confirmed acceptance test: budget-exceeded produces zero
+    additional LLM (synthesizer) calls and sets stop_reason=="budget_exceeded" with no
+    synthesis artifact row -- unlike every other stop trigger (see the companion
+    max-rounds test below, which still produces one)."""
     session_id = await _make_session(live_sessionmaker, budget={"max_tokens": 100})
     await _seat(live_sessionmaker, session_id, "a", 0)
     mode = mk_mode_config(roles={"moderator": None, "a": None})
@@ -247,13 +253,31 @@ async def test_budget_exceeded_stops_the_session(tmp_path, live_sessionmaker):
                           tokens_in=60, tokens_out=50))
         await session.commit()
 
+    class SpySynthesizer:
+        def __init__(self):
+            self.calls = 0
+
+        async def synthesize(self, view, summary, all_turns):
+            self.calls += 1
+            return SynthesisResult(content_json={}, source_turn_ids=[])
+
+    spy = SpySynthesizer()
     runner, transport, mirror, sandbox = mk_runner(
         tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
         mode=mode, policy=RoundRobinFloorPolicy(),
     )
+    runner._synthesizer = spy  # swap in the spy after construction, same object otherwise
     result = await runner.run_once()
 
     assert result.stopped is True and result.reason == "budget-exceeded"
+    assert spy.calls == 0  # zero additional LLM calls after the cap trips
+    async with live_sessionmaker() as session:
+        row = await session.get(Session, session_id)
+        artifacts = (await session.execute(select(Artifact).where(Artifact.session_id == session_id))).scalars().all()
+    assert row.status == "finished"
+    assert row.stop_reason == "budget_exceeded"
+    assert artifacts == []  # no synthesis artifact row -- contrast with test_max_rounds_stops_and_runs_synthesis
+    # above, the "still produces one" half of the same product-owner acceptance test.
 
 
 async def test_no_new_arguments_for_k_turns_stops_the_session(tmp_path, live_sessionmaker):
@@ -427,3 +451,109 @@ async def test_self_reported_hand_raise_message_is_parsed_and_merged(tmp_path, l
 
     raised = await runner._collect_hand_raises(await runner._build_view())
     assert raised == [hand_raise]
+
+
+# ---------------------------------------------------------------- M2.10 OTel spans
+
+async def test_run_once_creates_the_expected_span_hierarchy(tmp_path, live_sessionmaker, span_exporter):
+    """The nested hierarchy from the architect's design: moderator.run_once is the parent
+    of moderator.grant_wait, which is the parent of turn.process; moderator.summarize (a
+    real AnthropicSummarizer here, since fakes create no spans) is a SIBLING of
+    grant_wait, not nested inside it -- it fires after the grant_wait span already closed.
+    turn.process's bayto.turn_id is cross-checked against the actual inserted Turn row.
+    Needs live Postgres for that correlation; span mechanics are otherwise DB-independent.
+    """
+    from types import SimpleNamespace
+
+    from orchestrator.moderator.summarizer import AnthropicSummarizer
+
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config(roles={"moderator": None, "a": None})
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "hi", meta={"tokens_in": 5, "tokens_out": 7, "cost": 0.001})
+
+    class FakeMessages:
+        async def create(self, **kwargs):
+            block = SimpleNamespace(type="tool_use", name="submit_summary",
+                                     input={"summary": "s", "has_new_argument": True})
+            response = SimpleNamespace(content=[block])
+            response.usage = SimpleNamespace(input_tokens=1, output_tokens=1)
+            return response
+
+    real_summarizer = AnthropicSummarizer(model="claude-haiku-fake", client=SimpleNamespace(messages=FakeMessages()))
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake, summarizer=real_summarizer,
+    )
+    await runner.run_once()
+
+    spans = span_exporter.get_finished_spans()
+    by_name = {s.name: s for s in spans}
+    assert set(by_name) == {"moderator.run_once", "moderator.grant_wait", "turn.process", "moderator.summarize"}
+    for s in spans:
+        assert s.end_time >= s.start_time
+
+    run_once, grant_wait, turn_process, summarize = (
+        by_name["moderator.run_once"], by_name["moderator.grant_wait"],
+        by_name["turn.process"], by_name["moderator.summarize"],
+    )
+    assert grant_wait.parent.span_id == run_once.context.span_id
+    assert turn_process.parent.span_id == grant_wait.context.span_id
+    # Sibling of grant_wait under run_once -- NOT nested inside it.
+    assert summarize.parent.span_id == run_once.context.span_id
+
+    assert run_once.attributes["bayto.session_id"] == str(session_id)
+    assert run_once.attributes["bayto.round"] == 0
+    assert grant_wait.attributes["bayto.session_id"] == str(session_id)
+    assert grant_wait.attributes["bayto.participant"] == "a"
+    assert grant_wait.attributes["outcome"] == "responded"
+    assert summarize.attributes["bayto.session_id"] == str(session_id)
+    assert summarize.attributes["gen_ai.usage.input_tokens"] == 1
+
+    async with live_sessionmaker() as session:
+        turn = (await session.execute(select(Turn).where(Turn.session_id == session_id))).scalar_one()
+    assert turn_process.attributes["bayto.session_id"] == str(session_id)
+    assert turn_process.attributes["bayto.turn_id"] == str(turn.id)
+    assert turn_process.attributes["bayto.participant"] == "a"
+    assert turn_process.attributes["gen_ai.usage.input_tokens"] == 5
+    assert turn_process.attributes["gen_ai.usage.output_tokens"] == 7
+    assert turn_process.attributes["bayto.cost_usd"] == 0.001
+
+
+async def test_missing_meta_produces_a_turn_process_span_with_no_usage_attributes(
+        tmp_path, live_sessionmaker, span_exporter):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config(roles={"moderator": None, "a": None})
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "no meta here")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake,
+    )
+    await runner.run_once()
+
+    [turn_process] = [s for s in span_exporter.get_finished_spans() if s.name == "turn.process"]
+    assert "gen_ai.usage.input_tokens" not in turn_process.attributes
+    assert "gen_ai.usage.output_tokens" not in turn_process.attributes
+    assert "bayto.cost_usd" not in turn_process.attributes
+
+
+async def test_grant_timeout_sets_outcome_timeout_on_the_grant_wait_span(tmp_path, live_sessionmaker, span_exporter):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config(roles={"moderator": None, "a": None})
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(),  # never responds
+    )
+    await runner.run_once()
+
+    [grant_wait] = [s for s in span_exporter.get_finished_spans() if s.name == "moderator.grant_wait"]
+    assert grant_wait.attributes["outcome"] == "timeout"
