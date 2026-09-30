@@ -108,6 +108,46 @@ async def test_score_sends_the_forced_tool_choice_and_parses_the_response():
     assert call["tools"][0]["name"] == TOOL_NAME
 
 
+# ---------------------------------------------------------------- M2.10 OTel spans
+
+async def test_score_creates_a_floor_score_span_with_real_usage_attributes(span_exporter):
+    response = canned_response([{"participant": "a", "reason": "new_point", "urgency": 0.7}])
+    response.usage = SimpleNamespace(input_tokens=123, output_tokens=45)
+    client = FakeAnthropicClient(response)
+    scorer = AnthropicHandRaiseScorer(model="claude-haiku-fake", client=client)
+
+    await scorer.score(mk_view(), [PersonaBrief(participant="a", role="r", stance=None, brief="b")])
+
+    [span] = span_exporter.get_finished_spans()
+    assert span.name == "floor.score"
+    assert span.attributes["bayto.session_id"] == str(SESSION)
+    assert span.attributes["gen_ai.request.model"] == "claude-haiku-fake"
+    assert span.attributes["gen_ai.usage.input_tokens"] == 123
+    assert span.attributes["gen_ai.usage.output_tokens"] == 45
+    assert span.end_time >= span.start_time
+
+
+async def test_score_span_omits_usage_attributes_when_the_response_has_none(span_exporter):
+    """No usage field on the canned response (the common shape test fixtures already use)
+    -- the span must omit these attributes entirely, not report them as 0 or None."""
+    response = canned_response([])
+    client = FakeAnthropicClient(response)
+    scorer = AnthropicHandRaiseScorer(model="claude-haiku-fake", client=client)
+
+    await scorer.score(mk_view(), [])
+
+    [span] = span_exporter.get_finished_spans()
+    assert "gen_ai.usage.input_tokens" not in span.attributes
+    assert "gen_ai.usage.output_tokens" not in span.attributes
+
+
+async def test_fake_scorer_creates_no_spans(span_exporter):
+    """Instrumenting fakes would just pollute test runs with meaningless data."""
+    scorer = FakeHandRaiseScorer([])
+    await scorer.score(mk_view(), [])
+    assert span_exporter.get_finished_spans() == ()
+
+
 def test_requires_a_model_from_either_the_constructor_or_the_env_var(monkeypatch):
     monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
     with pytest.raises(ValueError):

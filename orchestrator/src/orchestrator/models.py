@@ -102,6 +102,10 @@ class Session(Base):
     # True. Compared against StopRulesConfig.stale_argument_turns (the CONFIG threshold,
     # orchestrator/src/orchestrator/floor/raise_hand.py) -- deliberately not the same name.
     stale_argument_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # M2.10: why the session ended (a terminal-state value, set alongside status=="finished");
+    # None while active/paused/etc. Free-form like `status` itself, not an enum type --
+    # same "status-adjacent value" pattern as M2.9's "orphaned" status.
+    stop_reason: Mapped[str | None] = mapped_column(String)
 
 
 class SessionAgent(Base):

@@ -145,6 +145,19 @@ async def test_create_session_snapshots_agent_version_and_returns_created(client
     assert {sa["agent_version"] for sa in body["session_agents"]} == {"1"}  # Agent.version's default
 
 
+@pytest.mark.parametrize("budget", [{"tokens": -5}, {"tokens": 0}, {"dollars": -1.0}, {"dollars": 0}])
+async def test_create_session_rejects_a_non_positive_budget(client, live_sessionmaker, budget):
+    """M2.10: budget: {tokens: -5} or {tokens: 0} must not be silently accepted, only to
+    surface later as a nonsensical comparison inside the stop-check."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0])}],
+        "budget": budget,
+    })
+    assert resp.status_code == 422
+
+
 async def test_create_session_rejects_an_unknown_task(client, live_sessionmaker):
     _, mode_id, agent_ids = await _seed(live_sessionmaker)
     resp = await client.post("/sessions", json={

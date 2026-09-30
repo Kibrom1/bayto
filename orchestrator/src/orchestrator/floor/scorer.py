@@ -24,12 +24,15 @@ from typing import Protocol
 
 from acp.floor import HandRaise, hand_raise_json_schema
 from anthropic import AsyncAnthropic
+from opentelemetry import trace
 from pydantic import BaseModel
 
 from .types import ConversationView
 
 MODEL_ENV_VAR = "BAYTO_HAND_RAISE_MODEL"
 TOOL_NAME = "submit_hand_raises"
+
+tracer = trace.get_tracer(__name__)
 
 
 class PersonaBrief(BaseModel):
@@ -89,15 +92,24 @@ class AnthropicHandRaiseScorer:
         self._client = client or AsyncAnthropic()
 
     async def score(self, view: ConversationView, personas: list[PersonaBrief]) -> list[HandRaise]:
-        response = await self._client.messages.create(
-            model=self._model,
-            max_tokens=1024,
-            system=_system_prompt(personas),
-            messages=[{"role": "user", "content": _user_content(view)}],
-            tools=[_tool_definition()],
-            tool_choice={"type": "tool", "name": TOOL_NAME},
-        )
-        return _parse_tool_use(response)
+        with tracer.start_as_current_span(
+            "floor.score", attributes={"bayto.session_id": str(view.session_id)}
+        ) as span:
+            response = await self._client.messages.create(
+                model=self._model,
+                max_tokens=1024,
+                system=_system_prompt(personas),
+                messages=[{"role": "user", "content": _user_content(view)}],
+                tools=[_tool_definition()],
+                tool_choice={"type": "tool", "name": TOOL_NAME},
+            )
+            # Real usage from the Anthropic API response -- reliable, unlike a sandboxed
+            # participant's self-reported (and possibly absent) turn meta.
+            span.set_attribute("gen_ai.request.model", self._model)
+            if getattr(response, "usage", None) is not None:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.input_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.output_tokens)
+            return _parse_tool_use(response)
 
 
 class FakeHandRaiseScorer:

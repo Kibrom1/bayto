@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
@@ -44,8 +44,13 @@ def _error(code: str, detail: str, field: str | None = None) -> dict:
 # ---------------------------------------------------------------- POST /sessions
 
 class BudgetIn(BaseModel):
-    tokens: int | None = None
-    dollars: float | None = None
+    # M2.10: reject budget: {tokens: -5} or {tokens: 0} at creation time -- a non-positive
+    # cap is nonsensical (it would either be silently accepted and only surface as a
+    # confusing immediate-trip inside the stop-check, or a 0 would be indistinguishable
+    # from "no cap" in a truthiness check). gt=0, not ge=0: a cap of exactly 0 isn't a
+    # meaningful budget either.
+    tokens: int | None = Field(default=None, gt=0)
+    dollars: float | None = Field(default=None, gt=0)
 
 
 class RosterEntry(BaseModel):
