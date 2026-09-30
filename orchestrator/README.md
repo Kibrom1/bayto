@@ -2,8 +2,8 @@
 
 Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres, and SSE streaming.
 M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
-SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam. See
-`docs/work-plan.md` for M2.7+ (moderator agent, REST/SSE API).
+SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam, M2.7
+adds the moderator agent. See `docs/work-plan.md` for M2.8+ (REST/SSE API, resilience, budgets).
 
 ## Layout
 
@@ -58,10 +58,29 @@ SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the Flo
   `to_thread`-wrapped — the Anthropic API has a real async client), `AnthropicHandRaiseScorer` (one
   Messages API call, a forced `tool_choice` on a tool whose schema is
   `agent-comms/schema/hand-raise.v1.json` read at runtime — see `docs/decisions.md` for why it's
-  unverified against the live API), and `FakeHandRaiseScorer` (canned list, for M2.7's not-yet-built
-  turn-runner tests). The turn-runner itself — calling the scorer, merging in self-emitted hand-raise
-  envelopes, calling `policy.next()`, turning a `Grant` into an assignment + wake-up — is M2.7, out of
-  scope here.
+  unverified against the live API), and `FakeHandRaiseScorer` (canned list). `StopRulesConfig`
+  (`raise_hand.py`) merges this with `Mode.stop_rules_json`'s intent (M2.7) — see below.
+- `src/orchestrator/moderator/` (M2.7) — the turn-runner loop. `runner.py`: `ModeratorRunner`, one
+  instance per active Session, `run_once()`/`run()` split like `mirror.py`'s `poll_once()`/
+  `run_forever()`. `run_once()` builds a `ConversationView` from real Session/Turn/SessionAgent rows,
+  runs the opening pass (one uninterrupted turn per seat before the configured `FloorPolicy` takes
+  over), collects hand-raises (the Haiku scorer merged with self-emitted `kind="hand-raise"`
+  messages — see `docs/decisions.md` for the wire convention this needed), calls `policy.next()`,
+  and dispatches the `FloorDecision`: `Grant` sends the assignment + wakes the role (M2.4's
+  `SandboxProvider.wake_role`) and awaits a pubsub-pushed response with a timeout/retry/escalate
+  policy, `Converged`/other stop triggers run final synthesis, `AskHuman` pauses (no synthesis —
+  see `docs/decisions.md` for why this is NOT the same as the other stop triggers), `Parallel` is an
+  explicit not-yet-supported stub. `summarizer.py`: `Summarizer`/`AnthropicSummarizer`/
+  `FakeSummarizer` — the rolling summary persisted on `Session` (new columns, see below), folding
+  `has_new_argument` into `Session.stale_argument_count` for the no-new-arguments stop condition.
+  `synthesizer.py`: `Synthesizer`/`AnthropicSynthesizer`/`FakeSynthesizer` — final synthesis plus an
+  optional 0-or-1 `type="minority_report"` `Artifact` (the minority-report criteria live entirely in
+  the tool schema's prompt description, a content/judgment question, not in `ModeratorRunner`'s
+  control flow). `turn_summary.py`: the shared `TurnSummary` projection. Several data-model/semantics
+  assumptions this package had to make (round computation, budget shape, the participant↔`Agent.role`
+  identity, etc.) are logged in `docs/decisions.md`, 2026-09-30. `AnthropicSummarizer`/
+  `AnthropicSynthesizer` are unverified against the live API, same disclosure as
+  `AnthropicHandRaiseScorer`.
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
@@ -74,6 +93,13 @@ SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the Flo
   (pure, no I/O — fixture `ConversationView`s and plain `HandRaise` lists). `test_floor_scorer.py` (a canned
   `tool_use` response fixture parsed through `AnthropicHandRaiseScorer`'s real parsing code, plus a fake
   Anthropic client verifying the request shape — no live API call or credentials needed).
+  `test_moderator_runner.py` (M2.7): `ModeratorRunner.run_once()` against real Postgres rows
+  (task/mode/agent/session/session_agent/turn/artifact), a real tmp_path `FileTransport` via
+  `OrchestratorConversation` (no sbx needed), and fakes for the sandbox provider/scorer/summarizer/
+  synthesizer (no live sbx CLI or Anthropic credentials needed) — covers the opening pass, missing-meta
+  warn-and-continue, grant timeout/retry/escalation, every stop condition (max-rounds, budget,
+  no-new-arguments, external-status-change vs. the needs_human pause, convergence), the minority-report
+  trigger/no-trigger mechanics, and self-reported hand-raise parsing.
 
 ## Run tests
 
@@ -110,3 +136,15 @@ M2.6 touches no schema (`alembic check` still reports no drift). Its `FloorPolic
 no DB at all — `AnthropicHandRaiseScorer` is verified only against a canned Anthropic `tool_use` response
 fixture, not a live API call; no `ANTHROPIC_API_KEY` or network egress is assumed available in this dev-team
 sandbox (see `docs/decisions.md`, 2026-09-29, for the same-shape disclosure as M2.4's `sbx` CLI gap).
+
+M2.7 adds one migration (`c2ff4bd6d11d_m2_7_rolling_summary_columns_on_session.py`): three nullable-or-defaulted
+columns on `session` (`rolling_summary`, `rolling_summary_through_seq`, `stale_argument_count`, the last with
+a `server_default='0'` so it backfills safely on a non-empty table). Verified the same way as M2.2/M2.3/M2.4
+against a real throwaway Postgres: `alembic upgrade head` applied cleanly, `alembic check` reported no drift,
+and `alembic downgrade base` cleanly dropped the new columns. `ModeratorRunner`'s tests ran against the same
+kind of throwaway container and passed: opening-pass sequencing, Turn-row construction (including the
+missing-meta warn-and-continue path — this surfaced a real Alembic logging bug, `disable_existing_loggers`
+silently disabling `orchestrator.moderator`'s logger; fixed in `alembic/env.py`, see `docs/decisions.md`),
+every stop condition, the needs_human-pause-vs-external-stop distinction, and the minority-report mechanics.
+`AnthropicSummarizer`/`AnthropicSynthesizer` are verified only via canned response fixtures, same disclosure
+as M2.6's `AnthropicHandRaiseScorer` — no live Anthropic API call was attempted.

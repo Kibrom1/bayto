@@ -52,6 +52,22 @@ def test_moderator_defaults_to_none_when_absent():
     assert mode.moderator is None
 
 
+def test_load_mode_parses_stop_rules_as_a_raw_dict():
+    mode = load_mode(FIXTURES / "code-factory.yaml")
+    assert mode.stop_rules == {
+        "max_rounds": 12,
+        "converge_after_quiet_rounds": 2,
+        "stale_argument_turns": 3,
+        "urgency_boost_multiplier": 1.3,
+        "max_consecutive_grants": 2,
+    }
+
+
+def test_stop_rules_defaults_to_none_when_absent():
+    mode = load_mode(FIXTURES / "open-chat.yaml")
+    assert mode.stop_rules is None
+
+
 def test_pipeline_mode_with_no_explicit_send_gets_a_permissive_roster():
     mode = load_mode(FIXTURES / "code-factory.yaml")
     roster = mode.send_roster()
