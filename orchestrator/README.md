@@ -5,9 +5,11 @@ M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher
 SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam, M2.7
 adds the moderator agent, M2.8 adds the REST/SSE API, M2.9 adds startup reconciliation and resume,
 M2.10 adds the budget-exceeded-skips-synthesis rule and OpenTelemetry spans, M2.11 adds seed data
-(six agent templates, the seven team roles, and the three discussion modes), closing out M2. See
+(six agent templates, the seven team roles, and the three discussion modes), closing out M2. M3.1
+(the first task of M3, the Bayto room UI) adds four read-only query endpoints (`GET /sessions/{id}`,
+`GET /tasks`, `GET /modes`, `GET /agents/templates`) for the room's UI screens. See
 `docs/work-plan.md` for M2.12 (brainstorm's deferred diverge/cluster phase machine, not required for
-M2's own "Done when" bar) and M3 (the Bayto room UI).
+M2's own "Done when" bar) and the rest of M3.
 
 **ZERO AUTH as of M2.8:** no bearer tokens, no caller identity, no per-session ownership checks, no
 rate limiting. Anyone who can reach this service's HTTP port can create tasks/sessions and
@@ -118,6 +120,29 @@ M5 (human seat/auth) lands.
   wired a `MessageMirror` or a per-session `PubSub` into anything running. `BAYTO_FACTORY_ROOT`
   overrides the default per-session `FileTransport` directory (`orchestrator/.sessions/<id>/`,
   gitignored).
+- `src/orchestrator/moderator/budget.py` (M3.1) — `session_usage(sessionmaker, session_id) ->
+  SessionUsage` (`tokens_in`/`tokens_out`/`cost`), the aggregate query extracted out of
+  `ModeratorRunner._budget_exceeded` (M2.7) so the budget check and `GET /sessions/{id}`'s usage
+  field can never silently compute this differently. `_budget_exceeded` now calls it too, trading
+  one extra DB round-trip for that guarantee — see `docs/decisions.md`.
+- `src/orchestrator/api/modes.py` / `api/agents.py` (M3.1, new) — `GET /modes` reads
+  `modes/<name>.yaml` live via `resolve_mode()` for every `Mode` row (never `Mode.stop_rules_json`,
+  which M2.11 disclosed isn't auto-synced with the YAML), scoped to
+  `{id, name, floor_policy, stop_rules}` — a mode whose file is missing or broken is skipped, not a
+  500 for the whole list (same failure-isolation principle as M2.9's `reconcile_on_startup`).
+  `GET /agents/templates` returns `Agent` rows filtered to `kind="native"` (the M2.11 seeded
+  personas) — `model` is the raw stored value, never a synthesized "tier" label.
+- `src/orchestrator/api/tasks.py` / `api/sessions.py` gained two more read-only endpoints (M3.1).
+  `GET /tasks`: `status`/`last_session_id` are derived from the task's most-recently-*started*
+  session (`ORDER BY started_at DESC NULLS LAST` — Postgres's actual default for bare `DESC` is
+  `NULLS FIRST`, which would have silently ranked an unstarted session above real activity; see
+  `docs/decisions.md`), so an unstarted session only counts as "last" when it's the task's only
+  session; `output_artifact_id` joins to that session's `type="synthesis"` `Artifact` specifically,
+  never `minority_report`. No pagination (flat list; current task volume is dozens, not thousands).
+  `GET /sessions/{id}`: `round` is `max(Turn.round)` read back as-is (no new round concept — both
+  floor policies already assign it at write time), `usage` comes from `budget.session_usage`,
+  `turn_counts` is a `GROUP BY` over `Turn.speaker_id` joined to `Agent.role`. 404 uses the same
+  `{"error": {"code", "field", "detail"}}` shape as every other endpoint's error responses.
 - `src/orchestrator/reconcile.py` (M2.9) — `reconcile_on_startup(sandbox_provider, sessionmaker,
   launch_runner)`, called once from `app.py`'s FastAPI `lifespan` before the process starts serving
   requests. Sequencing: `SandboxProvider.reconcile()` runs first (a trustworthy `Sandbox` row is
@@ -242,6 +267,21 @@ M5 (human seat/auth) lands.
   `SendPolicy.check` both accept any sender/recipient when the roster declares an open `"*"` role, a
   role listed alongside a `"*"` entry still uses its own list, and the pre-existing
   unlisted-role-is-unrestricted default is unchanged when no `"*"` entry exists.
+  `test_budget.py` (M3.1, new): `session_usage` against real Turn rows — sums correctly across
+  several turns, zero for a session with no turns, and a turn with no self-reported meta
+  contributes 0 rather than propagating NULL through the sum. `test_api_modes.py` (M3.1, new):
+  `GET /modes` against a real fixture-backed `Mode` row, plus the two failure-isolation cases
+  (a `Mode` row whose YAML file is missing, and one whose YAML is syntactically broken) — both
+  return the other modes rather than 500ing. `test_api_agents.py` (M3.1, new): `GET /agents/templates`
+  returns the expected shape and excludes a non-`"native"` `Agent` row. `test_api_tasks.py` gained
+  `GET /tasks` coverage: null status/artifact for a task with no sessions, status derived from the
+  most-recently-*started* session (not insertion order), an unstarted session still counts as "last"
+  when it's the task's only session, and `output_artifact_id` links the `"synthesis"` `Artifact`
+  specifically, never a `"minority_report"` one. `test_api_sessions.py` gained `GET /sessions/{id}`
+  coverage: 404 for an unknown session, all-zero/empty usage and turn_counts before any turns exist,
+  and — after running a real session to completion the same way `test_start_runs_the_session_to_completion`
+  does — `round`/`usage`/`turn_counts` cross-checked directly against the real inserted `Turn` rows
+  rather than hardcoded expected numbers.
 
 ## Run tests
 

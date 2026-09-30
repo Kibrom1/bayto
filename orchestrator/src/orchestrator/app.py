@@ -27,7 +27,7 @@ from fastapi import FastAPI
 
 from acp import Envelope  # noqa: F401  (proves acp is a real dependency, kept from M1)
 
-from .api import sessions_router, tasks_router
+from .api import agents_router, modes_router, sessions_router, tasks_router
 from .api.runtime import launch_runner
 from .db import get_sessionmaker
 from .floor.scorer import AnthropicHandRaiseScorer
@@ -80,6 +80,8 @@ app.state.scorer_factory = AnthropicHandRaiseScorer
 
 app.include_router(tasks_router)
 app.include_router(sessions_router)
+app.include_router(modes_router)
+app.include_router(agents_router)
 
 
 @app.get("/healthz")
