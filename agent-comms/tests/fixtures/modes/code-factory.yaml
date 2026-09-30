@@ -13,3 +13,9 @@ route:
   qa.report.review-fail: developer
   qa.report.review-pass: coordinator
 moderator: coordinator
+stop_rules:
+  max_rounds: 12
+  converge_after_quiet_rounds: 2
+  stale_argument_turns: 3
+  urgency_boost_multiplier: 1.3
+  max_consecutive_grants: 2

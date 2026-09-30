@@ -88,6 +88,15 @@ class Session(Base):
     budget: Mapped[dict | None] = mapped_column(JSONB)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # M2.7: deliberate exception to "recompute, don't persist" -- recomputing a rolling
+    # summary from scratch every ModeratorRunner loop iteration would re-summarize the
+    # entire transcript every turn, defeating the context-window-saving purpose.
+    rolling_summary: Mapped[str | None] = mapped_column(Text)
+    rolling_summary_through_seq: Mapped[int | None] = mapped_column(Integer)  # last Turn.seq it covers
+    # Live counter: incremented when Summarizer.has_new_argument is False, reset to 0 when
+    # True. Compared against StopRulesConfig.stale_argument_turns (the CONFIG threshold,
+    # orchestrator/src/orchestrator/floor/raise_hand.py) -- deliberately not the same name.
+    stale_argument_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class SessionAgent(Base):

@@ -23,6 +23,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--to", required=True)
     s.add_argument("--kind", default="note")
     s.add_argument("--reply-to")
+    s.add_argument("--tokens-in", type=int, help="populates meta.tokens_in (M2.7 budget accounting)")
+    s.add_argument("--tokens-out", type=int, help="populates meta.tokens_out (M2.7 budget accounting)")
+    s.add_argument("--cost", type=float, help="populates meta.cost (M2.7 budget accounting)")
     s.add_argument("body")
     sub.add_parser("read")
     a = sub.add_parser("ack")
@@ -54,7 +57,10 @@ def main(argv: list[str] | None = None) -> int:
     conv = Conversation(args.conv, Roster(roles=roles), FileTransport(args.dir))
     try:
         if args.cmd == "send":
-            env = conv.send(args.role, args.to.split(","), args.kind, args.body, in_reply_to=args.reply_to)
+            meta = {k: v for k, v in (("tokens_in", args.tokens_in), ("tokens_out", args.tokens_out),
+                                       ("cost", args.cost)) if v is not None}
+            env = conv.send(args.role, args.to.split(","), args.kind, args.body,
+                             in_reply_to=args.reply_to, meta=meta)
             print(env.message_id)
         elif args.cmd == "read":
             for e in conv.read(args.role):

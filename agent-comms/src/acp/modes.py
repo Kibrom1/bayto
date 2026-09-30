@@ -1,11 +1,12 @@
-"""Mode files -> Roster/SendPolicy/route table (M2.5).
+"""Mode files -> Roster/SendPolicy/route table (M2.5), plus a raw stop-rules block (M2.7).
 
 A mode is data, not code (docs/agent-communication-protocol.md, 'Reuse'): `modes/<name>.yaml`
 declares which Envelope kinds each role may emit, the floor policy, an optional pipeline
-route table, and an optional moderator role for `moderator`-visibility messages. Parsed at
-session start straight into a `ModeConfig`; never round-tripped into
-`orchestrator.models.Mode.phases_json` (that column is about turn-taking/phases, a
-different concern from who-may-address-whom -- see docs/decisions.md, 2026-09-29).
+route table, an optional moderator role for `moderator`-visibility messages, and an optional
+`stop_rules` block. Parsed at session start straight into a `ModeConfig`; never round-tripped
+into `orchestrator.models.Mode.phases_json`/`stop_rules_json` (those columns are about
+turn-taking/phases and stop-rule *storage*, a different concern from *resolving* a mode --
+see docs/decisions.md, 2026-09-29).
 
 Example (docs/agent-communication-protocol.md's `code-factory` mode):
 
@@ -25,6 +26,14 @@ Example (docs/agent-communication-protocol.md's `code-factory` mode):
                              # but the sender (safe default, not a crash)
     send:                    # optional; Roster's own {sender: [recipients]} shape, unused
                              # by pipeline mode (see ModeConfig.send_roster)
+    stop_rules:              # optional; raw dict, typed by orchestrator's
+                             # StopRulesConfig.from_mode (M2.7) -- agent-comms itself never
+                             # interprets these keys
+      max_rounds: 12
+      converge_after_quiet_rounds: 2
+      stale_argument_turns: 3
+      urgency_boost_multiplier: 1.3
+      max_consecutive_grants: 2
 """
 from __future__ import annotations
 
@@ -45,6 +54,11 @@ class ModeConfig:
     route: dict[str, str] = field(default_factory=dict)
     moderator: str | None = None
     send: dict[str, list[str]] | None = None  # explicit Roster.send override; None = derive
+    # Raw dict, deliberately not a typed orchestrator config here: agent-comms doesn't
+    # depend on orchestrator, so it can't import orchestrator.floor's StopRulesConfig.
+    # orchestrator code builds its own typed config from this dict (M2.7's
+    # StopRulesConfig.from_mode) -- same "generic here, typed downstream" split as `send`.
+    stop_rules: dict[str, object] | None = None
 
     def send_roster(self) -> Roster:
         """Pipeline modes route addressing through `route` (e.g. "who's next" is already
@@ -74,4 +88,5 @@ def load_mode(path: str | Path) -> ModeConfig:
         route=raw.get("route", {}),
         moderator=raw.get("moderator"),
         send=raw.get("send"),
+        stop_rules=raw.get("stop_rules"),
     )

@@ -1,25 +1,58 @@
-"""RaiseHandFloorPolicy (M2.6): pure sync function, same as round-robin. Collecting
+"""RaiseHandFloorPolicy (M2.6/M2.7): pure sync function, same as round-robin. Collecting
 hand-raises (the Haiku call in scorer.py, merged with any self-emitted hand-raise
-messages) happens BEFORE next() is called, by whoever runs the turn loop (M2.7+'s
-turn-runner, not built here) -- so the scorer and the policy are two separate,
-independently-testable components, and no async touches FloorPolicy at all.
+messages) happens BEFORE next() is called, by whoever runs the turn loop (M2.7's
+ModeratorRunner) -- so the scorer and the policy are two separate, independently-testable
+components, and no async touches FloorPolicy at all.
 
-RaiseHandTuning's three numeric defaults are product-owner-confirmed acceptance-criteria
-values (2026-09-29) -- do not change them without going back through product-owner.
+StopRulesConfig (M2.7) merges M2.6's original RaiseHandTuning with Mode.stop_rules_json:
+they were the same configuration surface (a mode's stop/tuning knobs) described by two
+would-be parsers for one JSON/YAML blob, so this is the single parsed type for both --
+see docs/decisions.md, 2026-09-29. Its numeric fields are product-owner-confirmed
+acceptance-criteria values -- do not change the defaults without going back through
+product-owner.
+
+`urgency_boost_reasons` (which Reason values get the urgency multiplier) IS a real config
+field, restored after a 2026-09-30 regression: an earlier version of this file hardcoded it
+to {NEW_POINT, DISAGREE} -- but those are also the ONLY two reasons that can ever reach the
+ranking step in `next()` (ADDRESSED short-circuits before it, AGREE_PASS is filtered out
+before it), so hardcoding it to exactly that set meant 100% of ranking-eligible candidates
+were always boosted by the same multiplier. Multiplying every element of a list by the same
+positive constant never changes its sort order, so the boosted ranking became mathematically
+guaranteed to equal the unboosted ranking -- making the "one queue-jumping objection per
+round" cap permanently unreachable dead code, a real regression on an M2.6 acceptance
+criterion (M2.6's own tests demonstrated genuine jumps via a non-default, strict-subset
+config). The field defaults back to {NEW_POINT, DISAGREE} for backward-compatible default
+behavior (still inert by default, same as before this fix), but a mode can now configure a
+strict subset (e.g. `urgency_boost_reasons: [new_point]`) to make real divergence -- and
+therefore real jumps -- possible again, exactly as M2.6 supported. See docs/decisions.md,
+2026-09-30, for the corrected record (the prior entry claiming this hardcoding was safe and
+that the mechanism "stays correct... for a future round definition" was factually wrong: the
+dead-code problem is independent of round semantics, since it's a property of the ranking
+step alone).
 """
 from __future__ import annotations
 
 from acp.floor import HandRaise, Reason
-from pydantic import BaseModel
+from acp.modes import ModeConfig
+from pydantic import BaseModel, Field
 
 from .types import ConversationView, Converged, FloorDecision, Grant
 
 
-class RaiseHandTuning(BaseModel):
-    urgency_boost_reasons: set[Reason] = {Reason.NEW_POINT, Reason.DISAGREE}
-    urgency_boost_multiplier: float = 1.3
-    max_consecutive_grants: int = 2
+class StopRulesConfig(BaseModel):
+    max_rounds: int | None = None
     converge_after_quiet_rounds: int = 2
+    stale_argument_turns: int = 3
+    urgency_boost_multiplier: float = 1.3
+    urgency_boost_reasons: set[Reason] = Field(default_factory=lambda: {Reason.NEW_POINT, Reason.DISAGREE})
+    max_consecutive_grants: int = 2
+
+    @classmethod
+    def from_mode(cls, mode: ModeConfig) -> "StopRulesConfig":
+        """`stop_rules` is a raw dict on ModeConfig (agent-comms doesn't depend on
+        orchestrator, so it can't produce this typed config itself); missing keys fall
+        back to the product-owner-confirmed defaults above."""
+        return cls(**(mode.stop_rules or {}))
 
 
 class RaiseHandFloorPolicy:
@@ -30,7 +63,7 @@ class RaiseHandFloorPolicy:
     product-owner as fine to ship and revisit post-usage. Do not over-invest in alternate
     interpretations."""
 
-    def __init__(self, tuning: RaiseHandTuning = RaiseHandTuning()) -> None:
+    def __init__(self, tuning: StopRulesConfig = StopRulesConfig()) -> None:
         self._tuning = tuning
 
     def next(self, view: ConversationView, raised: list[HandRaise]) -> FloorDecision | None:

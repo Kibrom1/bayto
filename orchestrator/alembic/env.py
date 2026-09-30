@@ -16,7 +16,13 @@ from orchestrator.models import Base
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: fileConfig's default (True) silently disables every
+    # logging.getLogger(...) already created at import time -- e.g. orchestrator.moderator's
+    # module-level loggers, imported before tests/conftest.py's live_schema fixture runs this
+    # migration -- which then makes log.warning(...) calls silently no-op for the rest of the
+    # process (Logger.disabled short-circuits before a record is even created). M2.7 found
+    # this the hard way (see docs/decisions.md, 2026-09-30).
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

@@ -5,7 +5,7 @@ the FloorPolicy Protocol), round_robin.py / raise_hand.py for the two M2.6 polic
 scorer.py for the hand-raise-collection seam (HandRaiseScorer Protocol +
 AnthropicHandRaiseScorer + FakeHandRaiseScorer).
 """
-from .raise_hand import RaiseHandFloorPolicy, RaiseHandTuning
+from .raise_hand import RaiseHandFloorPolicy, StopRulesConfig
 from .round_robin import RoundRobinFloorPolicy, next_seat
 from .scorer import (
     AnthropicHandRaiseScorer,
@@ -19,6 +19,6 @@ from .types import AskHuman, ConversationView, Converged, FloorDecision, FloorPo
 __all__ = [
     "ConversationView", "Grant", "Parallel", "Converged", "AskHuman", "FloorDecision", "FloorPolicy",
     "RoundRobinFloorPolicy", "next_seat",
-    "RaiseHandFloorPolicy", "RaiseHandTuning",
+    "RaiseHandFloorPolicy", "StopRulesConfig",
     "HandRaiseScorer", "AnthropicHandRaiseScorer", "FakeHandRaiseScorer", "PersonaBrief", "ScorerError",
 ]
