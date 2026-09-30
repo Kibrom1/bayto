@@ -13,7 +13,7 @@ these tables always knows which session it's tailing; nothing else was invented.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     ARRAY,
@@ -46,6 +46,11 @@ class Task(Base):
     output_type: Mapped[str] = mapped_column(String, nullable=False)
     success_criteria: Mapped[str | None] = mapped_column(Text)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # M2.8: POST /tasks's response includes created_at, which product-design.md's original
+    # task(...) column list doesn't have -- added to fulfill that literal response contract
+    # (see docs/decisions.md, 2026-09-30).
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
+                                                  default=lambda: datetime.now(timezone.utc))
 
 
 class Agent(Base):

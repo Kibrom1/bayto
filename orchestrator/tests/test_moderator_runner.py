@@ -28,45 +28,10 @@ from orchestrator.moderator import (
     SynthesisResult,
 )
 from orchestrator.pubsub import PubSub
-from orchestrator.sandbox.provider import SandboxInfo, SandboxProvider
+
+from fakes import FakeSandboxProvider, fake_sandbox
 
 CONV_ID = "c1"
-
-
-class FakeSandboxProvider(SandboxProvider):
-    """Only wake_role is exercised by ModeratorRunner; the rest are unused ABC stubs.
-    `on_wake` simulates a participant's eventual response the same way a real Herdr session
-    would: send an Envelope through the same FileTransport, then mirror+publish it -- the
-    real MessageMirror/PubSub path, not a shortcut."""
-
-    def __init__(self, on_wake=None):
-        self.woken: list[str] = []
-        self._on_wake = on_wake
-
-    async def create(self, task_id, *, name):
-        raise NotImplementedError
-
-    async def start_team(self, sandbox):
-        raise NotImplementedError
-
-    async def wake_role(self, sandbox, role):
-        self.woken.append(role)
-        if self._on_wake:
-            await self._on_wake(role)
-
-    async def stop(self, sandbox):
-        raise NotImplementedError
-
-    async def remove(self, sandbox):
-        raise NotImplementedError
-
-    async def reconcile(self):
-        raise NotImplementedError
-
-
-def fake_sandbox() -> SandboxInfo:
-    return SandboxInfo(id=uuid.uuid4(), task_id=uuid.uuid4(), provider="fake", name="sbx-test",
-                        status="running", image=None, created_at=None, closed_at=None)
 
 
 async def _make_task(sessionmaker) -> uuid.UUID:
