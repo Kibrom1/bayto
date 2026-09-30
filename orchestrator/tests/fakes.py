@@ -1,26 +1,31 @@
-"""Shared test fakes (M2.7/M2.8): no live sbx CLI or Anthropic credentials needed or
+"""Shared test fakes (M2.7/M2.8/M2.9): no live sbx CLI or Anthropic credentials needed or
 assumed available in this dev-team sandbox. Not a test module itself (no test_ prefix).
 """
 from __future__ import annotations
 
 import uuid
 
-from orchestrator.sandbox.provider import SandboxInfo, SandboxProvider
+from orchestrator.sandbox.provider import SandboxDrift, SandboxInfo, SandboxProvider
 
 
 class FakeSandboxProvider(SandboxProvider):
     """`create`/`start_team` are real (in-memory) so M2.8's launch_runner can exercise the
-    full /start flow; `stop`/`remove`/`reconcile` are unused ABC stubs. `on_wake` simulates
-    a participant's eventual response the same way a real Herdr session would: send an
+    full /start flow; `stop`/`remove` are unused ABC stubs. `on_wake` simulates a
+    participant's eventual response the same way a real Herdr session would: send an
     Envelope through the same FileTransport, then mirror+publish it -- the real
-    MessageMirror/PubSub path, not a shortcut."""
+    MessageMirror/PubSub path, not a shortcut. `reconcile_result`/`reconcile_raises` (M2.9)
+    configure `reconcile()`'s canned return value or a simulated failure, for
+    reconcile_on_startup()'s tests."""
 
-    def __init__(self, on_wake=None):
+    def __init__(self, on_wake=None, reconcile_result: list[SandboxDrift] | None = None,
+                 reconcile_raises: Exception | None = None):
         self.woken: list[str] = []
         self.created_for: list[uuid.UUID] = []
         self.started_teams: list[str] = []
         self._on_wake = on_wake
         self._sandboxes: dict[uuid.UUID, SandboxInfo] = {}
+        self._reconcile_result = reconcile_result or []
+        self._reconcile_raises = reconcile_raises
 
     async def create(self, task_id: uuid.UUID, *, name: str) -> SandboxInfo:
         if task_id in self._sandboxes:
@@ -45,8 +50,10 @@ class FakeSandboxProvider(SandboxProvider):
     async def remove(self, sandbox):
         raise NotImplementedError
 
-    async def reconcile(self):
-        raise NotImplementedError
+    async def reconcile(self) -> list[SandboxDrift]:
+        if self._reconcile_raises is not None:
+            raise self._reconcile_raises
+        return self._reconcile_result
 
 
 def fake_sandbox() -> SandboxInfo:

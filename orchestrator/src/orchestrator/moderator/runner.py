@@ -181,6 +181,17 @@ class ModeratorRunner:
             await self._finish(view, "external-status-change")
             return RunOnceResult(stopped=True, reason="external-status-change")
 
+        pending_grant = await self._pending_grant()
+        if pending_grant is not None:
+            # M2.9: an assignment was durably sent (a Message row) but never got a
+            # response -- the process may have died between send() succeeding and either
+            # wake_role() being called or the response landing. Checked UNCONDITIONALLY
+            # here (not only after a restart) so the same code path covers a real restart
+            # and an ordinary transient hiccup mid-loop; the runner never needs to know
+            # which case it's in.
+            await self._resume_pending_grant(view, pending_grant)
+            return RunOnceResult(stopped=False)
+
         stop_reason = await self._check_stop_conditions(view)
         if stop_reason is not None:
             await self._finish(view, stop_reason)
@@ -414,12 +425,47 @@ class ModeratorRunner:
 
     # ---------------------------------------------------------------- granting the floor
 
+    async def _pending_grant(self) -> str | None:
+        """M2.9: detects a Grant whose assignment was durably sent (a "assignment" Message
+        row) but has no response yet -- the participant it was addressed to. Looks only at
+        the MOST RECENT assignment: once a participant responds (any message with a higher
+        seq), that assignment is resolved and the check naturally returns None again until
+        the *next* assignment is sent. No new schema: a plain query over the already-mirrored
+        Message rows."""
+        async with self._sessionmaker() as session:
+            last_assignment = (await session.execute(
+                select(MessageRow).where(MessageRow.session_id == self._session_id,
+                                          MessageRow.kind == "assignment")
+                .order_by(MessageRow.seq.desc()).limit(1)
+            )).scalar_one_or_none()
+            if last_assignment is None:
+                return None
+            participant = last_assignment.to[0]
+            answered = await session.scalar(
+                select(MessageRow.message_id).where(
+                    MessageRow.session_id == self._session_id,
+                    MessageRow.from_ == participant,
+                    MessageRow.seq > last_assignment.seq,
+                ).limit(1)
+            )
+        return None if answered else participant
+
     async def _handle_grant(self, view: ConversationView, decision: Grant) -> None:
         participant = decision.participant
         context = await self._build_context(view)
         await self._conversation.send(sender=self._mode.moderator or "moderator", to=[participant],
                                        kind="assignment", body=context)
+        await self._wake_await_and_record(view, participant)
 
+    async def _resume_pending_grant(self, view: ConversationView, participant: str) -> None:
+        """The assignment was already sent and durably recorded -- do NOT resend it, only
+        re-wake. wake_role() is a notification poke, not a stateful "exactly one wake
+        credit" mechanism: notifying an already-attentive participant a second time is
+        harmless, so always re-waking here (at-least-once delivery against an idempotent
+        receiver) is correct whether this is a real restart or an ordinary retry."""
+        await self._wake_await_and_record(view, participant)
+
+    async def _wake_await_and_record(self, view: ConversationView, participant: str) -> None:
         # Subscribe BEFORE waking: a fake/fast/same-process participant can publish its
         # response synchronously inside wake_role() itself (as the tests' FakeSandboxProvider
         # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only

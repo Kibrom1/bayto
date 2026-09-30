@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -24,6 +25,8 @@ from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HU
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import launch_runner
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -217,6 +220,7 @@ class StopRequest(BaseModel):
 async def stop_session(
     session_id: uuid.UUID,
     req: StopRequest,
+    request: Request,
     sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
 ) -> dict:
     async with sessionmaker() as db:
@@ -229,6 +233,19 @@ async def stop_session(
         row.status = STATUS_STOPPING if req.synthesize else STATUS_CANCELLING
         await db.commit()
         new_status = row.status
+
+    # M2.9: `synthesize` is already durable via the status value itself (STOPPING vs
+    # CANCELLING), so a crash can't lose that -- but `reason` was accepted and never
+    # persisted anywhere. Record both as a durable message, reusing the same mechanism
+    # interject already uses, rather than adding a Session column; an "x-stop" extension
+    # kind since the closed Kind vocabulary has no "stop" member.
+    runtime = request.app.state.session_runtimes.get(session_id)
+    if runtime is not None:
+        await runtime.conversation.send(sender="human", to=["*"], kind="x-stop",
+                                         body=json.dumps({"synthesize": req.synthesize, "reason": req.reason}))
+    else:
+        log.warning("stop requested for session %s with no live runtime to record a durable "
+                    "x-stop message (status still updated)", session_id)
 
     # Fire-and-forget: ModeratorRunner notices the status change on its next iteration
     # (worst case the 300s turn-wait timeout) and winds down; this endpoint does not block
