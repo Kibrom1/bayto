@@ -97,3 +97,32 @@ def test_send_policy_from_mode_matches_the_parsed_roles():
     assert policy.check("qa", "assignment") is False
     assert policy.check("human", "decision") is True
     assert policy.check("human", "assignment") is False
+
+
+def test_synthesis_prompt_hint_defaults_to_none_when_absent():
+    mode = load_mode(FIXTURES / "open-chat.yaml")
+    assert mode.synthesis_prompt_hint is None
+
+
+# ---------------------------------------------------------------- M2.11 wildcard roles
+
+def test_load_mode_parses_a_wildcard_roles_key():
+    mode = load_mode(FIXTURES / "wildcard-roster.yaml")
+    assert mode.roles == {"*": ["note", "question", "answer", "x-hand-raise"]}
+
+
+def test_wildcard_roster_accepts_any_sender_and_recipient():
+    mode = load_mode(FIXTURES / "wildcard-roster.yaml")
+    roster = mode.send_roster()
+    assert roster.roles == ["*"]
+    assert roster.can_send("architect", ["security-reviewer"]) is True
+    assert roster.can_send("anyone-at-all", ["also-anyone"]) is True
+
+
+def test_wildcard_send_policy_falls_back_to_the_star_entry():
+    from acp.models import SendPolicy
+
+    mode = load_mode(FIXTURES / "wildcard-roster.yaml")
+    policy = SendPolicy.from_mode(mode)
+    assert policy.check("architect", "note") is True
+    assert policy.check("architect", "assignment") is False

@@ -1,0 +1,7 @@
+role: researcher
+version: 1
+responsibility: >
+  Gathers facts, prior art and sources; answers open questions with citations.
+may_send: [note, answer, proposal, report]
+hands_work_to: [product-owner, architect]
+tool_profile: "Web search + fetch; no code write access"

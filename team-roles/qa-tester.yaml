@@ -1,0 +1,10 @@
+role: qa-tester
+version: 1
+responsibility: >
+  Reviews the exact commit against the task and policy; writes and runs tests.
+may_send: [report, critique, question]
+# Primary destination; failures specifically go back to the originating engineer instead
+# (docs/agent-communication-protocol.md's table) -- not representable as a second list
+# entry without losing that conditional, so noted here rather than silently flattened.
+hands_work_to: [coordinator]
+tool_profile: "Code read, test runners, browser"

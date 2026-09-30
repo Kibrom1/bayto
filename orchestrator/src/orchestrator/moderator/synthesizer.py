@@ -49,8 +49,8 @@ class SynthesisResult(BaseModel):
 
 
 class Synthesizer(Protocol):
-    async def synthesize(self, view: ConversationView, summary: str,
-                          all_turns: list[TurnSummary]) -> SynthesisResult: ...
+    async def synthesize(self, view: ConversationView, summary: str, all_turns: list[TurnSummary],
+                          synthesis_prompt_hint: str | None = None) -> SynthesisResult: ...
 
 
 class SynthesizerError(RuntimeError):
@@ -108,15 +108,18 @@ class AnthropicSynthesizer:
             raise ValueError(f"no model id: pass model= or set {MODEL_ENV_VAR}")
         self._client = client or AsyncAnthropic()
 
-    async def synthesize(self, view: ConversationView, summary: str,
-                          all_turns: list[TurnSummary]) -> SynthesisResult:
+    async def synthesize(self, view: ConversationView, summary: str, all_turns: list[TurnSummary],
+                          synthesis_prompt_hint: str | None = None) -> SynthesisResult:
         with tracer.start_as_current_span(
             "moderator.synthesize", attributes={"bayto.session_id": str(view.session_id)}
         ) as span:
+            system = "You write the final synthesis artifact for a multi-agent conversation."
+            if synthesis_prompt_hint:
+                system = f"{system} {synthesis_prompt_hint}"
             response = await self._client.messages.create(
                 model=self._model,
                 max_tokens=4096,
-                system="You write the final synthesis artifact for a multi-agent conversation.",
+                system=system,
                 messages=[{"role": "user", "content": _user_content(view, summary, all_turns)}],
                 tools=[_tool_definition()],
                 tool_choice={"type": "tool", "name": TOOL_NAME},
@@ -134,6 +137,6 @@ class FakeSynthesizer:
     def __init__(self, result: SynthesisResult) -> None:
         self._result = result
 
-    async def synthesize(self, view: ConversationView, summary: str,
-                          all_turns: list[TurnSummary]) -> SynthesisResult:
+    async def synthesize(self, view: ConversationView, summary: str, all_turns: list[TurnSummary],
+                          synthesis_prompt_hint: str | None = None) -> SynthesisResult:
         return self._result

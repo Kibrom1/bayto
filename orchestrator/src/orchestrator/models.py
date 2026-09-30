@@ -71,6 +71,12 @@ class Agent(Base):
     card_json: Mapped[dict | None] = mapped_column(JSONB)
     version: Mapped[str] = mapped_column(String, nullable=False, default="1")
 
+    # M2.11: seed.py upserts by this natural key (INSERT ... ON CONFLICT ... DO UPDATE),
+    # which needs a real unique constraint/index as its conflict target -- Postgres has no
+    # implicit one from the column alone. See docs/decisions.md. Named explicitly so
+    # `alembic check` doesn't see drift against the DB's (otherwise auto-named) constraint.
+    __table_args__ = (UniqueConstraint("name", name="uq_agent_name"),)
+
 
 class Mode(Base):
     __tablename__ = "mode"
@@ -81,6 +87,8 @@ class Mode(Base):
     turn_policy: Mapped[str | None] = mapped_column(String)
     stop_rules_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     output_schema: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (UniqueConstraint("name", name="uq_mode_name"),)
 
 
 class Session(Base):

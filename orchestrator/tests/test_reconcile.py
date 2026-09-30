@@ -32,7 +32,11 @@ async def _make_sandbox(sessionmaker, task_id: uuid.UUID, *, status="running", n
     return name
 
 
-async def _make_session(sessionmaker, task_id: uuid.UUID, *, status: str, mode_name="m") -> uuid.UUID:
+async def _make_session(sessionmaker, task_id: uuid.UUID, *, status: str, mode_name: str | None = None) -> uuid.UUID:
+    # M2.11 added a real unique constraint on Mode.name (seed.py's natural-key upsert needs
+    # one) -- a fresh name per call by default so tests that create several sessions don't
+    # collide on the old hardcoded "m" default; pass mode_name= explicitly to share one.
+    mode_name = mode_name or f"m-{uuid.uuid4()}"
     async with sessionmaker() as db:
         mode = Mode(name=mode_name, phases_json={}, stop_rules_json={})
         db.add(mode)

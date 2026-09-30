@@ -4,8 +4,10 @@ Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres,
 M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
 SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam, M2.7
 adds the moderator agent, M2.8 adds the REST/SSE API, M2.9 adds startup reconciliation and resume,
-M2.10 adds the budget-exceeded-skips-synthesis rule and OpenTelemetry spans. See `docs/work-plan.md`
-for M2.11 (seed data, closing out M2).
+M2.10 adds the budget-exceeded-skips-synthesis rule and OpenTelemetry spans, M2.11 adds seed data
+(six agent templates, the seven team roles, and the three discussion modes), closing out M2. See
+`docs/work-plan.md` for M2.12 (brainstorm's deferred diverge/cluster phase machine, not required for
+M2's own "Done when" bar) and M3 (the Bayto room UI).
 
 **ZERO AUTH as of M2.8:** no bearer tokens, no caller identity, no per-session ownership checks, no
 rate limiting. Anyone who can reach this service's HTTP port can create tasks/sessions and
@@ -149,6 +151,24 @@ M5 (human seat/auth) lands.
   can outlive a process, per M2.9); every span carries `bayto.session_id` instead. `Session.stop_reason`
   (new column) is set on every terminal path; budget-exceeded is the one stop trigger that skips
   synthesis entirely (product-owner-confirmed) via a new `ModeratorRunner._end_without_synthesis`.
+- `src/orchestrator/seed.py` (M2.11) — idempotent seed data, run via `python -m orchestrator.seed`
+  after editing an agent template or a `modes/*.yaml` file. Upserts `Agent`/`Mode` rows by natural
+  key (`name`) via `INSERT ... ON CONFLICT ... DO UPDATE`, which needed a new migration adding a real
+  unique constraint on both columns (`uq_agent_name`/`uq_mode_name` — Postgres has no implicit one to
+  use as the conflict target). Six `Agent` rows (`kind="native"`, uniform `model="claude-sonnet-5"`,
+  product-owner-confirmed `system_prompt`/`stance`): Architect, Security Reviewer, PM, Lawyer,
+  Customer, Historian. Three `Mode` rows matching the checked-in `modes/{open-chat,debate,
+  brainstorm}.yaml` files (never the other way around — `modes_registry.resolve_mode` always
+  re-reads the YAML file directly at session-run time, this script only keeps the DB row in sync for
+  whatever introspects it directly; see `modes/README.md` and `docs/decisions.md`). A plain script,
+  not an Alembic data migration — same "config that changes independently of code shouldn't be
+  frozen into migration history" reasoning as M2.5's mode files.
+- `team-roles/*.yaml` (M2.11, repo root, not under `orchestrator/`) — the 7 team roles from
+  docs/agent-communication-protocol.md's table, transcribed one file per role. Reference/
+  documentation content for humans authoring new modes; no runtime loader consumes these anywhere
+  (verified against the repo). Deliberately not in the repo-root `roles/` directory — that's a
+  different, already-in-use M1.8/M1.9 catalog (`acp.roster`) that assembled this actual dev-team
+  sandbox — see `team-roles/README.md` and `docs/decisions.md` for why.
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
@@ -205,6 +225,23 @@ M5 (human seat/auth) lands.
   invoked from `app.py`'s `lifespan`, so the fixture must win that race unconditionally (see
   `docs/decisions.md`). `test_api_sessions.py` gained `test_create_session_rejects_a_non_positive_budget`
   (`tokens`/`dollars` ⩽ 0 → 422 via the new `Field(gt=0)` validation).
+  `test_seed.py` (M2.11): `seed.py`'s agent/mode upserts against real Postgres — all six/three rows
+  land with the expected shape, a second run doesn't duplicate them, and a content tweak (a
+  monkeypatched `AGENT_TEMPLATES`) updates the existing row in place (same `id`) rather than erroring
+  or inserting a second one. `test_modes_registry.py` gained three tests parsing the real, checked-in
+  `modes/{open-chat,debate,brainstorm}.yaml` files (no DB, no fixture files — `resolve_mode`'s default
+  `modes_dir()` already points at the repo's real `modes/` directory). `test_team_roles.py` (M2.11,
+  pure, no DB): a light YAML-syntax-and-expected-keys check over `team-roles/*.yaml` — nothing
+  programmatic consumes these files, so this isn't a loader/parser test suite, just confirms the
+  content is well-formed and matches what `team-roles/README.md` documents. `test_reconcile.py`'s
+  `_make_session` helper had its hardcoded `mode_name="m"` default changed to a fresh
+  `f"m-{uuid.uuid4()}"` per call — several of its own tests create more than one session per test
+  body, which M2.11's new `uq_mode_name` constraint turned into a real (if harmless-until-now)
+  fixture collision; caught by running the full live suite, not anticipated in advance. `test_modes.py`
+  / `test_send_policy.py` (agent-comms) gained the `"*"` wildcard-roles coverage: `Roster.can_send`/
+  `SendPolicy.check` both accept any sender/recipient when the roster declares an open `"*"` role, a
+  role listed alongside a `"*"` entry still uses its own list, and the pre-existing
+  unlisted-role-is-unrestricted default is unchanged when no `"*"` entry exists.
 
 ## Run tests
 
@@ -307,3 +344,21 @@ verified span hierarchy and attribute correctness against real Postgres rows (se
 real OTLP collector is available in this dev-team sandbox, so the `OTLPSpanExporter` branch of
 `configure_tracing()` itself is unverified live, same compound-gap disclosure as the Anthropic API
 and `sbx` CLI gaps above (see `docs/decisions.md`, 2026-09-30).
+
+M2.11 adds one migration (`f73079274d8f_m2_11_unique_constraints_on_agent_name_.py`): a real unique
+constraint on `agent.name` and `mode.name` (`uq_agent_name`/`uq_mode_name`, explicitly named in the
+ORM model rather than left to Postgres's auto-naming, so `alembic check` never drifts against an
+unnamed DB-side constraint), needed as the conflict target for `seed.py`'s
+`INSERT ... ON CONFLICT (name) DO UPDATE`. Verified upgrade/check/downgrade against a real throwaway
+Postgres, same as every prior migration -- downgrade also re-verified as a genuinely separate step
+here (autogenerate initially rendered an unnamed `drop_constraint()` that alembic itself warns will
+fail as rendered; fixed by naming both constraints explicitly in the model before regenerating, not
+by hand-patching the migration file). `test_seed.py` ran against the same kind of throwaway
+container: all six `Agent` rows and all three `Mode` rows land with the expected shape, a second run
+doesn't duplicate them, and a monkeypatched content tweak updates the existing row in place (same
+`id`) rather than erroring or inserting a second one. Running the full live suite with the new
+constraint in place surfaced one real pre-existing test-fixture collision (`test_reconcile.py`'s
+`_make_session` default `Mode.name`, harmless before this constraint existed) -- fixed, see
+`docs/decisions.md`. `AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer` and
+`LocalSbxSandboxProvider` remain unverified against live credentials, same compound gap as always --
+this task introduces no new live-dependent code path.

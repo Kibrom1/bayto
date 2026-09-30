@@ -1,0 +1,7 @@
+role: frontend-engineer
+version: 1
+responsibility: >
+  Implements UI against the API contract; runs UI tests.
+may_send: [report, question, answer, x-code.review-request, note]
+hands_work_to: [qa-tester]
+tool_profile: "Code write, browser (Playwright)"

@@ -1,0 +1,8 @@
+role: product-owner
+version: 1
+responsibility: >
+  Owns requirements, acceptance criteria and priority; accepts or rejects results;
+  escalates business calls to the human.
+may_send: [proposal, answer, critique, decision-request, report]
+hands_work_to: [coordinator, architect]
+tool_profile: "Read-only project access"

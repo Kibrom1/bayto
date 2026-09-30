@@ -1,0 +1,30 @@
+# Idea generation among an ad hoc roster of agent-template instances (M2.11) -- round-robin
+# floor, same v1 approximation as debate: no dedicated diverge/cluster phase machine exists
+# yet (Mode.phases_json has sat unused since M2.2; see docs/work-plan.md's deferred
+# "Brainstorm mode: dedicated diverge/cluster phase machine" line). "No criticism" during
+# the diverge phase is NOT enforced by floor control here -- it's a prompt-level instruction
+# baked into how brainstorm-mode agents are briefed, not floor-control code. "Cluster and
+# rank" maps onto the same end-of-session Synthesizer step as debate's "judge," reframed via
+# synthesis_prompt_hint below. max_rounds is lower than debate's on purpose
+# (product-owner-confirmed): round-robin idea generation has faster diminishing returns.
+mode: brainstorm
+floor_policy: round-robin
+moderator: null
+roles:
+  "*":
+    may_send: [note, question, answer, x-hand-raise]
+route: {}
+stop_rules:
+  max_rounds: 4
+  converge_after_quiet_rounds: 2
+  stale_argument_turns: 3
+  urgency_boost_multiplier: 1.3
+  max_consecutive_grants: 2
+  urgency_boost_reasons: [new_point, disagree]
+synthesis_prompt_hint: >
+  Group the ideas raised into clusters of genuinely similar/overlapping ideas (not one
+  cluster per idea). Rank clusters by a combination of feasibility (realistic given stated
+  constraints) and novelty/value (meaningfully addresses the brief). For top-ranked clusters,
+  name the strongest individual idea within that cluster. Don't discard a single-mention idea
+  for low popularity if the idea itself is strong -- consolidate for repetition, not for
+  popularity.

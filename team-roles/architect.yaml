@@ -1,0 +1,7 @@
+role: architect
+version: 1
+responsibility: >
+  System design, ADRs, interface contracts; reviews designs and big changes.
+may_send: [proposal, critique, answer, report]
+hands_work_to: [backend-engineer, frontend-engineer]
+tool_profile: "Read-only code; diagram tools"

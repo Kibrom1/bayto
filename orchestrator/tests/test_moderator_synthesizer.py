@@ -79,6 +79,26 @@ async def test_synthesize_sends_the_forced_tool_choice_and_parses_the_response()
     assert call["tool_choice"] == {"type": "tool", "name": TOOL_NAME}
 
 
+async def test_synthesis_prompt_hint_is_appended_to_the_system_prompt_when_present():
+    client = FakeAnthropicClient(canned_response({}, []))
+    synthesizer = AnthropicSynthesizer(model="claude-opus-fake", client=client)
+
+    await synthesizer.synthesize(mk_view(), "summary", [], synthesis_prompt_hint="Declare a verdict.")
+
+    [call] = client.messages.calls
+    assert "Declare a verdict." in call["system"]
+
+
+async def test_system_prompt_is_unchanged_when_no_hint_is_given():
+    client = FakeAnthropicClient(canned_response({}, []))
+    synthesizer = AnthropicSynthesizer(model="claude-opus-fake", client=client)
+
+    await synthesizer.synthesize(mk_view(), "summary", [])
+
+    [call] = client.messages.calls
+    assert call["system"] == "You write the final synthesis artifact for a multi-agent conversation."
+
+
 def test_requires_a_model_from_either_the_constructor_or_the_env_var(monkeypatch):
     monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
     with pytest.raises(ValueError):
