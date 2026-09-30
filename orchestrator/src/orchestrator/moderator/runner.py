@@ -67,6 +67,7 @@ from ..floor import (
     PersonaBrief,
     StopRulesConfig,
 )
+from .budget import session_usage
 from .summarizer import Summarizer
 from .synthesizer import Synthesizer
 from .turn_summary import TurnSummary
@@ -371,27 +372,25 @@ class ModeratorRunner:
                 return "max-rounds"
             if row.stale_argument_count >= self._stop_rules.stale_argument_turns:
                 return "no-new-arguments"
-            if await self._budget_exceeded(session, row):
+            if await self._budget_exceeded(row):
                 return "budget-exceeded"
         return None
 
-    async def _budget_exceeded(self, session, row: SessionRow) -> bool:
+    async def _budget_exceeded(self, row: SessionRow) -> bool:
         """Session.budget is nullable (null = uncapped, skip the check); shape assumed to
         be {"max_tokens": int, "max_cost": float} -- no canonical schema exists for this
         JSONB column yet. Accuracy is bounded by the self-reported-meta convention (see
-        docs/agent-communication-protocol.md's tokens_in/tokens_out/cost section)."""
+        docs/agent-communication-protocol.md's tokens_in/tokens_out/cost section). Usage
+        aggregation itself lives in `budget.session_usage` (M3.1, shared with
+        `GET /sessions/{id}` so the two never compute this differently)."""
         if not row.budget:
             return False
-        tokens_in, tokens_out, cost = (await session.execute(
-            select(func.coalesce(func.sum(Turn.tokens_in), 0), func.coalesce(func.sum(Turn.tokens_out), 0),
-                   func.coalesce(func.sum(Turn.cost), 0))
-            .where(Turn.session_id == self._session_id)
-        )).one()
+        usage = await session_usage(self._sessionmaker, self._session_id)
         max_tokens = row.budget.get("max_tokens")
-        if max_tokens is not None and (tokens_in + tokens_out) >= max_tokens:
+        if max_tokens is not None and (usage.tokens_in + usage.tokens_out) >= max_tokens:
             return True
         max_cost = row.budget.get("max_cost")
-        if max_cost is not None and float(cost) >= max_cost:
+        if max_cost is not None and usage.cost >= max_cost:
             return True
         return False
 

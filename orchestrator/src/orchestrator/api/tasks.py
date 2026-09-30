@@ -11,9 +11,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from ..models import Task
+from ..models import Artifact, Session, Task
 from .deps import get_db_sessionmaker
 
 router = APIRouter()
@@ -53,3 +54,50 @@ async def create_task(
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
+
+
+# ---------------------------------------------------------------- GET /tasks
+
+class TaskListOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    brief: str | None
+    output_type: str
+    # Derived from the last session's Session.status, not a Task column (Task has none) --
+    # null if the task has no sessions yet.
+    status: str | None
+    last_session_id: uuid.UUID | None
+    output_artifact_id: uuid.UUID | None
+
+
+@router.get("/tasks", response_model=list[TaskListOut])
+async def list_tasks(sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> list[TaskListOut]:
+    async with sessionmaker() as db:
+        tasks = (await db.execute(select(Task))).scalars().all()
+        out = []
+        for task in tasks:
+            # "Last" means last activity, not last row inserted: order by started_at so an
+            # unstarted session (started_at is null) never outranks one that's actually
+            # run, UNLESS it's literally the only session the task has (NULLS LAST puts it
+            # last among several, but it's still the one and only row when there's just
+            # one). See docs/decisions.md if this ever needs a real created_at tiebreak.
+            last_session = (await db.execute(
+                select(Session).where(Session.task_id == task.id)
+                .order_by(Session.started_at.desc().nullslast())
+                .limit(1)
+            )).scalar_one_or_none()
+
+            output_artifact_id = None
+            if last_session is not None:
+                output_artifact_id = await db.scalar(
+                    select(Artifact.id).where(Artifact.session_id == last_session.id,
+                                               Artifact.type == "synthesis")
+                )
+
+            out.append(TaskListOut(
+                id=task.id, title=task.title, brief=task.brief, output_type=task.output_type,
+                status=last_session.status if last_session is not None else None,
+                last_session_id=last_session.id if last_session is not None else None,
+                output_artifact_id=output_artifact_id,
+            ))
+        return out

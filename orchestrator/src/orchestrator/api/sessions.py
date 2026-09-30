@@ -16,11 +16,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from ..models import Agent, Message, Mode, Session, SessionAgent, Task
+from ..models import Agent, Message, Mode, Session, SessionAgent, Task, Turn
+from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
@@ -256,6 +257,71 @@ async def stop_session(
     # (worst case the 300s turn-wait timeout) and winds down; this endpoint does not block
     # until that completes.
     return {"session": {"id": str(session_id), "status": new_status}}
+
+
+# ---------------------------------------------------------------- GET /sessions/{id}
+
+class UsageOut(BaseModel):
+    tokens_in: int
+    tokens_out: int
+    cost: float
+
+
+class TurnCountOut(BaseModel):
+    participant: str | None  # Agent.role is nullable in the schema; always set for a
+    # seated participant in practice (ModeratorRunner's wire protocol identifies
+    # participants by role -- see runner.py's module docstring), not enforced here.
+    agent_id: uuid.UUID
+    turns: int
+
+
+class SessionDetailOut(BaseModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    mode_id: uuid.UUID
+    status: str
+    started_at: datetime | None
+    ended_at: datetime | None
+    round: int
+    budget: dict | None
+    usage: UsageOut
+    turn_counts: list[TurnCountOut]
+
+
+class SessionDetailResponse(BaseModel):
+    session: SessionDetailOut
+
+
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+async def get_session(
+    session_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> SessionDetailResponse:
+    async with sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        if row is None:
+            raise HTTPException(404, detail=_error("not_found", f"session {session_id} not found", "id"))
+
+        # Both floor policies already assign Turn.round per their own semantics at write
+        # time (M2.7) -- this just surfaces whatever's already persisted, no new definition.
+        max_round = await db.scalar(select(func.max(Turn.round)).where(Turn.session_id == session_id))
+
+        turn_counts_rows = (await db.execute(
+            select(Agent.role, Agent.id, func.count(Turn.id))
+            .select_from(Turn)
+            .join(Agent, Agent.id == Turn.speaker_id)
+            .where(Turn.session_id == session_id)
+            .group_by(Agent.id, Agent.role)
+        )).all()
+
+    usage = await session_usage(sessionmaker, session_id)
+    return SessionDetailResponse(session=SessionDetailOut(
+        id=row.id, task_id=row.task_id, mode_id=row.mode_id, status=row.status,
+        started_at=row.started_at, ended_at=row.ended_at, round=max_round or 0, budget=row.budget,
+        usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
+        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
+                     for role, agent_id, count in turn_counts_rows],
+    ))
 
 
 # ---------------------------------------------------------------- GET /sessions/{id}/events (SSE)

@@ -534,3 +534,68 @@ async def test_sse_returns_nothing_live_for_a_session_that_was_never_started(cli
 
     body = await asyncio.wait_for(_read_all(), timeout=5.0)
     assert body == b""
+
+
+# ---------------------------------------------------------------- GET /sessions/{id} (M3.1)
+
+async def test_get_session_returns_404_for_an_unknown_session(client, live_sessionmaker):
+    resp = await client.get(f"/sessions/{uuid.uuid4()}")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"]["code"] == "not_found"
+
+
+async def test_get_session_reports_round_usage_and_turn_counts(client, live_sessionmaker, tmp_path):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0},
+                   {"agent_id": str(agent_ids[1]), "seat_order": 1}],
+        "budget": {"tokens": 1000},
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    box = {"id": session_id}
+
+    sandbox_provider = FakeSandboxProvider(
+        on_wake=_auto_responder(tmp_path / "sessions", box, meta={"tokens_in": 1, "tokens_out": 1, "cost": 0.0001}))
+    _wire_fakes(sandbox_provider)
+
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+    async with live_sessionmaker() as db:
+        turns = (await db.execute(select(Turn).where(Turn.session_id == session_id))).scalars().all()
+    expected_round = max(t.round for t in turns)
+    expected_counts = {"a": 0, "b": 0}
+    for t in turns:
+        role = next(r for r, aid in zip(("a", "b"), agent_ids) if t.speaker_id == aid)
+        expected_counts[role] += 1
+
+    resp = await client.get(f"/sessions/{session_id}")
+    assert resp.status_code == 200
+    body = resp.json()["session"]
+    assert body["status"] == "finished"
+    assert body["round"] == expected_round
+    assert body["budget"] == {"max_tokens": 1000}
+    # round-robin-test.yaml: max_rounds=2 -- opening (a, b) then one more grant (a) hits it,
+    # 3 turns total, each self-reporting {tokens_in: 1, tokens_out: 1, cost: 0.0001}.
+    assert body["usage"] == {"tokens_in": 3, "tokens_out": 3, "cost": 0.0003}
+    by_participant = {tc["participant"]: tc["turns"] for tc in body["turn_counts"]}
+    assert by_participant == {k: v for k, v in expected_counts.items() if v > 0}
+
+
+async def test_get_session_round_and_usage_are_zero_before_any_turns(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0])}],
+    })
+    session_id = resp.json()["session"]["id"]
+
+    resp = await client.get(f"/sessions/{session_id}")
+    assert resp.status_code == 200
+    body = resp.json()["session"]
+    assert body["status"] == "created"
+    assert body["round"] == 0
+    assert body["usage"] == {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+    assert body["turn_counts"] == []
+    assert body["budget"] is None
