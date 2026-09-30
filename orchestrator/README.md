@@ -3,8 +3,8 @@
 Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres, and SSE streaming.
 M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
 SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam, M2.7
-adds the moderator agent, M2.8 adds the REST/SSE API. See `docs/work-plan.md` for M2.9+
-(resilience, budgets, seed data).
+adds the moderator agent, M2.8 adds the REST/SSE API, M2.9 adds startup reconciliation and resume.
+See `docs/work-plan.md` for M2.10+ (budgets, seed data).
 
 **ZERO AUTH as of M2.8:** no bearer tokens, no caller identity, no per-session ownership checks, no
 rate limiting. Anyone who can reach this service's HTTP port can create tasks/sessions and
@@ -115,6 +115,22 @@ M5 (human seat/auth) lands.
   wired a `MessageMirror` or a per-session `PubSub` into anything running. `BAYTO_FACTORY_ROOT`
   overrides the default per-session `FileTransport` directory (`orchestrator/.sessions/<id>/`,
   gitignored).
+- `src/orchestrator/reconcile.py` (M2.9) — `reconcile_on_startup(sandbox_provider, sessionmaker,
+  launch_runner)`, called once from `app.py`'s FastAPI `lifespan` before the process starts serving
+  requests. Sequencing: `SandboxProvider.reconcile()` runs first (a trustworthy `Sandbox` row is
+  needed before waking anyone against it), then every session in a resumable status
+  (`starting`/`active`/`stopping`/`cancelling`; `needs_human` is a pause, excluded) gets relaunched
+  via the `launch_runner` closure `app.py` partially applies, each attempt isolated in its own
+  try/except (`ReconcileReport`: `relaunched`/`skipped_orphaned`/`failed_to_launch`). A session whose
+  sandbox is confirmed gone or was never created gets `STATUS_ORPHANED` (`"orphaned"`) instead of
+  being relaunched — distinct from both `"active"` and the generic failure status, so a future
+  recovery flow can specifically target it. Tolerates `SandboxProvider.reconcile()` failing (treats
+  it as "no drift info", never as "everything's gone") — see `docs/decisions.md` for why, and for a
+  second startup-must-never-fail guard in `app.py`'s `lifespan` itself. `ModeratorRunner` (M2.7)
+  gained an unconditional pending-grant check (`_pending_grant`/`_resume_pending_grant`) so a
+  relaunched runner resumes an outstanding, unanswered assignment instead of computing a fresh
+  decision from scratch; `POST /sessions/{id}/stop` (M2.8) now also records a durable `kind="x-stop"`
+  message for `reason` (see `docs/decisions.md` for why `synthesize` didn't need the same fix).
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
@@ -145,6 +161,15 @@ M5 (human seat/auth) lands.
   checks. A shared `_wire_test_env` fixture cancels any still-running mirror/runner background tasks
   before each test's Postgres schema gets torn down (a leaked task from one test polling
   already-dropped tables was a real, fixed test-isolation bug during development).
+  `test_reconcile.py` (M2.9): `reconcile_on_startup`'s selection/orphan/failure-isolation logic
+  against real Task/Session/Sandbox rows with a spied `launch_runner` (no real `ModeratorRunner`
+  needed) — includes the exact acceptance test product-owner asked for (one session's sandbox
+  missing, other live sessions in the same pass unaffected) and the `SandboxProvider.reconcile()`-
+  itself-fails case. `test_moderator_resume.py` (M2.9): two independent `ModeratorRunner` instances
+  against the same real Postgres + real tmp-dir factory directory, simulating a crash between an
+  assignment being durably sent and its response landing — asserts the resumed runner re-wakes
+  rather than re-deciding, sends no duplicate assignment, and then proceeds exactly as a single
+  continuous runner would have.
 
 ## Run tests
 
@@ -210,3 +235,19 @@ via `?since_seq`, and that a session with nothing live to tail closes the stream
 hanging). `AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer` remain unverified against
 the live Anthropic API, and `LocalSbxSandboxProvider` remains unverified against the live `sbx` CLI --
 same compound gap M2.4/M2.6/M2.7 already disclosed; M2.8 doesn't close it, only tests around it with fakes.
+
+M2.9 touches no schema (`alembic check` still reports no drift -- `STATUS_ORPHANED` is just a new
+string value in the already-free-form `Session.status` column). Verified: `reconcile_on_startup`'s
+relaunch/orphan/failure-isolation selection logic against real Task/Session/Sandbox rows (10 tests,
+including the exact one-orphan-others-unaffected acceptance test and a `SandboxProvider.reconcile()`
+failure not mass-orphaning); resume correctness via two independent `ModeratorRunner` instances
+against the same real Postgres + tmp-dir factory directory simulating a crash between an assignment
+being sent and its response landing (3 tests) -- the resumed instance re-wakes rather than
+re-deciding, sends no duplicate assignment, and then proceeds exactly as a continuous runner would
+have. Also reran the full M2.2-M2.8 suite to confirm the new `lifespan` hook doesn't regress
+`test_health.py` (which uses `TestClient(app)` and therefore DOES trigger the new startup
+reconciliation, unlike `test_api_sessions.py`'s bare `ASGITransport`, which doesn't) -- it still
+passes standalone, with neither a live `sbx` CLI nor a reachable Postgres, in about a second.
+`AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer` and `LocalSbxSandboxProvider`
+remain unverified against live credentials, same compound gap as always -- `SandboxProvider.reconcile()`
+is now also invoked at startup, not a new instance of the gap.

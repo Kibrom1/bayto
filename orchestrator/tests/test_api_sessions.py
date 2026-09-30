@@ -107,6 +107,24 @@ async def _wait_for_status(sessionmaker, session_id: uuid.UUID, want: str, timeo
     raise AssertionError(f"session {session_id} never reached status {want!r} (last seen: {row.status!r})")
 
 
+async def _wait_for_mirrored_message(sessionmaker, session_id: uuid.UUID, kind: str, timeout: float = 5.0):
+    """The mirror polls on its own cadence (MessageMirror.run_forever's default 1.0s
+    interval); a message written via conversation.send() isn't necessarily in Postgres
+    yet by the time this returns."""
+    from orchestrator.models import Message
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        async with sessionmaker() as db:
+            rows = (await db.execute(
+                select(Message).where(Message.session_id == session_id, Message.kind == kind)
+            )).scalars().all()
+            if rows:
+                return rows
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"no {kind!r} message mirrored for session {session_id} in time")
+
+
 # ---------------------------------------------------------------- POST /sessions
 
 async def test_create_session_snapshots_agent_version_and_returns_created(client, live_sessionmaker):
@@ -372,6 +390,71 @@ async def test_stop_with_synthesize_false_skips_synthesis(client, live_sessionma
     async with live_sessionmaker() as db:
         artifacts = (await db.execute(select(Artifact).where(Artifact.session_id == session_id))).scalars().all()
     assert artifacts == []
+
+
+async def test_stop_records_a_durable_x_stop_message_with_synthesize_and_reason(client, live_sessionmaker, tmp_path):
+    """M2.9: `synthesize` is already durable via the stopping/cancelling status split
+    itself (see docs/decisions.md), but `reason` was accepted by /stop and never persisted
+    anywhere until this -- the actual new behavior the x-stop message closes."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    box = {"id": session_id}
+
+    async def on_wake(role):
+        await asyncio.sleep(0.2)
+        await _auto_responder(tmp_path / "sessions", box)(role)
+
+    _wire_fakes(FakeSandboxProvider(on_wake=on_wake))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "active")
+
+    resp = await client.post(f"/sessions/{session_id}/stop", json={"synthesize": False, "reason": "budget exhausted"})
+    assert resp.status_code == 202
+
+    rows = await _wait_for_mirrored_message(live_sessionmaker, session_id, "x-stop")
+    assert len(rows) == 1
+    assert rows[0].from_ == "human"
+    assert json.loads(rows[0].body) == {"synthesize": False, "reason": "budget exhausted"}
+
+    await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
+
+
+async def test_stop_with_no_live_runtime_still_updates_status_and_warns(client, live_sessionmaker, tmp_path, caplog):
+    """The defensive fallback: a session can be active/needs_human in the DB with no
+    app.state.session_runtimes entry (e.g. a narrow restart-window edge case). /stop must
+    still flip the status -- it just can't durably record `reason` without a live
+    OrchestratorConversation to send through."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    box = {"id": session_id}
+
+    async def on_wake(role):
+        await asyncio.sleep(0.2)
+        await _auto_responder(tmp_path / "sessions", box)(role)
+
+    _wire_fakes(FakeSandboxProvider(on_wake=on_wake))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "active")
+    del app.state.session_runtimes[session_id]  # simulate the no-live-runtime edge case
+
+    import logging
+    with caplog.at_level(logging.WARNING):
+        resp = await client.post(f"/sessions/{session_id}/stop", json={"synthesize": True})
+    assert resp.status_code == 202
+    assert resp.json()["session"]["status"] == "stopping"
+    assert any("no live runtime" in r.message for r in caplog.records)
+
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, session_id)
+    assert row.status == "stopping"  # the status update itself does not depend on a live runtime
 
 
 async def test_stop_a_session_that_was_never_started_is_conflict(client, live_sessionmaker):
