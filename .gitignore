@@ -14,3 +14,6 @@ dev-team/.build/
 
 # Local run records from dev-team sandboxes
 dev-team/runs/
+
+# M2.8: per-session factory directories (FileTransport message files), local runtime data
+orchestrator/.sessions/

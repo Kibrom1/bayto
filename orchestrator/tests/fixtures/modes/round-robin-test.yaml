@@ -1,0 +1,9 @@
+mode: round-robin-test
+floor_policy: round-robin
+roles:
+  moderator: { may_send: [assignment, summary, note] }
+  a: { may_send: [answer, note] }
+  b: { may_send: [answer, note] }
+moderator: moderator
+stop_rules:
+  max_rounds: 2

@@ -3,7 +3,13 @@
 Python (FastAPI) service for M2: sessions, the acp message mirror into Postgres, and SSE streaming.
 M2.1 scaffolded the project, M2.2 added the schema, M2.3 adds the mirror watcher, M2.4 adds the
 SandboxProvider seam, M2.5 adds the conversation core wrapper, M2.6 adds the FloorPolicy seam, M2.7
-adds the moderator agent. See `docs/work-plan.md` for M2.8+ (REST/SSE API, resilience, budgets).
+adds the moderator agent, M2.8 adds the REST/SSE API. See `docs/work-plan.md` for M2.9+
+(resilience, budgets, seed data).
+
+**ZERO AUTH as of M2.8:** no bearer tokens, no caller identity, no per-session ownership checks, no
+rate limiting. Anyone who can reach this service's HTTP port can create tasks/sessions and
+interject/stop on any session. Do not expose this service beyond a private/internal network until
+M5 (human seat/auth) lands.
 
 ## Layout
 
@@ -81,6 +87,34 @@ adds the moderator agent. See `docs/work-plan.md` for M2.8+ (REST/SSE API, resil
   identity, etc.) are logged in `docs/decisions.md`, 2026-09-30. `AnthropicSummarizer`/
   `AnthropicSynthesizer` are unverified against the live API, same disclosure as
   `AnthropicHandRaiseScorer`.
+- `src/orchestrator/modes_registry.py` (M2.8) — `resolve_mode(name)`: `Mode.name` → `modes/<name>.yaml`
+  → a parsed `ModeConfig`. `BAYTO_MODES_DIR` overrides the default (computed relative to this file, the
+  repo's own `modes/` directory). Called eagerly at `POST /sessions` (422 on failure) and again at
+  `/start` (cheap re-validation — a mode file can change between the two; freezing it for
+  byte-identical replay is still an open M2.5 gap).
+- `src/orchestrator/api/` (M2.8) — the REST API. `tasks.py`: `POST /tasks`. `sessions.py`:
+  `POST /sessions` (snapshots each `Agent.version` into `SessionAgent.agent_version` server-side,
+  never client-supplied; validates task/mode/agent existence, 422 with `{"error": {"code", "field",
+  "detail"}}` on failure), `POST /sessions/{id}/start` (202, fire-and-forget — see `runtime.py`),
+  `POST /sessions/{id}/interject` (`conversation.send(sender="human", ...)`, never wakes anyone, so it
+  can never interrupt the floor holder; for raise-hand mode also synthesizes an ADDRESSED hand-raise
+  for a directed interject — see `docs/decisions.md`), `POST /sessions/{id}/stop` (`synthesize: bool
+  = true`; sets `Session.status` to `"stopping"` or `"cancelling"`, both new values `ModeratorRunner`
+  had to learn to handle — see `docs/decisions.md`), `GET /sessions/{id}/events` (SSE via
+  `sse_starlette`; `?since_seq=N` replays mirrored `Message` rows from Postgres before switching to a
+  live `pubsub` tail; message events only, per the work-plan line). `deps.py`: FastAPI
+  dependency-injection seams for `SandboxProvider` and the LLM seams, reading factories off
+  `app.state` so tests can override them via `app.dependency_overrides`. `runtime.py`:
+  `launch_runner` — the real work behind `/start` (create the sandbox, start the team, build the
+  `OrchestratorConversation` + a per-session `MessageMirror` + `ModeratorRunner`, flip
+  `Session.status` to `"active"`, launch both loops), factored into one function per the M2.9
+  boundary so a later app-startup reconciliation routine can call the same thing. Tracks running
+  sessions in `app.state.running_sessions` (the `ModeratorRunner` task) and
+  `app.state.session_runtimes` (a `SessionRuntime`: the `OrchestratorConversation` interject uses, the
+  `PubSub` SSE tails) — both new in-process registries M2.8 needed since nothing before it ever
+  wired a `MessageMirror` or a per-session `PubSub` into anything running. `BAYTO_FACTORY_ROOT`
+  overrides the default per-session `FileTransport` directory (`orchestrator/.sessions/<id>/`,
+  gitignored).
 - `tests/` — `test_health.py` (the required passing test, no DB needed), `test_acp_dependency.py`, `test_db.py`,
   `test_models_shape.py` (schema/mirror-shape checks, no DB needed), `test_live_migration.py` / `test_mirror.py`
   (run against a real Postgres via `DATABASE_URL`, using the shared `live_schema`/`live_sessionmaker` fixtures
@@ -99,7 +133,18 @@ adds the moderator agent. See `docs/work-plan.md` for M2.8+ (REST/SSE API, resil
   synthesizer (no live sbx CLI or Anthropic credentials needed) — covers the opening pass, missing-meta
   warn-and-continue, grant timeout/retry/escalation, every stop condition (max-rounds, budget,
   no-new-arguments, external-status-change vs. the needs_human pause, convergence), the minority-report
-  trigger/no-trigger mechanics, and self-reported hand-raise parsing.
+  trigger/no-trigger mechanics, and self-reported hand-raise parsing. `fakes.py` (not a test module
+  itself): `FakeSandboxProvider`, shared with `test_api_sessions.py`.
+  `test_modes_registry.py` (M2.8, pure): `resolve_mode`'s not-found/parse-error/env-var-override paths
+  against real fixture files. `test_api_tasks.py` (M2.8): `POST /tasks` against real Postgres.
+  `test_api_sessions.py` (M2.8): the full REST lifecycle against real Postgres with
+  `app.dependency_overrides` swapping in `FakeSandboxProvider`/`FakeSummarizer`/`FakeSynthesizer` — an
+  actual session runs create → start → opening pass → a stop condition → synthesis end to end within
+  the test process (real `MessageMirror`/`PubSub`/`FileTransport`, only the sbx/Anthropic calls are
+  faked), plus the round-robin-interject-does-not-reorder acceptance test and SSE backlog/live-tail
+  checks. A shared `_wire_test_env` fixture cancels any still-running mirror/runner background tasks
+  before each test's Postgres schema gets torn down (a leaked task from one test polling
+  already-dropped tables was a real, fixed test-isolation bug during development).
 
 ## Run tests
 
@@ -148,3 +193,20 @@ silently disabling `orchestrator.moderator`'s logger; fixed in `alembic/env.py`,
 every stop condition, the needs_human-pause-vs-external-stop distinction, and the minority-report mechanics.
 `AnthropicSummarizer`/`AnthropicSynthesizer` are verified only via canned response fixtures, same disclosure
 as M2.6's `AnthropicHandRaiseScorer` — no live Anthropic API call was attempted.
+
+M2.8 adds one migration (`762bc15388e8_m2_8_task_created_at_column.py`): a `created_at` column on `task`
+(`server_default=now()` for safe backfill), needed to fulfill `POST /tasks`'s literal response contract --
+`task` had no creation timestamp before this (see `docs/decisions.md`). Verified upgrade/check/downgrade
+against a real throwaway Postgres, same as every prior migration. `test_api_sessions.py` ran a full session
+end to end against the same kind of container: create → start (sandbox create/start_team via a
+`FakeSandboxProvider`, a real per-session `MessageMirror` + `PubSub` + `FileTransport`) → opening pass →
+round-robin grants → a `max_rounds` stop condition → final synthesis, landing on `Session.status ==
+"finished"` with a `synthesis` `Artifact` -- entirely within the test process. Also verified: create-session
+validation (unknown task/mode/agent → 422, a `Mode` row whose YAML file is missing → 422), start's
+transition legality (409 on double-start, 404 on a missing session), interject (lands in the transcript,
+409 before start, and the round-robin-rotation-unaffected acceptance test), stop (`synthesize=true` runs
+synthesis, `synthesize=false` skips it, 409 on a session that was never started), and SSE (backlog replay
+via `?since_seq`, and that a session with nothing live to tail closes the stream immediately rather than
+hanging). `AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer` remain unverified against
+the live Anthropic API, and `LocalSbxSandboxProvider` remains unverified against the live `sbx` CLI --
+same compound gap M2.4/M2.6/M2.7 already disclosed; M2.8 doesn't close it, only tests around it with fakes.

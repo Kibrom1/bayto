@@ -41,7 +41,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from acp.floor import HandRaise
+from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -75,6 +75,13 @@ log = logging.getLogger(__name__)
 STATUS_ACTIVE = "active"
 STATUS_NEEDS_HUMAN = "needs_human"
 STATUS_FINISHED = "finished"
+# M2.8's POST /sessions/{id}/stop writes one of these two (never "needs_human", which
+# means something different -- a pause, not a stop request). STATUS_STOPPING is the
+# synthesize=true (default) case and falls through to the generic external-status-change
+# handling below (which already runs synthesis via _finish); STATUS_CANCELLING is the
+# synthesize=false case and needs its own branch to skip synthesis entirely.
+STATUS_STOPPING = "stopping"
+STATUS_CANCELLING = "cancelling"
 
 _STREAK_LOOKBACK = 50  # bounds the speaking-time-cap query; a real streak can't exceed this in practice
 
@@ -130,6 +137,7 @@ class ModeratorRunner:
         self._opening_done = False
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
+        self._last_interject_seq = 0
 
     # ---------------------------------------------------------------- the loop
 
@@ -159,10 +167,17 @@ class ModeratorRunner:
             # resume path (the architect: "do NOT build the human-notification/response
             # channel").
             return RunOnceResult(stopped=True, reason=STATUS_NEEDS_HUMAN)
+        if status == STATUS_CANCELLING:
+            # M2.8's POST /stop with synthesize=false: wind down WITHOUT running the
+            # Synthesizer at all -- the one stop trigger that doesn't wrap up via _finish.
+            await self._cancel_without_synthesis()
+            return RunOnceResult(stopped=True, reason=STATUS_CANCELLING)
         if status != STATUS_ACTIVE:
             # Genuinely external ("user-ends-it"): something already moved this session to
-            # a stopping/terminal value M2.7 didn't itself just set (M2.8's not-yet-built
-            # "stop" verb is the intended source). Unlike needs_human, this DOES wrap up.
+            # a stopping/terminal value this runner didn't itself just set (M2.8's
+            # POST /stop with synthesize=true, the default, is the intended source; so is
+            # any other future externally-set non-active value). Unlike needs_human, this
+            # DOES wrap up.
             await self._finish(view, "external-status-change")
             return RunOnceResult(stopped=True, reason="external-status-change")
 
@@ -344,9 +359,34 @@ class ModeratorRunner:
     async def _collect_hand_raises(self, view: ConversationView) -> list[HandRaise]:
         scored = await self._scorer.score(view, self._personas)
         self_reported = await self._self_reported_hand_raises()
+        interjected = await self._interjected_addressed_hand_raises()
         merged: dict[str, HandRaise] = {h.participant: h for h in scored}
         merged.update({h.participant: h for h in self_reported})  # explicit signal beats a cheap guess
+        merged.update({h.participant: h for h in interjected})  # a human addressing someone wins outright
         return list(merged.values())
+
+    async def _interjected_addressed_hand_raises(self) -> list[HandRaise]:
+        """M2.8's POST /sessions/{id}/interject: a directed interject (a single, specific
+        `to` participant, not a broadcast) synthesizes a HandRaise(reason=ADDRESSED,
+        urgency=1.0) into the merge, reusing RaiseHandFloorPolicy's existing
+        "addressed wins" rule rather than adding new floor-policy code. A broadcast
+        interject (to=["*"] or multiple recipients) addresses no one in particular and
+        synthesizes nothing here."""
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(
+                select(MessageRow).where(
+                    MessageRow.session_id == self._session_id,
+                    MessageRow.from_ == "human",
+                    MessageRow.seq > self._last_interject_seq,
+                ).order_by(MessageRow.seq)
+            )).scalars().all()
+        if rows:
+            self._last_interject_seq = rows[-1].seq
+        hand_raises = []
+        for row in rows:
+            if len(row.to) == 1 and row.to[0] != "*":
+                hand_raises.append(HandRaise(participant=row.to[0], reason=Reason.ADDRESSED, urgency=1.0))
+        return hand_raises
 
     async def _self_reported_hand_raises(self) -> list[HandRaise]:
         """A self-emitted hand-raise Envelope's `body` is HandRaise.model_dump(mode="json")
@@ -528,6 +568,14 @@ class ModeratorRunner:
                                       content_json=result.minority_report,
                                       source_turn_ids=result.source_turn_ids))
 
+            row.status = STATUS_FINISHED
+            row.ended_at = datetime.now(timezone.utc)
+            await session.commit()
+
+    async def _cancel_without_synthesis(self) -> None:
+        log.info("session %s cancelled without synthesis", self._session_id)
+        async with self._sessionmaker() as session:
+            row = await session.get(SessionRow, self._session_id)
             row.status = STATUS_FINISHED
             row.ended_at = datetime.now(timezone.utc)
             await session.commit()
