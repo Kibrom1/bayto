@@ -2,9 +2,9 @@
 
 2026-09-28 · Owner: Kibrom · Status: ready to start
 
-This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M2 are broken down to the task level; M3–M6 stay at deliverable level and get detailed when M2 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
+This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M3 are broken down to the task level; M4–M6 stay at deliverable level and get detailed when M3 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Next up:** M3 — Bayto room UI.
+**Next up:** M3.1 — Backend: query endpoints.
 
 ## Timeline
 
@@ -92,11 +92,29 @@ team sandbox, which is not available inside this dev-team sandbox. They stay unc
 
 **Done when:** a REST call starts a debate in a real team sandbox, messages stream over SSE, and the session survives an orchestrator restart.
 
-## M3–M6 (deliverable level)
+## M3 — Bayto room UI
+
+Breakdown drafted by product-owner, reconciled with architect's feasibility/sequencing pass (see docs/decisions.md, 2026-09-30) -- not a human decision. M3.1–M3.5 are backend-only with no frontend dependency and can start immediately regardless of the still-open frontend-engineer staffing question (pending human decision); M3.6–M3.12 are blocked on that staffing decision.
+
+- [ ] **M3.1** Backend: query endpoints -- `GET /sessions/{id}` returns status, round count, running token/cost usage vs. budget, AND per-`SessionAgent` turn counts (for M3.9's speaking-time meter); `GET /tasks` (list) for the task board, including a task→session→artifact join for "output artifact link if any"; `GET /modes` returns available modes with tunable-parameter defaults; `GET /agents/templates` returns the M2.11 seeded templates (id, name, system_prompt, stance, model tier). All read-only, tested, documented alongside the M2.8 REST surface. No frontend dependency -- backend-only, can start immediately.
+- [ ] **M3.2** Backend: participant lifecycle -- add/mute/remove a participant mid-session (orchestrator support; none of these three operations exist anywhere in M2's REST or `Conversation` surface today). Prerequisite for M3.9's roster-panel controls. No frontend dependency -- backend-only, can start immediately.
+- [ ] **M3.3** Backend: pause/resume -- freeze turn-granting until resumed (doesn't exist anywhere in M2's REST surface). Prerequisite for M3.11's composer "pause" action. No frontend dependency -- backend-only, can start immediately.
+- [ ] **M3.4** Backend: rolling-summary broadcast -- fixes a real gap: `Session.rolling_summary` (M2.7) is updated directly by `ModeratorRunner` but nothing publishes a pubsub event when it changes, so a client subscribed to `GET /sessions/{id}/events` never sees a rolling-summary update today, live or otherwise. Fix: the runner publishes a pubsub event when it writes `rolling_summary` (consistent with how every other live update in this system already works, rather than a separate polling fallback). Prerequisite for M3.10's moderator panel. No frontend dependency -- backend-only, can start immediately.
+- [ ] **M3.5** Backend: citations convention -- Envelope already has open `refs`/`meta` dict fields (M2.5); no schema/migration needed. Establish an agreed convention (e.g. `refs.citations`) and an optional typed submodel (a `Citation` pydantic model) in agent-comms for validation. Prerequisite for M3.8's inline citation rendering, if wanted at launch (M3.8 can otherwise proceed without it on just the existing SSE surface). No frontend dependency -- backend-only, can start immediately.
+- [ ] **M3.6** Task board screen -- lists tasks (status, last session, output artifact link if any) via `GET /tasks` (M3.1); "New task" opens a brief editor (title/brief/output_type/success_criteria per M2.8's `POST /tasks` contract) and creates via `POST /tasks`. Scope: v1 ships text-only briefs, no file/context uploads (needs real storage design not yet started anywhere in M2 -- tracked as a future follow-up, not blocking). Depends on M3.1. Blocked on frontend-engineer staffing (see docs/decisions.md).
+- [ ] **M3.7** Session setup screen -- Agent explorer lists templates (M3.1), supports adding to roster; mode selector + budget field; live estimated-cost preview (static formula: avg tokens/turn × agent_count × rounds × model pricing -- no backend dependency, refine once real usage data exists); submit calls `POST /sessions` then `POST /sessions/{id}/start`, navigates to room. Scope: "rounds" shows the mode's default (from `stop_rules_json`) read-only in v1, not editable per session -- a true per-session override needs a new Session-level stop-rules-override column, bigger than a v1 nice-to-have. Auto-cast = a static default roster per mode (defined in seed data), not LLM-driven selection -- smart auto-cast is a follow-up. Depends on M3.1. Blocked on frontend-engineer staffing.
+- [ ] **M3.8** Bayto room: transcript (center) -- connects to `GET /sessions/{id}/events` on load, replays backlog via `since_seq`, appends live; threaded by round; tool-call events collapsible; citations inline if M3.5 has landed (otherwise render without them, not blocking). Blocked on frontend-engineer staffing.
+- [ ] **M3.9** Bayto room: roster panel (left) -- avatar (placeholder per persona, not uploaded), stance badge (from template, M3.1), speaking-time meter (per-participant turn count from M3.1, normalized), mute/remove/add-agent-mid-session controls (M3.2). Depends on M3.1, M3.2. Blocked on frontend-engineer staffing.
+- [ ] **M3.10** Bayto room: moderator panel (right) -- live rolling summary (M2.7) updating via SSE (M3.4). Scope: "artifact being built" shows a placeholder/not-available state until the session actually stops (M2 only produces synthesis on stop, no incremental streaming -- full incremental artifact streaming is a follow-up). "Emerging positions/agreement map" is descoped from M3 v1 entirely -- no backend concept anywhere in M2 computes per-agent stance/agreement state; this is a new LLM-extraction capability for a later milestone, not a wiring task. Depends on M3.1, M3.4. Blocked on frontend-engineer staffing.
+- [ ] **M3.11** Bayto room: composer (bottom) -- free-text interject via `POST /sessions/{id}/interject`; "ask a specific agent" as an addressed interject (UI should reflect the mode's real behavior: immediate in raise-hand via the synthetic ADDRESSED hand-raise from M2.8, "visible to next speaker only" in round-robin, not a guaranteed immediate response either way); "end and synthesize" calls `POST /sessions/{id}/stop` with `synthesize=true`; "pause" (M3.3). Scope: "force a vote" is descoped from M3 v1 entirely -- no voting concept defined anywhere (ballot format, who can force it, what it produces, whether it ends the session); needs real product design before it's buildable, not just plumbing. Depends on M3.3. Blocked on frontend-engineer staffing.
+- [ ] **M3.12** Cost meter -- visible in the Bayto room and session setup's estimate, shows running usage vs. budget cap sourced from M3.1's `GET /sessions/{id}`, visually flags at ≥80% of cap (suggested default threshold, revisable). Depends on M3.1. Blocked on frontend-engineer staffing.
+
+**Done when:** the task board, session setup, and Bayto room (transcript/roster/moderator panel/composer) work end to end against a real session, with the cost meter reflecting live usage.
+
+## M4–M6 (deliverable level)
 
 | Milestone | Deliverables |
 | --- | --- |
-| M3 Bayto room UI | Task board; session setup with Agent explorer over templates; live streaming transcript; interject / @mention; end-and-synthesize; cost meter |
 | M4 Bayto MCP server | `mcp/bayto-mcp` with `get_task_context`, `request_human`, `cite_source`; attached through the SBX MCP gateway; per-participant identity |
 | M5 Human seat + memory | `decision-request` flow in the UI; pause/stop the team sandbox while waiting; team sandbox kept for the task so each role resumes its own Claude session; second session recalls the first |
 | M6 Hardening + usage metering | Team sandbox sizing and agent cap from M1 measurements; cleanup of orphaned sandboxes on restart (`sbx ls` reconcile); token budgets per session; usage ledger and cost report per session |
