@@ -1,0 +1,10 @@
+# Fixture for test_modes.py / test_roster.py / test_send_policy.py (M2.11): an open-roster
+# mode (raise-hand, ad hoc agent-template participants) using a "*" roles key instead of an
+# enumerable, fixed team.
+mode: wildcard-roster
+floor_policy: raise-hand
+roles:
+  "*":
+    may_send: [note, question, answer, x-hand-raise]
+stop_rules:
+  converge_after_quiet_rounds: 2

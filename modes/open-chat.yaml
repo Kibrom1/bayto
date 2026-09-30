@@ -1,0 +1,16 @@
+# Open-ended discussion among an ad hoc roster of agent-template instances (M2.11) --
+# raise-hand floor, no fixed team, no max_rounds (open-ended by design).
+mode: open-chat
+floor_policy: raise-hand
+moderator: null
+roles:
+  "*":
+    may_send: [note, question, answer, x-hand-raise]
+route: {}
+stop_rules:
+  max_rounds: null
+  converge_after_quiet_rounds: 2
+  stale_argument_turns: 3
+  urgency_boost_multiplier: 1.3
+  max_consecutive_grants: 2
+  urgency_boost_reasons: [new_point, disagree]

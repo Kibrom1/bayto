@@ -1,0 +1,25 @@
+# Structured debate among an ad hoc roster of agent-template instances (M2.11) --
+# round-robin floor, no dedicated judge role: the existing end-of-session Synthesizer (M2.7)
+# plays that role via synthesis_prompt_hint below. max_rounds is a hard backstop
+# (product-owner-confirmed); convergence/staleness will almost always trigger first in
+# practice. raise-hand-only fields (converge_after_quiet_rounds, urgency_boost_*) are unused
+# by round-robin (M2.6) -- left at StopRulesConfig defaults, harmless.
+mode: debate
+floor_policy: round-robin
+moderator: null
+roles:
+  "*":
+    may_send: [note, question, answer, x-hand-raise]
+route: {}
+stop_rules:
+  max_rounds: 6
+  converge_after_quiet_rounds: 2
+  stale_argument_turns: 3
+  urgency_boost_multiplier: 1.3
+  max_consecutive_grants: 2
+  urgency_boost_reasons: [new_point, disagree]
+synthesis_prompt_hint: >
+  Identify the strongest argument each side made, note where they directly clash (the
+  actual point of disagreement, not just restating both sides), and declare a verdict --
+  which side's case was stronger and why, citing specific transcript points. If no side
+  clearly won, say so explicitly rather than forcing a false verdict.

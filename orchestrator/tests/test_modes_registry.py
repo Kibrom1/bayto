@@ -38,3 +38,32 @@ def test_resolve_mode_raises_parse_error_for_invalid_yaml(monkeypatch, tmp_path)
     monkeypatch.setenv("BAYTO_MODES_DIR", str(tmp_path))
     with pytest.raises(ModeParseError):
         resolve_mode("broken")
+
+
+# ---------------------------------------------------------------- M2.11 seeded modes
+# The real, checked-in modes/*.yaml files parse cleanly -- no fixture, no DB, no network.
+
+def test_resolve_mode_parses_the_real_open_chat_mode(monkeypatch):
+    monkeypatch.delenv("BAYTO_MODES_DIR", raising=False)
+    mode = resolve_mode("open-chat")
+    assert mode.floor_policy == "raise-hand"
+    assert mode.roles == {"*": ["note", "question", "answer", "x-hand-raise"]}
+    assert mode.stop_rules["max_rounds"] is None
+    assert mode.synthesis_prompt_hint is None
+
+
+def test_resolve_mode_parses_the_real_debate_mode(monkeypatch):
+    monkeypatch.delenv("BAYTO_MODES_DIR", raising=False)
+    mode = resolve_mode("debate")
+    assert mode.floor_policy == "round-robin"
+    assert mode.roles == {"*": ["note", "question", "answer", "x-hand-raise"]}
+    assert mode.stop_rules["max_rounds"] == 6
+    assert mode.synthesis_prompt_hint and "verdict" in mode.synthesis_prompt_hint
+
+
+def test_resolve_mode_parses_the_real_brainstorm_mode(monkeypatch):
+    monkeypatch.delenv("BAYTO_MODES_DIR", raising=False)
+    mode = resolve_mode("brainstorm")
+    assert mode.floor_policy == "round-robin"
+    assert mode.stop_rules["max_rounds"] == 4
+    assert mode.synthesis_prompt_hint and "cluster" in mode.synthesis_prompt_hint.lower()

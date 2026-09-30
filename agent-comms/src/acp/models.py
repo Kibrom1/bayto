@@ -92,15 +92,21 @@ class Envelope(BaseModel):
 class Roster(BaseModel):
     """Roles present in a conversation and who may send what to whom."""
 
+    # "*" as the (only) entry (M2.11) means an open roster: any role name is a legitimate
+    # sender/recipient, for modes seeded from an ad hoc set of agent-template instances
+    # rather than a fixed, enumerable team (see acp.modes.ModeConfig.roles).
     roles: list[str]
     # sender -> allowed recipients ("*" = anyone, incl. broadcast)
     send: dict[str, list[str]] = Field(default_factory=dict)
 
     def can_send(self, sender: str, recipients: list[str]) -> bool:
-        if sender not in self.roles and sender != "human":
+        open_roster = BROADCAST in self.roles
+        if not open_roster and sender not in self.roles and sender != "human":
             return False
         allowed = self.send.get(sender, ["*"])
         if "*" in allowed:
+            if open_roster:
+                return True
             return all(r == BROADCAST or r in self.roles or r == "human" for r in recipients)
         return all(r in allowed for r in recipients)
 
@@ -112,7 +118,9 @@ class SendPolicy(BaseModel):
     may_send: dict[str, list[str] | None]  # role -> allowed kinds; None/absent role = unrestricted
 
     def check(self, role: str, kind: str) -> bool:
-        allowed = self.may_send.get(role)
+        # A role not explicitly listed falls back to the mode's "*" entry if it declared
+        # one (M2.11's open-roster modes), else is unrestricted -- the pre-M2.11 default.
+        allowed = self.may_send[role] if role in self.may_send else self.may_send.get("*")
         return allowed is None or kind in allowed
 
     @classmethod

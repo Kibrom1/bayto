@@ -660,7 +660,10 @@ class ModeratorRunner:
                 select(Turn).where(Turn.session_id == self._session_id).order_by(Turn.seq)
             )).scalars().all()
             all_turns = [await self._to_turn_summary(session, t) for t in all_turns_rows]
-            result = await self._synthesizer.synthesize(view, row.rolling_summary or "", all_turns)
+            result = await self._synthesizer.synthesize(
+                view, row.rolling_summary or "", all_turns,
+                synthesis_prompt_hint=self._mode.synthesis_prompt_hint,
+            )
 
             session.add(Artifact(session_id=self._session_id, type="synthesis",
                                   content_json=result.content_json, source_turn_ids=result.source_turn_ids))

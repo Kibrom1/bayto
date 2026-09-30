@@ -1,0 +1,10 @@
+role: coordinator
+version: 1
+responsibility: >
+  Routes work, owns stage transitions and the floor in pipeline phases; never writes code
+  (as in the workshop).
+may_send: [assignment, summary, resume, decision-request, question, note]
+# "Any role" per docs/agent-communication-protocol.md's table -- "*" is the same open
+# wildcard convention as ModeConfig.roles/Roster (see acp.modes, M2.11), not a role id.
+hands_work_to: ["*"]
+tool_profile: "Messaging tools only"

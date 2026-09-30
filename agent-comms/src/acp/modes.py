@@ -50,7 +50,12 @@ from .models import Roster
 class ModeConfig:
     name: str
     floor_policy: str
-    roles: dict[str, list[str] | None]  # role -> allowed Envelope kinds (None = unrestricted)
+    # role -> allowed Envelope kinds (None = unrestricted). A "*" key (M2.11) stands for
+    # "any role" -- for an open-roster mode (e.g. `debate`/`brainstorm`, seeded from an ad
+    # hoc set of agent-template instances rather than a fixed team) that can't enumerate
+    # every possible participant name up front. Same precedent as `Roster.send`'s own "*"
+    # = anyone; `Roster.can_send`/`SendPolicy.check` both fall back to it (see models.py).
+    roles: dict[str, list[str] | None]
     route: dict[str, str] = field(default_factory=dict)
     moderator: str | None = None
     send: dict[str, list[str]] | None = None  # explicit Roster.send override; None = derive
@@ -59,6 +64,11 @@ class ModeConfig:
     # orchestrator code builds its own typed config from this dict (M2.7's
     # StopRulesConfig.from_mode) -- same "generic here, typed downstream" split as `send`.
     stop_rules: dict[str, object] | None = None
+    # M2.11: orchestrator-specific free text (agent-comms itself never reads this), passed
+    # through to whichever Synthesizer implementation is in use so a mode can steer the
+    # final-synthesis prompt (e.g. debate's "declare a verdict" vs. brainstorm's "cluster and
+    # rank") without a new per-mode synthesizer class.
+    synthesis_prompt_hint: str | None = None
 
     def send_roster(self) -> Roster:
         """Pipeline modes route addressing through `route` (e.g. "who's next" is already
@@ -89,4 +99,5 @@ def load_mode(path: str | Path) -> ModeConfig:
         moderator=raw.get("moderator"),
         send=raw.get("send"),
         stop_rules=raw.get("stop_rules"),
+        synthesis_prompt_hint=raw.get("synthesis_prompt_hint"),
     )
