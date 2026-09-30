@@ -7,24 +7,36 @@ components, and no async touches FloorPolicy at all.
 StopRulesConfig (M2.7) merges M2.6's original RaiseHandTuning with Mode.stop_rules_json:
 they were the same configuration surface (a mode's stop/tuning knobs) described by two
 would-be parsers for one JSON/YAML blob, so this is the single parsed type for both --
-see docs/decisions.md, 2026-09-29. Its five numeric fields are product-owner-confirmed
+see docs/decisions.md, 2026-09-29. Its numeric fields are product-owner-confirmed
 acceptance-criteria values -- do not change the defaults without going back through
-product-owner. `urgency_boost_reasons` (which Reason values get the urgency multiplier) is
-deliberately NOT a config field: only NEW_POINT and DISAGREE are eligible reasons in the
-current four-value Reason enum (ADDRESSED short-circuits before ranking, AGREE_PASS is
-filtered out before ranking), so making this configurable would let a mode silently boost
-ADDRESSED/AGREE_PASS in ways the "addressed-first"/"AGREE_PASS never wins" rules above them
-don't account for. `_BOOST_REASONS` stays an internal constant.
+product-owner.
+
+`urgency_boost_reasons` (which Reason values get the urgency multiplier) IS a real config
+field, restored after a 2026-09-30 regression: an earlier version of this file hardcoded it
+to {NEW_POINT, DISAGREE} -- but those are also the ONLY two reasons that can ever reach the
+ranking step in `next()` (ADDRESSED short-circuits before it, AGREE_PASS is filtered out
+before it), so hardcoding it to exactly that set meant 100% of ranking-eligible candidates
+were always boosted by the same multiplier. Multiplying every element of a list by the same
+positive constant never changes its sort order, so the boosted ranking became mathematically
+guaranteed to equal the unboosted ranking -- making the "one queue-jumping objection per
+round" cap permanently unreachable dead code, a real regression on an M2.6 acceptance
+criterion (M2.6's own tests demonstrated genuine jumps via a non-default, strict-subset
+config). The field defaults back to {NEW_POINT, DISAGREE} for backward-compatible default
+behavior (still inert by default, same as before this fix), but a mode can now configure a
+strict subset (e.g. `urgency_boost_reasons: [new_point]`) to make real divergence -- and
+therefore real jumps -- possible again, exactly as M2.6 supported. See docs/decisions.md,
+2026-09-30, for the corrected record (the prior entry claiming this hardcoding was safe and
+that the mechanism "stays correct... for a future round definition" was factually wrong: the
+dead-code problem is independent of round semantics, since it's a property of the ranking
+step alone).
 """
 from __future__ import annotations
 
 from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .types import ConversationView, Converged, FloorDecision, Grant
-
-_BOOST_REASONS = frozenset({Reason.NEW_POINT, Reason.DISAGREE})
 
 
 class StopRulesConfig(BaseModel):
@@ -32,6 +44,7 @@ class StopRulesConfig(BaseModel):
     converge_after_quiet_rounds: int = 2
     stale_argument_turns: int = 3
     urgency_boost_multiplier: float = 1.3
+    urgency_boost_reasons: set[Reason] = Field(default_factory=lambda: {Reason.NEW_POINT, Reason.DISAGREE})
     max_consecutive_grants: int = 2
 
     @classmethod
@@ -68,7 +81,7 @@ class RaiseHandFloorPolicy:
         return self._grant_under_cap(view, ordered)
 
     def _effective_urgency(self, h: HandRaise) -> float:
-        boost = self._tuning.urgency_boost_multiplier if h.reason in _BOOST_REASONS else 1.0
+        boost = self._tuning.urgency_boost_multiplier if h.reason in self._tuning.urgency_boost_reasons else 1.0
         return h.urgency * boost
 
     def _apply_queue_jump_cap(self, view: ConversationView, candidates: list[HandRaise],
