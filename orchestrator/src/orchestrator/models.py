@@ -130,6 +130,14 @@ class SessionAgent(Base):
     harness: Mapped[str | None] = mapped_column(String)
     model: Mapped[str | None] = mapped_column(String)
     isolation: Mapped[str] = mapped_column(String, nullable=False, default="shared")
+    # M3.2: permanent (not reversible via any built endpoint -- product-owner-confirmed no
+    # un-remove for v1) removal, distinct from the reversible `muted` flag. A hard delete
+    # would lose the participation record the roster panel needs and isn't replay-safe
+    # (M2.9's resilience story depends on recomputing from persisted rows); see
+    # docs/decisions.md. Floor-eligibility-wise this folds into the same `muted` set a
+    # ConversationView carries -- the muted/removed distinction only matters at the
+    # data/display layer, not to any FloorPolicy.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         CheckConstraint("isolation in ('shared', 'own')", name="ck_session_agent_isolation"),

@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -89,6 +89,7 @@ class SessionAgentOut(BaseModel):
     harness: str | None
     model: str | None
     isolation: str
+    removed_at: datetime | None  # M3.2
 
 
 class SessionCreateResponse(BaseModel):
@@ -257,6 +258,134 @@ async def stop_session(
     # (worst case the 300s turn-wait timeout) and winds down; this endpoint does not block
     # until that completes.
     return {"session": {"id": str(session_id), "status": new_status}}
+
+
+# ---------------------------------------------------------------- participant lifecycle (M3.2)
+
+# A session must be genuinely running for a participant-lifecycle change to mean anything
+# to the live ModeratorRunner -- not yet started (created/starting) or already wound down
+# (stopping/cancelling/finished/failed/orphaned). The architect's spec only wrote this guard
+# out explicitly for add; applied uniformly to mute/unmute/remove too for the same reason
+# (see docs/decisions.md).
+_LIVE_SESSION_STATUSES = (STATUS_ACTIVE, STATUS_NEEDS_HUMAN)
+
+
+class ParticipantAddRequest(BaseModel):
+    agent_id: uuid.UUID
+    seat_order: int | None = None
+
+
+class ParticipantResponse(BaseModel):
+    session_agent: SessionAgentOut
+
+
+async def _require_live_session(db, session_id: uuid.UUID) -> Session:
+    row = await db.get(Session, session_id)
+    if row is None:
+        raise HTTPException(404, detail=_error("not_found", f"session {session_id} not found", "id"))
+    if row.status not in _LIVE_SESSION_STATUSES:
+        raise HTTPException(409, detail=_error(
+            "session_not_active", f"session is in status {row.status!r}, not a live session", "id"))
+    return row
+
+
+async def _get_participant(db, session_id: uuid.UUID, agent_id: uuid.UUID) -> SessionAgent:
+    row = await db.get(SessionAgent, (session_id, agent_id))
+    if row is None:
+        raise HTTPException(404, detail=_error(
+            "not_found", f"agent {agent_id} is not a participant in session {session_id}", "agent_id"))
+    return row
+
+
+@router.post("/sessions/{session_id}/participants/{agent_id}/mute", response_model=ParticipantResponse)
+async def mute_participant(
+    session_id: uuid.UUID, agent_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> ParticipantResponse:
+    async with sessionmaker() as db:
+        await _require_live_session(db, session_id)
+        sa = await _get_participant(db, session_id, agent_id)
+        sa.muted = True
+        await db.commit()
+        await db.refresh(sa)
+        return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
+
+
+@router.post("/sessions/{session_id}/participants/{agent_id}/unmute", response_model=ParticipantResponse)
+async def unmute_participant(
+    session_id: uuid.UUID, agent_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> ParticipantResponse:
+    async with sessionmaker() as db:
+        await _require_live_session(db, session_id)
+        sa = await _get_participant(db, session_id, agent_id)
+        sa.muted = False
+        await db.commit()
+        await db.refresh(sa)
+        return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
+
+
+@router.post("/sessions/{session_id}/participants/{agent_id}/remove", response_model=ParticipantResponse)
+async def remove_participant(
+    session_id: uuid.UUID, agent_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> ParticipantResponse:
+    """Permanent (no un-remove endpoint built, product-owner-confirmed for v1) -- a
+    nullable `removed_at` rather than a hard delete: a hard delete would lose the
+    participation record the roster panel needs and isn't replay-safe (M2.9's resilience
+    story depends on recomputing from persisted rows). A prior Turn row from this
+    participant stays fully visible -- Turn rows are immutable/append-only throughout this
+    system, removal never touches them. Idempotent: removing an already-removed participant
+    leaves the original removed_at untouched rather than bumping it -- "when were they
+    removed" is a stable historical fact, not something a retried request should
+    overwrite."""
+    async with sessionmaker() as db:
+        await _require_live_session(db, session_id)
+        sa = await _get_participant(db, session_id, agent_id)
+        if sa.removed_at is None:
+            sa.removed_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(sa)
+        return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
+
+
+@router.post("/sessions/{session_id}/participants", status_code=201, response_model=ParticipantResponse)
+async def add_participant(
+    session_id: uuid.UUID, req: ParticipantAddRequest,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> ParticipantResponse:
+    """Any Agent row is allowed -- "templates only" is a UI curation concern (M3.9's picker
+    can choose to only offer GET /agents/templates results), not a backend constraint.
+    Re-adding a previously-removed participant (the SessionAgent row still exists with
+    removed_at set) is 409 already_participant, same as adding someone already present --
+    product-owner-confirmed: explicit beats implicit, a client who removed someone
+    deliberately should never get a surprising silent un-remove from a stale/retried add
+    request."""
+    async with sessionmaker() as db:
+        await _require_live_session(db, session_id)
+
+        if await db.get(SessionAgent, (session_id, req.agent_id)) is not None:
+            raise HTTPException(409, detail=_error(
+                "already_participant", f"agent {req.agent_id} is already a participant", "agent_id"))
+
+        agent_row = await db.get(Agent, req.agent_id)
+        if agent_row is None:
+            raise HTTPException(404, detail=_error("not_found", f"agent {req.agent_id} not found", "agent_id"))
+
+        seat_order = req.seat_order
+        if seat_order is None:
+            # Append to the end of the existing rotation.
+            max_seat = await db.scalar(
+                select(func.max(SessionAgent.seat_order)).where(SessionAgent.session_id == session_id)
+            )
+            seat_order = (max_seat + 1) if max_seat is not None else 0
+
+        sa = SessionAgent(session_id=session_id, agent_id=req.agent_id, agent_version=agent_row.version,
+                           seat_order=seat_order)
+        db.add(sa)
+        await db.commit()
+        await db.refresh(sa)
+        return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
 
 
 # ---------------------------------------------------------------- GET /sessions/{id}

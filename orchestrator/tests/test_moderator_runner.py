@@ -10,6 +10,8 @@ import asyncio
 import json
 import uuid
 
+import pytest
+from acp import PermissionError_
 from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
 from acp.transport import FileTransport
@@ -70,6 +72,21 @@ async def _seat(sessionmaker, session_id: uuid.UUID, role: str, seat_order: int,
         return agent.id
 
 
+async def _set_muted(sessionmaker, session_id: uuid.UUID, agent_id: uuid.UUID, muted: bool) -> None:
+    async with sessionmaker() as session:
+        sa = await session.get(SessionAgent, (session_id, agent_id))
+        sa.muted = muted
+        await session.commit()
+
+
+async def _set_removed(sessionmaker, session_id: uuid.UUID, agent_id: uuid.UUID) -> None:
+    from datetime import datetime, timezone
+    async with sessionmaker() as session:
+        sa = await session.get(SessionAgent, (session_id, agent_id))
+        sa.removed_at = datetime.now(timezone.utc)
+        await session.commit()
+
+
 def mk_mode_config(*, floor_policy="round-robin", roles=None, moderator=None) -> ModeConfig:
     roles = roles if roles is not None else {"moderator": None, "a": None, "b": None}
     return ModeConfig(name="test-mode", floor_policy=floor_policy, roles=roles, moderator=moderator)
@@ -93,7 +110,7 @@ def mk_runner(*, tmp_path, live_sessionmaker, session_id, mode, policy, on_wake=
     runner = ModeratorRunner(
         session_id=session_id, sessionmaker=live_sessionmaker, conversation=conversation,
         sandbox_provider=sandbox_provider, sandbox=fake_sandbox(), mode=mode, policy=policy,
-        stop_rules=stop_rules or StopRulesConfig(), pubsub=pubsub, personas=[],
+        stop_rules=stop_rules or StopRulesConfig(), pubsub=pubsub,
         summarizer=summarizer or FakeSummarizer(
             summaries or [SummaryResult(summary="s", has_new_argument=True) for _ in range(20)]),
         synthesizer=FakeSynthesizer(synthesis or SynthesisResult(content_json={}, source_turn_ids=[])),
@@ -557,3 +574,213 @@ async def test_grant_timeout_sets_outcome_timeout_on_the_grant_wait_span(tmp_pat
 
     [grant_wait] = [s for s in span_exporter.get_finished_spans() if s.name == "moderator.grant_wait"]
     assert grant_wait.attributes["outcome"] == "timeout"
+
+
+# ---------------------------------------------------------------- M3.2: participant lifecycle
+
+async def test_muting_the_next_due_participant_mid_rotation_skips_them(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    a_id = await _seat(live_sessionmaker, session_id, "a", 0)
+    await _seat(live_sessionmaker, session_id, "b", 1)
+    mode = mk_mode_config()
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, f"{role} speaks")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake,
+    )
+
+    await runner.run_once()  # opening: a
+    await runner.run_once()  # opening: b -- last_speaker is now "b", "a" is next due
+
+    await _set_muted(live_sessionmaker, session_id, a_id, True)
+    await runner.run_once()  # would normally grant "a" again -- "a" is muted, so "b" instead
+
+    assert sandbox.woken == ["a", "b", "b"]
+
+
+async def test_removing_a_participant_mid_rotation_skips_them_like_mute(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    a_id = await _seat(live_sessionmaker, session_id, "a", 0)
+    await _seat(live_sessionmaker, session_id, "b", 1)
+    mode = mk_mode_config()
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, f"{role} speaks")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake,
+    )
+
+    await runner.run_once()  # opening: a
+    await runner.run_once()  # opening: b
+
+    await _set_removed(live_sessionmaker, session_id, a_id)
+    await runner.run_once()  # "a" removed -- "b" gets it instead
+
+    assert sandbox.woken == ["a", "b", "b"]
+
+    # Prior turns from the removed participant stay fully visible -- Turn rows are
+    # immutable/append-only throughout this system; removal never touches them.
+    async with live_sessionmaker() as session:
+        turns = (await session.execute(
+            select(Turn).where(Turn.session_id == session_id).order_by(Turn.seq)
+        )).scalars().all()
+    assert [t.content for t in turns][:2] == ["a speaks", "b speaks"]
+    assert turns[0].speaker_id == a_id
+
+
+async def test_adding_a_participant_mid_session_round_robin_eventually_gets_a_turn(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    await _seat(live_sessionmaker, session_id, "b", 1)
+    # A wildcard roster (M2.11's "*", used by the actual target modes -- open-chat/debate/
+    # brainstorm) so the newly-added "c" is a permitted Envelope recipient. A FIXED-roles
+    # mode would reject sending to "c" at the acp.core.Conversation/Roster layer unless "c"
+    # was already declared in mode.roles -- a separate, protocol-level roster from
+    # SessionAgent's floor-control-only one; see docs/decisions.md.
+    mode = mk_mode_config(roles={"*": None})
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, f"{role} speaks")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake,
+    )
+
+    await runner.run_once()  # opening: a
+    await runner.run_once()  # opening: b -- self._opening_done is still False here (only
+                              # flips once a call finds NOBODY pending), so a participant
+                              # added right now is swept into the still-open opening pass.
+    await _seat(live_sessionmaker, session_id, "c", 2)  # added mid-session, appended to the rotation
+
+    await runner.run_once()  # opening: "c" -- the new participant's first turn, immediately
+    await runner.run_once()  # opening complete (nobody left pending) -> round-robin -> "a"
+    await runner.run_once()  # round-robin: "b"
+    await runner.run_once()  # round-robin: "c" again -- full rotation now genuinely includes them
+
+    assert sandbox.woken == ["a", "b", "c", "a", "b", "c"]
+
+
+async def test_adding_a_participant_whose_role_is_undeclared_in_a_fixed_roster_mode_fails_to_send(
+        tmp_path, live_sessionmaker):
+    """Documents a real, disclosed-but-not-fixed limitation (see docs/decisions.md): mid-
+    session add only works when the new participant's role is already a permitted
+    recipient at the acp.core.Conversation/Roster layer. Unlike M2.11's wildcard-roster
+    discussion modes (the only ones this orchestrator actually ships), a FIXED-roster mode
+    never declared "c" in its `roles` dict, so the Roster built once at session start has
+    no entry for them -- the moderator's attempt to address them during the opening pass
+    fails outright, even though SessionAgent/floor-control has no problem with the new
+    seat. Not a bug this task fixes; a future mode needing this would need a change in
+    acp.modes/acp.models.Roster, not here."""
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    await _seat(live_sessionmaker, session_id, "b", 1)
+    mode = mk_mode_config(roles={"moderator": None, "a": None, "b": None})  # fixed roster -- no "c"
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, f"{role} speaks")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake,
+    )
+
+    await runner.run_once()  # opening: a
+    await runner.run_once()  # opening: b
+
+    await _seat(live_sessionmaker, session_id, "c", 2)  # "c" was never declared in mode.roles
+
+    with pytest.raises(PermissionError_):
+        await runner.run_once()  # the opening pass tries to address "c" -> rejected by the Roster
+
+
+async def test_adding_a_participant_mid_session_raise_hand_gets_one_opening_grant_first(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config(floor_policy="raise-hand", roles={"moderator": None, "a": None, "b": None})
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, f"{role} speaks")
+
+    class NoHandsScorer:
+        async def score(self, view, personas):
+            return []
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RaiseHandFloorPolicy(), on_wake=on_wake, scorer=NoHandsScorer(),
+    )
+
+    await runner.run_once()  # opening: a
+    result = await runner.run_once()  # nobody else pending -> opening_done flips True in this same
+    assert runner._opening_done is True                        # call, falls through to raise-hand (no hands -> quiet)
+    assert result.quiet is True
+
+    await _seat(live_sessionmaker, session_id, "b", 1)  # added mid-session, after opening_done
+
+    class FailIfCalledScorer:
+        async def score(self, view, personas):
+            raise AssertionError("scorer should not run while a late-joiner's opening grant is pending")
+
+    runner._scorer = FailIfCalledScorer()  # proves the next grant is NOT scored competition
+    await runner.run_once()  # "b" gets a late-joiner opening-style grant instead
+
+    assert sandbox.woken == ["a", "b"]
+    async with live_sessionmaker() as session:
+        turns = (await session.execute(select(Turn).where(Turn.session_id == session_id).order_by(Turn.seq))).scalars().all()
+    assert [t.content for t in turns] == ["a speaks", "b speaks"]
+
+    # The actual claim that makes "add" functional for raise-hand mode, not just a nice-to-
+    # have: once the late-joiner's own opening grant is done, the NEXT round is genuinely
+    # scored, and the newcomer is offered to the scorer like anyone else -- not just granted
+    # once via the opening path and then forgotten.
+    captured: list = []
+
+    class CapturingScorer:
+        async def score(self, view, personas):
+            captured.append(personas)
+            return []
+
+    runner._scorer = CapturingScorer()
+    await runner.run_once()  # nobody left pending -> genuine scored raise-hand round
+
+    assert len(captured) == 1
+    assert {p.participant for p in captured[0]} == {"a", "b"}
+
+
+async def test_muted_participant_never_speaks_and_is_excluded_from_the_scorer(tmp_path, live_sessionmaker):
+    """Muted from the very start of the session: mute is an absolute eligibility gate
+    (M3.2), so they never get an opening turn either -- not just excluded from scored
+    raise-hand competition afterward."""
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0, muted=True)
+    await _seat(live_sessionmaker, session_id, "b", 1)
+    mode = mk_mode_config(floor_policy="raise-hand", roles={"moderator": None, "a": None, "b": None})
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, f"{role}'s opening")
+
+    captured: list = []
+
+    class CapturingScorer:
+        async def score(self, view, personas):
+            captured.append(personas)
+            return []
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RaiseHandFloorPolicy(StopRulesConfig(converge_after_quiet_rounds=1)),
+        on_wake=on_wake, scorer=CapturingScorer(),
+    )
+
+    await runner.run_once()  # opening skips muted "a" entirely -> grants "b"
+    await runner.run_once()  # nobody else pending -> opening complete -> raise-hand -> scorer called
+
+    assert sandbox.woken == ["b"]  # "a" never spoke at all
+    assert len(captured) == 1
+    assert {p.participant for p in captured[0]} == {"b"}

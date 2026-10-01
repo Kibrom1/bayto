@@ -33,14 +33,13 @@ from pathlib import Path
 from typing import Callable
 
 from acp.transport import FileTransport
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
-from ..floor import PersonaBrief, RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
+from ..floor import RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
 from ..floor.scorer import HandRaiseScorer
 from ..mirror import MessageMirror
-from ..models import Agent, Mode, Session, SessionAgent
+from ..models import Mode, Session
 from ..moderator import ModeratorRunner, Summarizer, Synthesizer
 from ..modes_registry import resolve_mode
 from ..pubsub import PubSub
@@ -64,16 +63,6 @@ class SessionRuntime:
     pubsub: PubSub
     mirror_task: asyncio.Task
     runner_task: asyncio.Task
-
-
-async def _personas(sessionmaker: async_sessionmaker, session_id: uuid.UUID) -> list[PersonaBrief]:
-    async with sessionmaker() as db:
-        rows = (await db.execute(
-            select(Agent).join(SessionAgent, SessionAgent.agent_id == Agent.id)
-            .where(SessionAgent.session_id == session_id).order_by(SessionAgent.seat_order)
-        )).scalars().all()
-    return [PersonaBrief(participant=a.role, role=a.role, stance=a.stance, brief=a.system_prompt or "")
-            for a in rows]
 
 
 async def launch_runner(
@@ -102,7 +91,6 @@ async def launch_runner(
 
         mode_config = resolve_mode(mode_row.name)  # re-validated here; the eager POST /sessions
                                                     # check doesn't guarantee the file is unchanged
-        personas = await _personas(sessionmaker, session_id)
 
         sandbox = await sandbox_provider.create(task_id, name=f"sbx-{task_id}")
         await sandbox_provider.start_team(sandbox)
@@ -125,7 +113,7 @@ async def launch_runner(
         runner = ModeratorRunner(
             session_id=session_id, sessionmaker=sessionmaker, conversation=conversation,
             sandbox_provider=sandbox_provider, sandbox=sandbox, mode=mode_config, policy=policy,
-            stop_rules=StopRulesConfig.from_mode(mode_config), pubsub=pubsub, personas=personas,
+            stop_rules=StopRulesConfig.from_mode(mode_config), pubsub=pubsub,
             summarizer=summarizer, synthesizer=synthesizer, scorer=scorer,
         )
 

@@ -130,7 +130,6 @@ class ModeratorRunner:
         policy: FloorPolicy,
         stop_rules: StopRulesConfig,
         pubsub: PubSub,
-        personas: list[PersonaBrief],
         summarizer: Summarizer,
         synthesizer: Synthesizer,
         scorer: HandRaiseScorer | None = None,  # required only when mode.floor_policy == "raise-hand"
@@ -147,7 +146,6 @@ class ModeratorRunner:
         self._policy = policy
         self._stop_rules = stop_rules
         self._pubsub = pubsub
-        self._personas = personas
         self._summarizer = summarizer
         self._synthesizer = synthesizer
         self._scorer = scorer
@@ -234,6 +232,18 @@ class ModeratorRunner:
                     await self._handle_grant(view, Grant(participant=pending, reason="opening"))
                     return RunOnceResult(stopped=False)
                 self._opening_done = True
+            elif self._mode.floor_policy == "raise-hand":
+                # M3.2: a participant added mid-session (after the initial opening pass
+                # already completed) still gets one opening-style grant before competing
+                # normally -- the opening phase's own purpose (one uninterrupted turn to
+                # establish a position) applies identically to someone joining mid-
+                # conversation. Round-robin doesn't need this: being inserted into
+                # seat_order already guarantees them a turn when the rotation reaches them,
+                # so this is raise-hand-only -- see docs/decisions.md.
+                late_joiner = await self._pending_opening_participant(view)
+                if late_joiner is not None:
+                    await self._handle_grant(view, Grant(participant=late_joiner, reason="opening"))
+                    return RunOnceResult(stopped=False)
 
             raised = await self._collect_hand_raises(view) if self._mode.floor_policy == "raise-hand" else []
             decision = self._policy.next(view, raised)
@@ -267,7 +277,11 @@ class ModeratorRunner:
         order, one uninterrupted turn each, regardless of turn_policy -- raise-hand mode
         does not get a real scored opening; the scorer only starts once every seat has
         spoken. Computed from Turn history (not an in-memory flag) so it survives an
-        orchestrator restart mid-opening."""
+        orchestrator restart mid-opening -- and, since M3.2, so it also correctly finds a
+        participant added mid-session (see run_once()'s late-joiner check, which calls this
+        again after self._opening_done for raise-hand mode). Muted/removed participants
+        (view.muted) never get an opening grant either -- mute is an absolute eligibility
+        gate (M3.2, see docs/decisions.md)."""
         if not view.seat_order:
             return None
         async with self._sessionmaker() as session:
@@ -276,7 +290,7 @@ class ModeratorRunner:
                 .where(Turn.session_id == self._session_id)
             )).scalars())
         for participant in view.seat_order:
-            if participant not in spoken:
+            if participant not in spoken and participant not in view.muted:
                 return participant
         return None
 
@@ -295,7 +309,12 @@ class ModeratorRunner:
             # is the participant identifier used throughout this runner (matching HandRaise
             # .participant, Grant.participant, FloorPolicy's seat_order entries).
             seat_order = [role for _, role in rows]
-            muted = {role for sa, role in rows if sa.muted}
+            # M3.2: a removed participant folds into the same eligibility filter as a muted
+            # one -- FloorPolicy code never needs to distinguish WHY someone's ineligible,
+            # only display/data layers do (M3.9's problem, not this one's). Still counted
+            # in seat_order (round-robin's next_seat()/RaiseHandFloorPolicy.next() both
+            # already filter muted out of the eligible set).
+            muted = {role for sa, role in rows if sa.muted or sa.removed_at is not None}
 
             last_turn = (await session.execute(
                 select(Turn).where(Turn.session_id == self._session_id).order_by(Turn.seq.desc()).limit(1)
@@ -397,13 +416,28 @@ class ModeratorRunner:
     # ---------------------------------------------------------------- hand-raise collection
 
     async def _collect_hand_raises(self, view: ConversationView) -> list[HandRaise]:
-        scored = await self._scorer.score(view, self._personas)
+        personas = await self._current_personas(view.muted)
+        scored = await self._scorer.score(view, personas)
         self_reported = await self._self_reported_hand_raises()
         interjected = await self._interjected_addressed_hand_raises()
         merged: dict[str, HandRaise] = {h.participant: h for h in scored}
         merged.update({h.participant: h for h in self_reported})  # explicit signal beats a cheap guess
         merged.update({h.participant: h for h in interjected})  # a human addressing someone wins outright
         return list(merged.values())
+
+    async def _current_personas(self, muted: set[str]) -> list[PersonaBrief]:
+        """M3.2: fetched fresh from the current SessionAgent roster every call (not a
+        constructor-time snapshot) so a mid-session add is immediately visible to the
+        scorer, and a muted/removed participant is never even offered to it -- no reason to
+        spend a Haiku call scoring someone who can't be granted the floor regardless of the
+        answer."""
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(
+                select(Agent).join(SessionAgent, SessionAgent.agent_id == Agent.id)
+                .where(SessionAgent.session_id == self._session_id).order_by(SessionAgent.seat_order)
+            )).scalars().all()
+        return [PersonaBrief(participant=a.role, role=a.role, stance=a.stance, brief=a.system_prompt or "")
+                for a in rows if a.role not in muted]
 
     async def _interjected_addressed_hand_raises(self) -> list[HandRaise]:
         """M2.8's POST /sessions/{id}/interject: a directed interject (a single, specific
