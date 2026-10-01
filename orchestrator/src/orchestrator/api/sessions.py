@@ -1,4 +1,4 @@
-"""Session lifecycle endpoints (M2.8): create, start, interject, stop, SSE event stream.
+"""Session lifecycle endpoints (M2.8 + M3.3): create, start, interject, stop, pause, resume, SSE event stream.
 
 Zero auth: no bearer tokens, no caller identity, no per-session ownership checks, no rate
 limiting. Anyone who can reach this port can create sessions and interject/stop on any of
@@ -258,6 +258,79 @@ async def stop_session(
     # (worst case the 300s turn-wait timeout) and winds down; this endpoint does not block
     # until that completes.
     return {"session": {"id": str(session_id), "status": new_status}}
+
+
+# ---------------------------------------------------------------- M3.3: pause / resume
+
+@router.post("/sessions/{session_id}/pause", status_code=202)
+async def pause_session(
+    session_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> dict:
+    """Freeze turn-granting until a matching /resume. Sets status to `needs_human`,
+    which ModeratorRunner.run_once() already checks at the top of every iteration and
+    returns early without granting anything when it sees it (M2.7, runner.py line 182+).
+
+    Guard: only `active` sessions can be paused. `needs_human` itself is idempotent
+    (pausing an already-paused session is 409) -- `stopping`/`cancelling`/`finished`/
+    `failed`/`orphaned` are all terminal or mid-wind-down and must not be re-paused."""
+    async with sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        if row is None:
+            raise HTTPException(404, detail=_error("not_found", "session not found"))
+        if row.status != STATUS_ACTIVE:
+            raise HTTPException(409, detail=_error(
+                "invalid_transition",
+                f"can only pause an active session (current status: {row.status!r})"))
+        row.status = STATUS_NEEDS_HUMAN
+        await db.commit()
+    return {"session": {"id": str(session_id), "status": STATUS_NEEDS_HUMAN}}
+
+
+@router.post("/sessions/{session_id}/resume", status_code=202)
+async def resume_session(
+    session_id: uuid.UUID,
+    request: Request,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+    sandbox_provider=Depends(get_sandbox_provider),
+    summarizer=Depends(get_summarizer),
+    synthesizer=Depends(get_synthesizer),
+    scorer_factory=Depends(get_hand_raise_scorer_factory),
+) -> dict:
+    """Resume a paused (`needs_human`) session by relaunching the ModeratorRunner via
+    the same `launch_runner()` path M2.9's restart-reconcile already uses (reconcile.py's
+    `RESUMABLE_STATUSES` deliberately excludes `needs_human` so the orchestrator never
+    auto-resumes on restart -- that exclusion still holds; this endpoint is the *explicit*
+    human action that un-pauses). The runner is re-launched against the existing sandbox
+    and conversation; `launch_runner()` sets status back to `active` before starting the
+    loop. M2.9's `_pending_grant()` check at the top of every run_once() call covers the
+    resume case transparently -- no resume-mode flag needed inside ModeratorRunner.
+
+    Guard: only `needs_human` sessions can be resumed. A fresh `launch_runner()` for an
+    already-active session (e.g. a double-tap of /resume) would create a second parallel
+    runner, which is wrong -- the 409 prevents that."""
+    async with sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        if row is None:
+            raise HTTPException(404, detail=_error("not_found", "session not found"))
+        if row.status != STATUS_NEEDS_HUMAN:
+            raise HTTPException(409, detail=_error(
+                "invalid_transition",
+                f"can only resume a paused (needs_human) session (current status: {row.status!r})"))
+        # Flip status back to `starting` so launch_runner() follows its normal path:
+        # it reads `starting`, creates the sandbox if needed, then flips to `active`.
+        # This also prevents a double-tap of /resume from racing into two parallel runners
+        # (the second would see `starting`, not `needs_human`, and 409 immediately).
+        row.status = STATUS_STARTING
+        await db.commit()
+
+    asyncio.create_task(launch_runner(
+        session_id, sessionmaker=sessionmaker, sandbox_provider=sandbox_provider,
+        summarizer=summarizer, synthesizer=synthesizer, scorer_factory=scorer_factory,
+        running_sessions=request.app.state.running_sessions,
+        session_runtimes=request.app.state.session_runtimes,
+    ))
+    return {"session": {"id": str(session_id), "status": STATUS_STARTING}}
 
 
 # ---------------------------------------------------------------- participant lifecycle (M3.2)
