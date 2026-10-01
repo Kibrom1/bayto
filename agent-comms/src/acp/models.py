@@ -44,6 +44,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class Citation(BaseModel):
+    """M3.5: optional typed submodel for elements of `Envelope.refs.get('citations', [])`."""
+    source: str
+    url: str | None = None
+    snippet: str | None = None
+
+
 class Envelope(BaseModel):
     protocol: str = PROTOCOL
     message_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
