@@ -670,6 +670,11 @@ class ModeratorRunner:
             row.rolling_summary_through_seq = new_turns[-1].seq
             row.stale_argument_count = 0 if result.has_new_argument else row.stale_argument_count + 1
             await session.commit()
+            
+            self._pubsub.publish({
+                "type": "rolling_summary",
+                "data": {"summary": result.summary}
+            })
 
     async def _to_turn_summary(self, session, turn: Turn) -> TurnSummary:
         agent = await session.get(Agent, turn.speaker_id)
