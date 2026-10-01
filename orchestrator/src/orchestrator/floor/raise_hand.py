@@ -67,6 +67,12 @@ class RaiseHandFloorPolicy:
         self._tuning = tuning
 
     def next(self, view: ConversationView, raised: list[HandRaise]) -> FloorDecision | None:
+        # M3.2 fix: mute is an absolute eligibility gate nothing overrides, even an explicit
+        # address to a muted participant -- filtered before any other logic, including the
+        # ADDRESSED short-circuit below. Round-robin's next_seat() already filtered muted
+        # this way (M2.6); this policy never did (see docs/decisions.md).
+        raised = [h for h in raised if h.participant not in view.muted]
+
         addressed = [h for h in raised if h.reason == Reason.ADDRESSED]
         if addressed:
             return self._grant_under_cap(view, addressed)

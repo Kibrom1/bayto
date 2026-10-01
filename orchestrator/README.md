@@ -7,9 +7,12 @@ adds the moderator agent, M2.8 adds the REST/SSE API, M2.9 adds startup reconcil
 M2.10 adds the budget-exceeded-skips-synthesis rule and OpenTelemetry spans, M2.11 adds seed data
 (six agent templates, the seven team roles, and the three discussion modes), closing out M2. M3.1
 (the first task of M3, the Bayto room UI) adds four read-only query endpoints (`GET /sessions/{id}`,
-`GET /tasks`, `GET /modes`, `GET /agents/templates`) for the room's UI screens. See
-`docs/work-plan.md` for M2.12 (brainstorm's deferred diverge/cluster phase machine, not required for
-M2's own "Done when" bar) and the rest of M3.
+`GET /tasks`, `GET /modes`, `GET /agents/templates`) for the room's UI screens. M3.2 adds
+participant lifecycle (mute/unmute/remove/add mid-session), fixing two real pre-existing gaps along
+the way (raise-hand mode never filtered muted participants out of floor contention; the hand-raise
+scorer's personas list was a stale constructor-time snapshot). See `docs/work-plan.md` for M2.12
+(brainstorm's deferred diverge/cluster phase machine, not required for M2's own "Done when" bar) and
+the rest of M3.
 
 **ZERO AUTH as of M2.8:** no bearer tokens, no caller identity, no per-session ownership checks, no
 rate limiting. Anyone who can reach this service's HTTP port can create tasks/sessions and
@@ -143,6 +146,40 @@ M5 (human seat/auth) lands.
   floor policies already assign it at write time), `usage` comes from `budget.session_usage`,
   `turn_counts` is a `GROUP BY` over `Turn.speaker_id` joined to `Agent.role`. 404 uses the same
   `{"error": {"code", "field", "detail"}}` shape as every other endpoint's error responses.
+  `api/sessions.py` also gained the M3.2 participant-lifecycle endpoints:
+  `POST /sessions/{id}/participants/{agent_id}/{mute,unmute,remove}` and
+  `POST /sessions/{id}/participants` (add) — all four gated on `Session.status` being `active` or
+  `needs_human` (`_LIVE_SESSION_STATUSES`, a uniform guard the architect's spec only wrote out
+  explicitly for add), 409 `session_not_active` otherwise. `remove` sets a new nullable
+  `SessionAgent.removed_at` (migration) rather than hard-deleting the row, and is idempotent — a
+  second remove leaves the original timestamp untouched. Re-adding a removed participant is 409
+  `already_participant`, same as adding someone already present (product-owner-confirmed: no
+  silent un-remove). `add` with no explicit `seat_order` appends to the end of the rotation
+  (`max(seat_order) + 1`); any `Agent` row is allowed (template-only curation is a UI concern, not
+  a backend constraint). See `docs/decisions.md` for the inferred `remove` endpoint shape (the
+  architect's spec didn't give one) and a verified, disclosed limitation: mid-session add only
+  works when the new participant's role is already permitted by the mode's `Roster` (true
+  automatically for M2.11's wildcard-roster discussion modes, not for a hypothetical fixed-roster
+  mode).
+- `src/orchestrator/floor/raise_hand.py` — M3.2 fix: `RaiseHandFloorPolicy.next()` now filters
+  `raised` by `view.muted` as its very first step, before the ADDRESSED short-circuit. This was a
+  real, previously-unfiltered gap (unlike `RoundRobinFloorPolicy.next_seat()`, which already
+  filtered `muted` since M2.6) — a muted participant who still got scored or self-reported a hand-
+  raise, including an ADDRESSED one, could win the floor. Mute is now an absolute eligibility gate
+  nothing overrides, in both floor policies. See `docs/decisions.md`.
+- `src/orchestrator/moderator/runner.py` — M3.2: `ConversationView.muted` (`_build_view`) is now
+  the union of `SessionAgent.muted` and `SessionAgent.removed_at IS NOT NULL` — a removed
+  participant folds into the exact same floor-eligibility filter as a muted one, no new
+  `FloorPolicy`-layer concept needed. `_pending_opening_participant` also excludes `view.muted`
+  (previously only checked "hasn't spoken yet"). `self._personas` (a constructor-time-frozen
+  snapshot of the roster at launch) is gone, replaced by `_current_personas(muted)`, queried fresh
+  from `SessionAgent`/`Agent` on every `_collect_hand_raises` call — needed both to exclude a
+  muted participant from the scorer and to make a mid-session "add" visible to it at all (a late
+  joiner was never in the old frozen list). A participant added mid-session gets one opening-style
+  grant in raise-hand mode specifically, via `_pending_opening_participant` re-invoked after
+  `self._opening_done` — round-robin doesn't get this special case (being inserted into
+  `seat_order` already guarantees them a turn when the rotation reaches them). See
+  `docs/decisions.md`.
 - `src/orchestrator/reconcile.py` (M2.9) — `reconcile_on_startup(sandbox_provider, sessionmaker,
   launch_runner)`, called once from `app.py`'s FastAPI `lifespan` before the process starts serving
   requests. Sequencing: `SandboxProvider.reconcile()` runs first (a trustworthy `Sandbox` row is
@@ -282,6 +319,22 @@ M5 (human seat/auth) lands.
   and — after running a real session to completion the same way `test_start_runs_the_session_to_completion`
   does — `round`/`usage`/`turn_counts` cross-checked directly against the real inserted `Turn` rows
   rather than hardcoded expected numbers.
+  `test_floor_raise_hand.py` gained the M3.2 mute-is-absolute coverage: a muted participant never
+  wins via ranking, never wins even when explicitly ADDRESSED, and "everyone muted" is treated as a
+  quiet round — all through the public `next()` path, not a hand-constructed internal state.
+  `test_moderator_runner.py` gained five M3.2 end-to-end tests against real `ModeratorRunner.run_once()`
+  calls (not just "the DB row changed"): muting the next-due participant mid-rotation skips them;
+  removing one does too, with a direct `Turn` query proving their prior turns stay unchanged;
+  adding a participant mid-session eventually gets them a real round-robin turn; the same for
+  raise-hand mode, with a scorer that raises `AssertionError` if called while the late-joiner's
+  opening-style grant is still pending (proving it's genuinely NOT scored competition); and a
+  participant muted from session start never speaks at all and is never offered to the scorer
+  (captured via a scorer stub recording what personas it received). `test_api_participants.py`
+  (M3.2, new): the REST contract for all four participant-lifecycle endpoints — mute/unmute,
+  remove's idempotency, add's seat_order auto-increment and explicit-override, every 404/409 case
+  (unknown session, never-a-participant, already-a-participant, re-adding after remove,
+  session-not-live), against directly-constructed fixture rows (no live session actually runs —
+  the runner-level behavior is `test_moderator_runner.py`'s job).
 
 ## Run tests
 
@@ -402,3 +455,15 @@ constraint in place surfaced one real pre-existing test-fixture collision (`test
 `docs/decisions.md`. `AnthropicSummarizer`/`AnthropicSynthesizer`/`AnthropicHandRaiseScorer` and
 `LocalSbxSandboxProvider` remain unverified against live credentials, same compound gap as always --
 this task introduces no new live-dependent code path.
+
+M3.2 adds one migration (`b97861c351c0_m3_2_session_agent_removed_at_column.py`): a single nullable
+`removed_at` `DateTime(timezone=True)` column on `session_agent` (no `server_default` needed --
+nullable, same pattern as every prior nullable-column migration in this series). Verified
+upgrade/check/downgrade against a real throwaway Postgres. `test_floor_raise_hand.py`'s new mute-is-
+absolute tests and `test_moderator_runner.py`'s five M3.2 end-to-end tests ran against the same kind
+of container and passed; running the full live suite also surfaced a real `Roster`/`Conversation`-
+layer limitation (a fixed-roster mode rejects addressing a role never declared in `mode.roles`,
+discovered via a genuinely failing test, not reasoned about) -- disclosed, not fixed, since none of
+M2.11's actual target discussion modes are affected (see `docs/decisions.md`). `test_api_participants.py`
+(new) covers the REST contract for all four participant-lifecycle endpoints against real Postgres,
+no sbx or Anthropic needed anywhere in this task.

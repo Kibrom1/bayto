@@ -92,6 +92,31 @@ def test_addressed_falls_through_to_the_next_addressed_entry_when_the_first_is_c
     assert decision == Grant(participant="b", reason="addressed")
 
 
+# ---------------------------------------------------------------- M3.2: mute is absolute
+
+def test_a_muted_participant_is_never_granted_the_floor_via_ranking():
+    raised = [hr("muted-loud", Reason.NEW_POINT, 0.99), hr("quiet", Reason.NEW_POINT, 0.1)]
+    view = mk_view(muted={"muted-loud"})
+    decision = RaiseHandFloorPolicy().next(view, raised)
+    assert decision == Grant(participant="quiet", reason="new_point")
+
+
+def test_a_muted_participant_is_never_granted_the_floor_even_when_explicitly_addressed():
+    """Mute is an absolute eligibility gate nothing overrides -- not even an explicit
+    address to that participant."""
+    raised = [hr("muted", Reason.ADDRESSED, 1.0), hr("other", Reason.NEW_POINT, 0.2)]
+    view = mk_view(muted={"muted"})
+    decision = RaiseHandFloorPolicy().next(view, raised)
+    assert decision == Grant(participant="other", reason="new_point")
+
+
+def test_everyone_muted_is_treated_as_a_quiet_round():
+    raised = [hr("muted", Reason.ADDRESSED, 1.0)]
+    view = mk_view(muted={"muted"}, consecutive_quiet_rounds=0)
+    decision = RaiseHandFloorPolicy().next(view, raised)
+    assert decision is None
+
+
 # ---------------------------------------------------------------- AGREE_PASS never wins
 
 def test_agree_pass_alone_never_gets_the_floor():
