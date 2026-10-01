@@ -180,11 +180,16 @@ class ModeratorRunner:
             async with self._sessionmaker() as session:
                 status = (await session.get(SessionRow, self._session_id)).status
             if status == STATUS_NEEDS_HUMAN:
-                # Already paused (by an earlier AskHuman escalation, or a human directly) --
-                # a pause is not a wrap-up: don't run synthesis, just stop looping until
-                # something external moves it back to active. M2.7 does not build that
-                # resume path (the architect: "do NOT build the human-notification/response
-                # channel").
+                # Already paused (by an earlier AskHuman escalation, or a human directly via
+                # M3.3's POST /sessions/{id}/pause) -- a pause is not a wrap-up: don't run
+                # synthesis, just stop looping until something external moves it back to
+                # active. M2.7 did not build a resume path for this; M3.3 adds one
+                # (POST /sessions/{id}/resume, api/sessions.py) by relaunching through
+                # launch_runner() -- the same relaunch M2.9's restart-reconcile already
+                # uses -- rather than changing anything in this loop: a freshly launched
+                # runner's first run_once() call already re-detects any sent-but-unanswered
+                # assignment via _pending_grant() below before granting anything new, so
+                # "resume" needs no special-casing here at all.
                 return RunOnceResult(stopped=True, reason=STATUS_NEEDS_HUMAN)
             if status == STATUS_CANCELLING:
                 # M2.8's POST /stop with synthesize=false: wind down WITHOUT running the

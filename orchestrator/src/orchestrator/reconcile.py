@@ -51,10 +51,13 @@ _ORPHAN_CHECK_STATUSES = (STATUS_ACTIVE, STATUS_STOPPING, STATUS_CANCELLING)
 _STATUS_STARTING = "starting"
 RESUMABLE_STATUSES = (_STATUS_STARTING, *_ORPHAN_CHECK_STATUSES)
 
-# STATUS_NEEDS_HUMAN is deliberately excluded: it's a genuine pause (M2.7 does not build a
-# resume-from-human-decision path), so there is no runner loop to relaunch for it yet --
-# relaunching would just re-evaluate and immediately re-pause. "created"/"finished"/
-# "failed"/STATUS_ORPHANED are terminal-or-not-yet-started and also excluded.
+# STATUS_NEEDS_HUMAN is deliberately excluded: it's a genuine pause, whether reached via an
+# AskHuman escalation or a human's direct POST /sessions/{id}/pause (M3.3). M3.3 does give it
+# a real resume path now (POST /sessions/{id}/resume, api/sessions.py) -- but that is an
+# explicit human action, not something a process restart should do on its own: an orchestrator
+# restart must never silently un-pause a session a human deliberately paused (or that's still
+# awaiting a decision), so it stays out of RESUMABLE_STATUSES here regardless. "created"/
+# "finished"/"failed"/STATUS_ORPHANED are terminal-or-not-yet-started and also excluded.
 
 
 @dataclass
