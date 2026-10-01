@@ -577,6 +577,11 @@ async def session_events(
                     continue
                 if event.get("type") == "message":
                     yield json.dumps(event["data"])
+                elif event.get("type") == "rolling_summary":
+                    yield {
+                        "event": "rolling_summary",
+                        "data": json.dumps(event["data"])
+                    }
         finally:
             runtime.pubsub.unsubscribe(queue)
 

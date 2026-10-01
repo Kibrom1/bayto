@@ -784,3 +784,31 @@ async def test_muted_participant_never_speaks_and_is_excluded_from_the_scorer(tm
     assert sandbox.woken == ["b"]  # "a" never spoke at all
     assert len(captured) == 1
     assert {p.participant for p in captured[0]} == {"b"}
+
+
+# ---------------------------------------------------------------- rolling summary broadcast (M3.4)
+
+async def test_rolling_summary_publishes_to_pubsub(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config()
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "A response to trigger summary")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(), on_wake=on_wake,
+        summaries=[SummaryResult(summary="The new summary text", has_new_argument=True)]
+    )
+
+    queue = runner._pubsub.subscribe()
+    await runner.run_once()
+
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+
+    summary_events = [e for e in events if e.get("type") == "rolling_summary"]
+    assert len(summary_events) == 1
+    assert summary_events[0]["data"]["summary"] == "The new summary text"

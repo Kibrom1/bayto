@@ -516,6 +516,44 @@ async def test_sse_replays_backlog_since_seq(client, live_sessionmaker, tmp_path
     assert "assignment" in kinds and "answer" in kinds
 
 
+async def test_sse_emits_rolling_summary_events(client, live_sessionmaker, tmp_path):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    box = {"id": session_id}
+
+    # The FakeSummarizer is pre-configured to return 's' 50 times in _wire_fakes.
+    # The auto responder will cause a wake, turning into a message, which triggers summarize.
+    sandbox_provider = FakeSandboxProvider(on_wake=_auto_responder(tmp_path / "sessions", box))
+    _wire_fakes(sandbox_provider)
+
+    await client.post(f"/sessions/{session_id}/start")
+
+    # Connect to the live stream right away, no since_seq.
+    async def _read_live():
+        events = []
+        async with client.stream("GET", f"/sessions/{session_id}/events") as resp:
+            async for line in resp.aiter_lines():
+                if line.startswith("event: rolling_summary"):
+                    # the next line should be data
+                    data_line = await resp.aiter_lines().__anext__()
+                    events.append(json.loads(data_line[len("data:"):].strip()))
+                    break
+        return events
+
+    # Wait for the session to finish in the background, but also listen to the stream.
+    # The read will return as soon as it sees a rolling_summary event.
+    events = await asyncio.wait_for(_read_live(), timeout=5.0)
+    
+    assert len(events) == 1
+    assert events[0]["summary"] == "s"
+
+    await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+
 async def test_sse_returns_nothing_live_for_a_session_that_was_never_started(client, live_sessionmaker):
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
     resp = await client.post("/sessions", json={
