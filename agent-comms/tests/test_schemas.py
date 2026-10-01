@@ -124,6 +124,17 @@ def test_envelope_refs_object_map_and_dump_validates():
     jsonschema.validate(env.dump(), MESSAGE_SCHEMA)
 
 
+def test_envelope_can_include_citations_in_refs():
+    """M3.5: refs.citations convention using the Citation typed submodel."""
+    from acp.models import Citation
+    c1 = Citation(source="design.md", url="https://example.com/design", snippet="we should do X")
+    env = Envelope(conversation_id="c1", from_="a", to=["b"], kind="note",
+                    refs={"citations": [c1.model_dump()]})
+    assert len(env.refs["citations"]) == 1
+    assert env.refs["citations"][0]["source"] == "design.md"
+    jsonschema.validate(env.dump(), MESSAGE_SCHEMA)
+
+
 @pytest.mark.parametrize("visibility", ["all", "recipients", "moderator"])
 def test_envelope_visibility_values_dump_validate(visibility):
     env = Envelope(conversation_id="c1", from_="a", to=["b"], kind="note", visibility=visibility)
