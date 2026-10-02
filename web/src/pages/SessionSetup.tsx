@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { listTasks, type Task } from '../api/tasks'
 import './SessionSetup.css'
 
@@ -105,6 +105,7 @@ function formatNumber(value: number) {
 
 export function SessionSetup() {
   const { taskId } = useParams()
+  const navigate = useNavigate()
   const [task, setTask] = useState<Task | null>(null)
   const [taskError, setTaskError] = useState<string | null>(null)
   const [selectedAgents, setSelectedAgents] = useState<AgentTemplate[]>([agentTemplates[0], agentTemplates[1]])
@@ -150,6 +151,15 @@ export function SessionSetup() {
 
   function removeAgent(agentId: string) {
     setSelectedAgents((current) => current.filter((agent) => agent.id !== agentId))
+  }
+
+  function handleStartSession() {
+    if (!taskId) {
+      return
+    }
+
+    const sessionId = `${taskId}-demo-${Date.now()}`
+    navigate(`/sessions/${sessionId}`)
   }
 
   const chosenMode = modeOptions.find((item) => item.id === mode) ?? modeOptions[0]
@@ -291,7 +301,12 @@ export function SessionSetup() {
             <small>Budget cap: {formatNumber(budgetTokens)} tokens</small>
           </div>
 
-          <button type="button" className="primary-action" disabled={selectedAgents.length === 0}>
+          <button
+            type="button"
+            className="primary-action"
+            disabled={selectedAgents.length === 0}
+            onClick={handleStartSession}
+          >
             {selectedAgents.length === 0 ? 'Add an agent to start' : 'Start session'}
           </button>
         </section>
