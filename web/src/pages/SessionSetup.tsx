@@ -139,6 +139,9 @@ export function SessionSetup() {
     return { tokens, cost }
   }, [selectedAgents, rounds])
 
+  const budgetUsagePercent = budgetTokens > 0 ? Math.min((estimate.tokens / budgetTokens) * 100, 100) : 0
+  const nearBudgetLimit = budgetUsagePercent >= 80
+
   function addAgent(agent: AgentTemplate) {
     setSelectedAgents((current) => {
       if (current.some((item) => item.id === agent.id)) {
@@ -292,12 +295,18 @@ export function SessionSetup() {
             )}
           </div>
 
-          <div className="estimate-box">
+          <div className={`estimate-box ${nearBudgetLimit ? 'warning' : ''}`}>
             <div className="estimate-topline">
               <span>Estimated cost</span>
               <strong>{formatCurrency(estimate.cost)}</strong>
             </div>
             <p>{formatNumber(estimate.tokens)} tokens · {chosenMode.sample}</p>
+            <div className="estimate-meter" aria-live="polite">
+              <div className="estimate-meter-track">
+                <span style={{ width: `${budgetUsagePercent}%` }} />
+              </div>
+              <small>{Math.round(budgetUsagePercent)}% of budget cap</small>
+            </div>
             <small>Budget cap: {formatNumber(budgetTokens)} tokens</small>
           </div>
 

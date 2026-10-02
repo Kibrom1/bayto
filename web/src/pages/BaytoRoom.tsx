@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { getSession, getSessionUsageSummary, type SessionDetail } from '../api/sessions'
 import './BaytoRoom.css'
 
 type TranscriptMessage = {
@@ -20,6 +21,10 @@ const defaultRoster = [
   { name: 'QA Tester', stance: 'Skeptic' },
 ]
 
+function formatNumber(value: number) {
+  return new Intl.NumberFormat('en-US').format(value)
+}
+
 export function BaytoRoom() {
   const { sessionId } = useParams()
   const [messages, setMessages] = useState<TranscriptMessage[]>([
@@ -35,6 +40,24 @@ export function BaytoRoom() {
   const [composer, setComposer] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
+  const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
+
+  const usageSummary = getSessionUsageSummary(sessionDetail)
+  const usageMeterPercent = Math.min(Math.max(usageSummary.percentUsed, usageSummary.costPercent), 100)
+  const meterWarning = usageSummary.nearLimit || usageMeterPercent >= 80
+
+  useEffect(() => {
+    if (!sessionId) {
+      return
+    }
+
+    getSession(sessionId)
+      .then((response) => setSessionDetail(response.session))
+      .catch((err: unknown) => {
+        setSessionLoadError(err instanceof Error ? err.message : 'Unable to load session usage details.')
+      })
+  }, [sessionId])
 
   useEffect(() => {
     if (!sessionId || typeof EventSource === 'undefined') {
@@ -110,6 +133,10 @@ export function BaytoRoom() {
     }
   }
 
+  const budgetLabel = usageSummary.maxTokens > 0
+    ? `${formatNumber(usageSummary.totalTokens)} / ${formatNumber(usageSummary.maxTokens)} tokens`
+    : `${formatNumber(usageSummary.totalTokens)} tokens used`
+
   return (
     <main className="bayto-room">
       <header className="bayto-room-header">
@@ -167,6 +194,21 @@ export function BaytoRoom() {
           <div className="summary-box">
             <h3>Artifact being built</h3>
             <p>Drafting the final recommendation from the current set of arguments.</p>
+          </div>
+
+          <div className={`usage-meter ${meterWarning ? 'warning' : ''}`} aria-live="polite">
+            <div className="usage-meter-header">
+              <span>Usage vs budget</span>
+              <strong>{usageSummary.maxTokens > 0 ? `${Math.round(usageMeterPercent)}%` : 'No cap'}</strong>
+            </div>
+            <div className="meter-track" aria-hidden="true">
+              <span className="meter-fill" style={{ width: `${Math.min(usageMeterPercent, 100)}%` }} />
+            </div>
+            <div className="usage-meter-meta">
+              <span>{budgetLabel}</span>
+              <span>{usageSummary.totalCost > 0 ? `$${usageSummary.totalCost.toFixed(2)}` : '$0.00'}</span>
+            </div>
+            {sessionLoadError && <p className="usage-meter-error">{sessionLoadError}</p>}
           </div>
         </aside>
       </div>

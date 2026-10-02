@@ -50,6 +50,7 @@ describe('SessionSetup', () => {
 
     expect(screen.getByText(/selected roster/i)).toBeInTheDocument()
     expect(screen.getByText(/estimated cost/i)).toBeInTheDocument()
+    expect(screen.getByText(/% of budget cap/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /start session/i })).toBeEnabled()
   })
 })
