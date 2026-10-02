@@ -59,6 +59,7 @@ export function TaskBoard() {
               <th>Status</th>
               <th>Last session</th>
               <th>Output artifact</th>
+              <th>Session</th>
             </tr>
           </thead>
           <tbody>
@@ -68,6 +69,15 @@ export function TaskBoard() {
                 <td>{task.status ?? 'not started'}</td>
                 <td>{task.last_session_id ?? '—'}</td>
                 <td>{task.output_artifact_id ?? '—'}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="task-row-action"
+                    onClick={() => window.location.assign(`/tasks/${task.id}/session-setup`)}
+                  >
+                    Start session
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
