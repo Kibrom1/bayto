@@ -1,0 +1,9 @@
+# Workshop backlog configuration. The MCP adapter is always started with an explicit
+# --config pointing at this file, so Beans never searches upward from a caller's
+# working directory and can never answer from an unrelated backlog.
+beans:
+    path: .beans
+    prefix: wad-
+    id_length: 4
+    default_status: todo
+    default_type: task

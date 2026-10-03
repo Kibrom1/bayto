@@ -1,0 +1,14 @@
+{
+  "message_id": "msg-bayto-dev-0006-vp1xo7",
+  "run_id": "bayto-dev",
+  "task_id": "wad-102",
+  "attempt": 1,
+  "seq": 6,
+  "from": "coordinator",
+  "to": "human",
+  "kind": "note",
+  "created_at": "2026-09-29T04:11:15Z",
+  "requires_ack": true,
+  "refs": {},
+  "body": "Task M1.5 (wad-102) \u2014 QA PASSED. Branch sbx/m1.5-compat-run, commit a31e4827b2af59add5a51541e28fe019712e44be. Real test results: pytest -q -> 99 passed, 1 xfailed, exit 0 (developer's run); QA independently re-ran in a fresh isolated .venv -> 99 passed, exit 0, same xfail confirmed pre-existing/flaky and unrelated to this diff. QA also independently verified the live e2e claim structurally (on-PATH handoff byte-identical to the acp shim; reference bash handoff reproduced field-for-field in an isolated FACTORY_DIR). Ready to push. Non-blocking note: QA found a doc-accuracy nit in agent-comms/docs/m1.5-compat-check.md \u2014 it states the bash reference's rand() suffix is '10 chars' but QA traced it to actually be '6 random chars + shell PID' (variable length) due to a pipefail/SIGPIPE interaction in the reference script; doesn't affect the pass/fail conclusion or the tick, just a follow-up correction worth making to the doc."
+}

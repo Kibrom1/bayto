@@ -1,0 +1,12 @@
+[project]
+name = "bayto-mcp"
+version = "0.1.0"
+description = "MCP server for Bayto orchestrator agents"
+dependencies = [
+    "mcp",
+    "httpx",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

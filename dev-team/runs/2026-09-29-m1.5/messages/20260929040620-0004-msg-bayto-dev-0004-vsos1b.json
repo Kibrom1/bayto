@@ -1,0 +1,14 @@
+{
+  "message_id": "msg-bayto-dev-0004-vsos1b",
+  "run_id": "bayto-dev",
+  "task_id": "wad-102",
+  "attempt": 1,
+  "seq": 4,
+  "from": "coordinator",
+  "to": "qa",
+  "kind": "note",
+  "created_at": "2026-09-29T04:06:20Z",
+  "requires_ack": true,
+  "refs": {},
+  "body": "Please review task M1.5 (wad-102) on branch sbx/m1.5-compat-run, commit a31e4827b2af59add5a51541e28fe019712e44be. Acceptance criteria: run the workshop factory on acp instead of handoff with no behavior change; done check is a real end-to-end run comparing shim behavior against the reference handoff, with evidence recorded. Developer's report: replayed the live session's actual coordinator/developer handoff exchange (run bayto-dev, task wad-102, acp shim as handoff) operation-for-operation against the reference bash handoff in isolation; the two real messages the live shim produced diff to nothing against the reference's replayed output (ids/timestamps normalized), same on-disk layout, same state.json. Tests: cd agent-comms && uv venv --python 3.12 && uv pip install -e '.[dev]' && .venv/bin/pytest -q -> 99 passed, 1 xfailed, exit 0 (xfail is a pre-existing race in the bash reference only). Files changed: docs/work-plan.md, docs/decisions.md, agent-comms/docs/m1.5-compat-check.md (new); M1.5 ticked in work-plan.md. Please verify against that exact commit and report pass/fail with findings."
+}

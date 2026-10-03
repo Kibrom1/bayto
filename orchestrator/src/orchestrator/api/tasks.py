@@ -101,3 +101,36 @@ async def list_tasks(sessionmaker: async_sessionmaker = Depends(get_db_sessionma
                 output_artifact_id=output_artifact_id,
             ))
         return out
+
+@router.get("/tasks/{task_id}/usage-report", response_model=dict)
+async def get_task_usage_report(
+    task_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> dict:
+    """M6: detailed usage ledger for a task across all its sessions."""
+    async with sessionmaker() as db:
+        # Find all sessions for this task
+        sessions = (await db.execute(
+            select(Session.id).where(Session.task_id == task_id)
+        )).scalars().all()
+
+        if not sessions:
+            return {"error": "no sessions found for this task"}
+
+        # Aggregate ledger entries
+        from ..models import UsageLedger
+        ledger_rows = (await db.execute(
+            select(UsageLedger).where(UsageLedger.session_id.in_(sessions))
+            .order_by(UsageLedger.timestamp)
+        )).scalars().all()
+
+        return {
+            "task_id": str(task_id),
+            "total_tokens_in": sum(l.tokens_in for l in ledger_rows),
+            "total_tokens_out": sum(l.tokens_out for l in ledger_rows),
+            "total_cost": float(sum(l.cost for l in ledger_rows)),
+            "ledger": [
+                {"session_id": str(l.session_id), "tokens_in": l.tokens_in, "tokens_out": l.tokens_out, "cost": float(l.cost), "timestamp": l.timestamp.isoformat()}
+                for l in ledger_rows
+            ]
+        }

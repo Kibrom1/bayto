@@ -1,0 +1,14 @@
+{
+  "message_id": "msg-bayto-dev-0003-jy2r9z",
+  "run_id": "bayto-dev",
+  "task_id": "wad-102",
+  "attempt": 1,
+  "seq": 3,
+  "from": "developer",
+  "to": "coordinator",
+  "kind": "note",
+  "created_at": "2026-09-29T04:06:10Z",
+  "requires_ack": true,
+  "refs": {},
+  "body": "M1.5 done \u2014 branch sbx/m1.5-compat-run, commit a31e4827b2af59add5a51541e28fe019712e44be. Real run: replayed this live session's actual coordinator/developer handoff exchange (run bayto-dev, task wad-102, acp shim as handoff) operation-for-operation against the reference bash handoff in isolation. The two real messages the live shim produced diff to nothing against the reference's replayed output (ids/timestamps normalized), same on-disk layout, same state.json. Tests: cd agent-comms && uv venv --python 3.12 && uv pip install -e '.[dev]' && .venv/bin/pytest -q -> 99 passed, 1 xfailed, exit 0 (the xfail is a pre-existing race in the bash reference only, not the shim). Full evidence in agent-comms/docs/m1.5-compat-check.md; ticked M1.5 in docs/work-plan.md and added a decisions.md entry. Files changed: docs/work-plan.md, docs/decisions.md, agent-comms/docs/m1.5-compat-check.md (new). Did not push, no vendor/ changes."
+}

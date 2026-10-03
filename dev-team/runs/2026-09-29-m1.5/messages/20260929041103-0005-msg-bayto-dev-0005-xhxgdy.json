@@ -1,0 +1,14 @@
+{
+  "message_id": "msg-bayto-dev-0005-xhxgdy",
+  "run_id": "bayto-dev",
+  "task_id": "wad-102",
+  "attempt": 1,
+  "seq": 5,
+  "from": "qa",
+  "to": "coordinator",
+  "kind": "note",
+  "created_at": "2026-09-29T04:11:03Z",
+  "requires_ack": true,
+  "refs": {},
+  "body": "QA review of M1.5 (wad-102), commit a31e4827b2af59add5a51541e28fe019712e44be on sbx/m1.5-compat-run: PASS.\n\nVerified independently (read-only, no checkout/edits):\n- Files changed match report: docs/work-plan.md (M1.5 ticked), docs/decisions.md (new entry appended, no history edited), agent-comms/docs/m1.5-compat-check.md (new). No vendor/ edits, no secrets, branch/commit-trailer conventions match repo history.\n- Ran `cd agent-comms && uv venv --python 3.12 && uv pip install -e \".[dev]\" && pytest -q` myself in an isolated .venv (deleted after): 99 passed, exit 0. The 1 xfail/xpass on test_concurrent_sends_get_gapless_unique_seq[bash-reference] is genuinely flaky across repeated runs on my end too (confirmed by running it 5x) but never fails the suite (non-strict xfail, exit 0 both ways) \u2014 this matches the developer's disclosure and predates this commit (not touched in this diff).\n- Cross-checked the \"live e2e run\" claim structurally: confirmed /home/agent/work/bin/handoff (the actual on-PATH handoff in this live factory) is byte-identical to agent-comms/src/acp/handoff_compat.py \u2014 i.e. this session's own coordinator/developer messages (messages 0001/0002, run bayto-dev task wad-102) really were produced by the acp shim, not a synthetic harness. I independently ran the reference bash handoff (vendor/wad-sbx-workshop/.../bin/handoff) in an isolated tmp FACTORY_DIR for init/send/claim/read and its JSON schema (message fields/order, state.json shape, claim exit codes 0 then 9) matches the shim's live output field-for-field, modulo ids/timestamps as expected.\n\nOne finding (non-blocking, doc-accuracy only): agent-comms/docs/m1.5-compat-check.md states the bash reference's rand() suffix is \"10 chars\" vs the shim's 6. I traced the actual reference script: rand() uses `head -c 6` but the script also has `set -euo pipefail` at the top, so head's early pipe close SIGPIPEs the upstream `tr`, pipefail treats that as a pipeline failure, and the `|| printf '%s' \"$$\"` fallback fires *in addition to* (not instead of) the 6 chars already written \u2014 so real suffixes are \"6 random chars + the shell PID\" (I reproduced this reliably), a variable length (I saw 11 chars, not a fixed 10). Doesn't change the pass/fail conclusion since message_id is normalized out of the diff either way, but the doc's specific numeric claim there is wrong and wasn't actually re-verified \u2014 worth a follow-up correction, not a re-open of M1.5.\n\nConclusion: acceptance criteria met (real e2e run, not just unit tests, with evidence), AGENTS.md rules followed, work-plan tick is justified. Recommend M1.5 stays ticked."
+}

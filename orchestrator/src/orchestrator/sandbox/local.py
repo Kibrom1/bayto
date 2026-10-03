@@ -156,8 +156,9 @@ class LocalSbxSandboxProvider(SandboxProvider):
         # or fires automatically as a post-create hook from team.sbxenv.yaml
         await self._run(["exec", sandbox.name, "start-team"])
 
-    async def wake_role(self, sandbox: SandboxInfo, role: str) -> None:
-        await self._run(["exec", sandbox.name, "crew-notify", role])  # verbatim from doc
+    async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
+        cmd = "crew-notify-fallback" if fallback else "crew-notify"
+        await self._run(["exec", sandbox.name, cmd, role])
 
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:
         async with self._sessionmaker() as session:
