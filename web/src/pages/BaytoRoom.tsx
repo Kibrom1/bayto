@@ -1,237 +1,134 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { getSession, getSessionUsageSummary, type SessionDetail } from '../api/sessions'
-import './BaytoRoom.css'
-
-type TranscriptMessage = {
-  message_id?: string
-  seq?: number
-  from?: string
-  to?: string[]
-  kind?: string
-  body?: string
-  created_at?: string
-  meta?: Record<string, unknown>
-}
-
-const defaultRoster = [
-  { name: 'Researcher', stance: 'Neutral' },
-  { name: 'Product Owner', stance: 'Advocate' },
-  { name: 'Architect', stance: 'Balanced' },
-  { name: 'QA Tester', stance: 'Skeptic' },
-]
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-US').format(value)
-}
+import { getSessionDetail, interjectSession, stopSession, pauseSession, resumeSession } from '../api/sessions'
+import { useSessionEvents } from '../hooks/useSessionEvents'
+import './TaskBoard.css'
 
 export function BaytoRoom() {
-  const { sessionId } = useParams()
-  const [messages, setMessages] = useState<TranscriptMessage[]>([
-    {
-      message_id: 'intro-1',
-      from: 'Moderator',
-      body: 'Welcome to the session. We are checking the brief, setting the round order, and gathering the first arguments.',
-      created_at: new Date().toISOString(),
-      kind: 'summary',
-    },
-  ])
-  const [summary, setSummary] = useState('The team is narrowing the issue, checking assumptions, and drafting the first position set.')
-  const [composer, setComposer] = useState('')
+  const { sessionId } = useParams<{ sessionId: string }>()
+  const { messages, rollingSummary } = useSessionEvents(sessionId || '')
+  const [session, setSession] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
-  const [connected, setConnected] = useState(false)
-  const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
-  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
-
-  const usageSummary = getSessionUsageSummary(sessionDetail)
-  const usageMeterPercent = Math.min(Math.max(usageSummary.percentUsed, usageSummary.costPercent), 100)
-  const meterWarning = usageSummary.nearLimit || usageMeterPercent >= 80
+  const [interjectText, setInterjectText] = useState('')
+  const [targetAgent, setTargetAgent] = useState<string>('*')
 
   useEffect(() => {
-    if (!sessionId) {
-      return
+    if (sessionId) {
+      getSessionDetail(sessionId)
+        .then(res => setSession(res.session))
+        .catch(err => setError(err instanceof Error ? err.message : String(err)))
     }
-
-    getSession(sessionId)
-      .then((response) => setSessionDetail(response.session))
-      .catch((err: unknown) => {
-        setSessionLoadError(err instanceof Error ? err.message : 'Unable to load session usage details.')
-      })
   }, [sessionId])
 
-  useEffect(() => {
-    if (!sessionId || typeof EventSource === 'undefined') {
-      return
-    }
-
-    const source = new EventSource(`/sessions/${sessionId}/events`)
-
-    source.onopen = () => {
-      setConnected(true)
-      setError(null)
-    }
-
-    source.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data) as TranscriptMessage
-        if (!payload || !payload.body) {
-          return
-        }
-
-        setMessages((prev) => [...prev, payload])
-      } catch {
-        return
-      }
-    }
-
-    source.addEventListener('rolling_summary', (event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent).data) as { summary?: string }
-        if (payload.summary) {
-          setSummary(payload.summary)
-        }
-      } catch {
-        return
-      }
-    })
-
-    source.onerror = () => {
-      setConnected(false)
-      setError('Live transcript is temporarily unavailable; the transcript is replaying the current backlog.')
-    }
-
-    return () => source.close()
-  }, [sessionId])
-
-  async function handleSubmit(event: React.FormEvent) {
-    event.preventDefault()
-
-    if (!composer.trim() || !sessionId) {
-      return
-    }
-
+  async function handleInterject() {
+    if (!interjectText.trim()) return
     try {
-      await fetch(`/sessions/${sessionId}/interject`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: composer.trim() }),
-      })
-
-      setComposer('')
-      setMessages((prev) => [
-        ...prev,
-        {
-          message_id: `human-${Date.now()}`,
-          from: 'You',
-          body: composer.trim(),
-          created_at: new Date().toISOString(),
-          kind: 'note',
-        },
-      ])
-    } catch {
-      setError('Your message could not be sent. Please try again.')
+      await interjectSession(sessionId!, interjectText, targetAgent === '*' ? undefined : [targetAgent])
+      setInterjectText('')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to interject')
     }
   }
 
-  const budgetLabel = usageSummary.maxTokens > 0
-    ? `${formatNumber(usageSummary.totalTokens)} / ${formatNumber(usageSummary.maxTokens)} tokens`
-    : `${formatNumber(usageSummary.totalTokens)} tokens used`
+  async function handleStop() {
+    if (!confirm('End session and synthesize results?')) return
+    try {
+      await stopSession(sessionId!)
+      alert('Session stopping...')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to stop')
+    }
+  }
+
+  async function handlePause() {
+    try {
+      await pauseSession(sessionId!)
+      alert('Session paused')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to pause')
+    }
+  }
+
+  async function handleResume() {
+    try {
+      await resumeSession(sessionId!)
+      alert('Session resumed')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to resume')
+    }
+  }
+
+  if (error) return <div className="task-board-error">{error}</div>
+  if (!session) return <p>Loading session…</p>
 
   return (
-    <main className="bayto-room">
-      <header className="bayto-room-header">
-        <div>
-          <p className="room-kicker">Bayto room</p>
-          <h1>Session {sessionId ?? 'preview'}</h1>
+    <section className="bayto-room" style={{ display: 'grid', gridTemplateColumns: '250px 1fr 300px', height: '100vh' }}>
+      <div className="roster-panel" style={{ borderRight: '1px solid #ddd', padding: '1rem', overflowY: 'auto' }}>
+        <h2 style={{ marginTop: 0 }}>Roster</h2>
+        <div className="agent-list">
+          {session.turn_counts.map((tc: any) => (
+            <div key={tc.agent_id} style={{ padding: '0.5rem', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between' }}>
+              <span>{tc.participant || 'Unknown'}</span>
+              <span>{tc.turns} turns</span>
+            </div>
+          ))}
         </div>
-        <div className={`live-pill ${connected ? 'connected' : 'disconnected'}`}>
-          {connected ? 'Live' : 'Replay'}
-        </div>
-      </header>
-
-      <div className="bayto-room-layout">
-        <aside className="bayto-panel roster-panel">
-          <div className="panel-header">
-            <h2>Roster</h2>
-          </div>
-
-          <ul className="roster-list">
-            {defaultRoster.map((person) => (
-              <li key={person.name}>
-                <div className="avatar" aria-hidden="true">{person.name[0]}</div>
-                <div>
-                  <strong>{person.name}</strong>
-                  <small>{person.stance}</small>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </aside>
-
-        <section className="bayto-panel transcript-panel">
-          <div className="panel-header">
-            <h2>Transcript</h2>
-          </div>
-
-          <div className="transcript-stream" aria-live="polite">
-            {messages.map((message) => (
-              <article key={message.message_id ?? `${message.from ?? 'message'}-${message.created_at ?? Math.random()}`} className="message-card">
-                <header>
-                  <strong>{message.from ?? 'System'}</strong>
-                  <time>{message.created_at ? new Date(message.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'now'}</time>
-                </header>
-                <p>{message.body ?? '—'}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <aside className="bayto-panel summary-panel">
-          <div className="panel-header">
-            <h2>Moderator summary</h2>
-          </div>
-          <p className="summary-copy">{summary}</p>
-          <div className="summary-box">
-            <h3>Artifact being built</h3>
-            <p>Drafting the final recommendation from the current set of arguments.</p>
-          </div>
-
-          <div className={`usage-meter ${meterWarning ? 'warning' : ''}`} aria-live="polite">
-            <div className="usage-meter-header">
-              <span>Usage vs budget</span>
-              <strong>{usageSummary.maxTokens > 0 ? `${Math.round(usageMeterPercent)}%` : 'No cap'}</strong>
-            </div>
-            <div className="meter-track" aria-hidden="true">
-              <span className="meter-fill" style={{ width: `${Math.min(usageMeterPercent, 100)}%` }} />
-            </div>
-            <div className="usage-meter-meta">
-              <span>{budgetLabel}</span>
-              <span>{usageSummary.totalCost > 0 ? `$${usageSummary.totalCost.toFixed(2)}` : '$0.00'}</span>
-            </div>
-            {sessionLoadError && <p className="usage-meter-error">{sessionLoadError}</p>}
-          </div>
-        </aside>
       </div>
 
-      <footer className="composer-panel bayto-panel">
-        <form onSubmit={handleSubmit} className="composer-form">
-          <label htmlFor="composer-input" className="sr-only">
-            Send a message to the group
-          </label>
-          <textarea
-            id="composer-input"
-            value={composer}
-            onChange={(event) => setComposer(event.target.value)}
-            rows={3}
-            placeholder="Ask a specific agent or add a new angle..."
-          />
-          <div className="composer-actions">
-            <button type="button" className="secondary-action">Ask a specific agent</button>
-            <button type="submit" className="primary-action">Send</button>
+      <div className="transcript-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div className="transcript-content" style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+          <h2 style={{ marginTop: 0 }}>Transcript</h2>
+          <div className="messages-list" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {messages.map((msg, i) => (
+              <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                <span style={{ fontWeight: 'bold', fontSize: '0.8rem' }}>{msg.from}</span>
+                <div style={{ padding: '0.5rem', backgroundColor: '#eee', borderRadius: '4px' }}>{msg.body}</div>
+              </div>
+            ))}
+            {messages.length === 0 && <p>No messages yet. Wait for the moderator to start the session.</p>}
           </div>
-        </form>
-        {error && <p className="room-error">{error}</p>}
-      </footer>
-    </main>
+        </div>
+        <div className="composer-panel" style={{ padding: '1rem', borderTop: '1px solid #ddd', backgroundColor: '#fcfcfc' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+            <select
+              value={targetAgent}
+              onChange={(e) => setTargetAgent(e.target.value)}
+              style={{ padding: '0.5rem' }}
+            >
+              <option value="*">Everyone</option>
+              {session.turn_counts.map((tc: any) => (
+                <option key={tc.agent_id} value={tc.participant}>{tc.participant}</option>
+              ))}
+            </select>
+            <input
+              type="text"
+              placeholder="Interject..."
+              value={interjectText}
+              onChange={(e) => setInterjectText(e.target.value)}
+              style={{ flex: 1, padding: '0.5rem' }}
+            />
+            <button onClick={handleInterject} style={{ padding: '0.5rem 1rem' }}>Send</button>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+            <button onClick={handlePause} style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem' }}>Pause</button>
+            <button onClick={handleResume} style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem' }}>Resume</button>
+            <button onClick={handleStop} style={{ padding: '0.3rem 0.6rem', fontSize: '0.8rem', backgroundColor: '#ffcccc', border: '1px solid red' }}>End & Synthesize</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="moderator-panel" style={{ borderLeft: '1px solid #ddd', padding: '1rem', overflowY: 'auto' }}>
+        <h2 style={{ marginTop: 0 }}>Moderator</h2>
+        <div className="rolling-summary" style={{ backgroundColor: '#f9f9f9', padding: '1rem', borderRadius: '4px', border: '1px solid #ddd', marginBottom: '1rem' }}>
+          <h3 style={{ marginTop: 0 }}>Rolling Summary</h3>
+          <p>{rollingSummary || 'Waiting for updates...'}</p>
+        </div>
+        <div className="cost-meter" style={{ padding: '1rem', border: '1px solid #ddd' }}>
+          <h3 style={{ marginTop: 0 }}>Usage</h3>
+          <p>Tokens: {session.usage.tokens_in + session.usage.tokens_out}</p>
+          <p>Cost: ${session.usage.cost.toFixed(4)}</p>
+        </div>
+      </div>
+    </section>
   )
 }

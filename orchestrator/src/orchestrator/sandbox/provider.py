@@ -71,8 +71,8 @@ class SandboxProvider(abc.ABC):
         """Start one session per roles/team.tsv participant inside the sandbox."""
 
     @abc.abstractmethod
-    async def wake_role(self, sandbox: SandboxInfo, role: str) -> None:
-        """Notify a single role it has a new assignment."""
+    async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
+        """Notify a single role it has a new assignment. If fallback=True, use a local model. """
 
     @abc.abstractmethod
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:

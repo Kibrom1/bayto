@@ -154,6 +154,9 @@ class ModeratorRunner:
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
+        # M2.12: phase machine state
+        self._current_phase_index = 0
+        self._turns_in_phase = 0
 
     # ---------------------------------------------------------------- the loop
 
@@ -392,12 +395,17 @@ class ModeratorRunner:
         the session is still STATUS_ACTIVE."""
         async with self._sessionmaker() as session:
             row = await session.get(SessionRow, self._session_id)
+
+            # M2.12: check if all phases are complete
+            if self._mode.phases and self._current_phase_index >= len(self._mode.phases):
+                return "phases-complete"
+
             if self._stop_rules.max_rounds is not None and view.round >= self._stop_rules.max_rounds:
                 return "max-rounds"
             if row.stale_argument_count >= self._stop_rules.stale_argument_turns:
                 return "no-new-arguments"
             if await self._budget_exceeded(row):
-                return "budget-exceeded"
+                return None # M2.12: trigger fallback instead of stopping session
         return None
 
     async def _budget_exceeded(self, row: SessionRow) -> bool:
@@ -541,6 +549,11 @@ class ModeratorRunner:
             "bayto.session_id": str(self._session_id), "bayto.participant": participant,
             "timeout_s": self._config.grant_timeout_seconds,
         }) as span:
+            # Determine if we should use local fallback based on budget or previous error
+            async with self._sessionmaker() as session:
+                row = await session.get(SessionRow, self._session_id)
+                use_fallback = row.fallback_active or await self._budget_exceeded(row)
+
             # Subscribe BEFORE waking: a fake/fast/same-process participant can publish its
             # response synchronously inside wake_role() itself (as the tests' FakeSandboxProvider
             # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only
@@ -548,13 +561,47 @@ class ModeratorRunner:
             # could miss it.
             queue = self._pubsub.subscribe()
             try:
-                await self._sandbox_provider.wake_role(self._sandbox, participant)
+                try:
+                    await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
+                except SandboxCommandError as e:
+                    # Reactive Fallback: if we hit a platform limit (Weekly/Daily), switch to Ollama immediately
+                    if "limit" in e.stderr.lower() or "rate limit" in e.stderr.lower():
+                        log.warning("session %s: platform limit hit in sandbox; triggering reactive fallback", self._session_id)
+                        async with self._sessionmaker() as session:
+                            row = await session.get(SessionRow, self._session_id)
+                            row.fallback_active = True
+                            await session.commit()
+                        # Retry immediately with fallback enabled
+                        await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=True)
+                    else:
+                        raise
+
                 response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+
+                # Reactive Fallback (Content Level): if the agent's response body contains limit errors
+                if response and "body" in response:
+                    body_text = response["body"].lower()
+                    if "weekly limit" in body_text or "usage limit" in body_text or "rate limit" in body_text:
+                        log.warning("session %s: platform limit detected in response body; triggering reactive fallback", self._session_id)
+                        async with self._sessionmaker() as session:
+                            row = await session.get(SessionRow, self._session_id)
+                            row.fallback_active = True
+                            await session.commit()
+
+                        # Retry the turn immediately using the fallback path
+                        await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=True)
+                        response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+
                 if response is None:
                     # One retry: re-wake (not re-send -- the assignment is already sitting
                     # unread) and wait again, per the architect's "retry the same grant once
                     # more."
-                    await self._sandbox_provider.wake_role(self._sandbox, participant)
+                    # Re-calculate fallback in case it was triggered by the first attempt
+                    async with self._sessionmaker() as session:
+                        row = await session.get(SessionRow, self._session_id)
+                        use_fallback = row.fallback_active or await self._budget_exceeded(row)
+
+                    await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
                     response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
             finally:
                 self._pubsub.unsubscribe(queue)
@@ -573,7 +620,30 @@ class ModeratorRunner:
         async with self._sessionmaker() as session:
             row = await session.get(SessionRow, self._session_id)
             summary = row.rolling_summary
-        lines = [f"Rolling summary: {summary or '(none yet)'}", "", "Recent turns:"]
+
+            # M5: include summaries of previous sessions for the same task
+            prev_sessions = (await session.execute(
+                select(SessionRow.id, SessionRow.rolling_summary)
+                .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id)
+                .order_by(SessionRow.started_at.desc())
+            )).all()
+            prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
+
+        lines = []
+        if prev_summaries:
+            lines.append("Previous Session Context:")
+            lines.extend(prev_summaries)
+            lines.append("")
+
+        # M2.12: include current phase in context
+        if self._mode.phases and self._current_phase_index < len(self._mode.phases):
+            phase = self._mode.phases[self._current_phase_index]
+            lines.append(f"Current Phase: {phase['name']} - {phase.get('description', '')}")
+            lines.append("")
+
+        lines.append(f"Rolling summary: {summary or '(none yet)'}")
+        lines.append("")
+        lines.append("Recent turns:")
         lines.extend(view.recent_transcript)
         return "\n".join(lines)
 
@@ -601,44 +671,82 @@ class ModeratorRunner:
     # ---------------------------------------------------------------- turn recording
 
     async def _record_turn(self, view: ConversationView, participant: str, envelope_data: dict) -> None:
-        meta = envelope_data.get("meta") or {}
-        tokens_in, tokens_out, cost = meta.get("tokens_in"), meta.get("tokens_out"), meta.get("cost")
-        if tokens_in is None and tokens_out is None and cost is None:
-            log.warning("budget-accuracy degraded: %s's turn in session %s has no "
-                        "tokens_in/tokens_out/cost in meta", participant, self._session_id)
+        """M2.7: durably record the agent's response as a Turn row.
+        Calculates the current round using the policy's projection and extracts budget meta."""
+        async with self._sessionmaker() as session:
+            # 1. Resolve participant role to agent_id
+            agent = await session.execute(
+                select(Agent).where(Agent.role == participant)
+            ).scalar_one()
 
-        with tracer.start_as_current_span("turn.process", attributes={
-            "bayto.session_id": str(self._session_id), "bayto.participant": participant,
-            "bayto.round": view.round,
-        }) as span:
-            async with self._sessionmaker() as session:
-                agent_id = await session.scalar(
-                    select(Agent.id).join(SessionAgent, SessionAgent.agent_id == Agent.id)
-                    .where(SessionAgent.session_id == self._session_id, Agent.role == participant)
-                )
-                if agent_id is None:
-                    raise ValueError(f"no seated Agent with role={participant!r} for session {self._session_id}")
-                next_seq = (await session.scalar(
-                    select(func.coalesce(func.max(Turn.seq), 0)).where(Turn.session_id == self._session_id)
-                )) + 1
-                round_ = self._round_for_grant(view.round, participant, view.seat_order)
-                turn = Turn(
-                    session_id=self._session_id, seq=next_seq, speaker_id=agent_id, round=round_,
-                    content=envelope_data.get("body", ""), tool_calls_json=meta.get("tool_calls"),
-                    tokens_in=tokens_in, tokens_out=tokens_out, cost=cost,
-                )
-                session.add(turn)
-                await session.commit()
+            # 2. Determine sequence and round
+            last_turn = (await session.execute(
+                select(Turn).where(Turn.session_id == self._session_id).order_by(Turn.seq.desc()).limit(1)
+            )).scalar_one_or_none()
 
-            span.set_attribute("bayto.turn_id", str(turn.id))
-            # Self-reported only: omit entirely rather than estimate when the agent didn't
-            # report it (see the "budget-accuracy degraded" warning above).
-            if tokens_in is not None:
-                span.set_attribute("gen_ai.usage.input_tokens", tokens_in)
-            if tokens_out is not None:
-                span.set_attribute("gen_ai.usage.output_tokens", tokens_out)
-            if cost is not None:
-                span.set_attribute("bayto.cost_usd", cost)
+            seq = (last_turn.seq + 1) if last_turn else 1
+            round_val = self._round_for_grant(last_turn.round if last_turn else 0, participant, view.seat_order)
+
+            # 3. Extract content and budget meta (per la-haiku convention)
+            content = envelope_data.get("body", "")
+            kind = envelope_data.get("kind", "note")
+            meta = envelope_data.get("meta", {})
+            tokens_in = meta.get("tokens_in")
+            tokens_out = meta.get("tokens_out")
+            cost = meta.get("cost")
+
+            # 4. Persist the turn
+            turn = Turn(
+                session_id=self._session_id,
+                seq=seq,
+                speaker_id=agent.id,
+                round=round_val,
+                content=content,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost=cost,
+            )
+            session.add(turn)
+            await session.flush() # get turn.id
+
+            # M6: record usage in the ledger
+            from ..models import UsageLedger
+            ledger_entry = UsageLedger(
+                session_id=self._session_id,
+                tokens_in=tokens_in or 0,
+                tokens_out=tokens_out or 0,
+                cost=cost or 0.0,
+                turn_id=turn.id,
+            )
+            session.add(ledger_entry)
+
+            # M5: if this is a decision-request, pause the session for human input
+            if kind == "decision-request":
+                row = await session.get(SessionRow, self._session_id)
+                row.status = STATUS_NEEDS_HUMAN
+                log.info("session %s: decision request received from %s; pausing for human", self._session_id, participant)
+
+            await session.commit()
+
+            # M2.12: advance the phase machine after a recorded turn
+            await self._advance_phase()
+
+
+    async def _advance_phase(self) -> None:
+        """M2.12: update phase machine state. If all phases complete, the session ends."""
+        if not self._mode.phases:
+            return
+
+        self._turns_in_phase += 1
+        current_phase = self._mode.phases[self._current_phase_index]
+        if self._turns_in_phase >= current_phase.get("max_rounds", 1):
+            self._current_phase_index += 1
+            self._turns_in_phase = 0
+            if self._current_phase_index < len(self._mode.phases):
+                log.info("session %s: transitioning to phase %s", self._session_id,
+                         self._mode.phases[self._current_phase_index]["name"])
+            else:
+                log.info("session %s: all phases complete", self._session_id)
 
     def _round_for_grant(self, last_round: int, participant: str, seat_order: list[str]) -> int:
         """Round semantics differ by policy (the architect's instruction: let each
