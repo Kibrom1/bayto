@@ -1,19 +1,26 @@
+# Bytecode
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
 .venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
-node_modules/
-.env
-*.env.local
-spikes/*/runs/
-factory/
-.local/
+venv/
+ENV/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
 .build/
-dev-team/.build/
-
-# Local run records from dev-team sandboxes
-dev-team/runs/
-
-# M2.8: per-session factory directories (FileTransport message files), local runtime data
 orchestrator/.sessions/
+orchestrator/.venv/
+.env
+*.log
+
+# IDEs
+.vscode/
+.idea/
+.vscode-server/
