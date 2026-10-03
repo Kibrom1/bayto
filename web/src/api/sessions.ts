@@ -1,5 +1,14 @@
-// Mirrors orchestrator/src/orchestrator/api/sessions.py (POST /sessions, POST /sessions/{id}/start, GET /sessions/{id}, GET /sessions/{id}/events)
 import { UUID } from 'crypto'
+
+export interface Task {
+  id: string
+  title: string
+  brief: string | null
+  output_type: string
+  status: string | null
+  last_session_id: string | null
+  output_artifact_id: string | null
+}
 
 export interface BudgetIn {
   tokens?: number
@@ -81,6 +90,27 @@ async function parseError(res: Response): Promise<string> {
   } catch {
     return res.statusText
   }
+}
+
+export async function listTasks(): Promise<Task[]> {
+  const res = await fetch('/tasks')
+  if (!res.ok) {
+    throw new Error(`GET /tasks failed: ${res.status} ${await parseError(res)}`)
+  }
+  return res.json()
+}
+
+export async function createTask(req: any): Promise<Task> {
+  const res = await fetch('/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  })
+  if (!res.ok) {
+    throw new Error(`POST /tasks failed: ${res.status} ${await parseError(res)}`)
+  }
+  const data = await res.json()
+  return data.task
 }
 
 export async function createSession(req: SessionCreateRequest): Promise<SessionCreateResponse> {

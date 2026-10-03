@@ -1,42 +1,3 @@
-"""Mode files -> Roster/SendPolicy/route table (M2.5), plus a raw stop-rules block (M2.7).
-
-A mode is data, not code (docs/agent-communication-protocol.md, 'Reuse'): `modes/<name>.yaml`
-declares which Envelope kinds each role may emit, the floor policy, an optional pipeline
-route table, an optional moderator role for `moderator`-visibility messages, and an optional
-`stop_rules` block. Parsed at session start straight into a `ModeConfig`; never round-tripped
-into `orchestrator.models.Mode.phases_json`/`stop_rules_json` (those columns are about
-turn-taking/phases and stop-rule *storage*, a different concern from *resolving* a mode --
-see docs/decisions.md, 2026-09-29).
-
-Example (docs/agent-communication-protocol.md's `code-factory` mode):
-
-    mode: code-factory
-    floor_policy: pipeline
-    roles:
-      coordinator: { may_send: [assignment, question, decision-request, summary, note] }
-      developer:   { may_send: [report, question, answer, note, x-code.review-request] }
-      qa:          { may_send: [report, critique, question, note] }
-      human:       { may_send: [decision, question, note] }
-    route:
-      start: coordinator
-      developer.report.implemented: qa
-      qa.report.review-fail: developer
-      qa.report.review-pass: coordinator
-    moderator: coordinator   # optional; unset means moderator-visibility matches nobody
-                             # but the sender (safe default, not a crash)
-    send:                    # optional; Roster's own {sender: [recipients]} shape, unused
-                             # by pipeline mode (see ModeConfig.send_roster)
-    stop_rules:              # optional; raw dict, typed by orchestrator's
-                             # StopRulesConfig.from_mode (M2.7) -- agent-comms itself never
-                             # interprets these keys
-      max_rounds: 12
-      converge_after_quiet_rounds: 2
-      stale_argument_turns: 3
-      urgency_boost_multiplier: 1.3
-      max_consecutive_grants: 2
-"""
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,6 +30,9 @@ class ModeConfig:
     # final-synthesis prompt (e.g. debate's "declare a verdict" vs. brainstorm's "cluster and
     # rank") without a new per-mode synthesizer class.
     synthesis_prompt_hint: str | None = None
+    # M2.12: optional phase metadata for modes that structure discussion into stages (e.g.
+    # brainstorm's diverge -> cluster -> synthesize flow).
+    phases: list[dict[str, Any]] | None = None
 
     def send_roster(self) -> Roster:
         """Pipeline modes route addressing through `route` (e.g. "who's next" is already
@@ -100,4 +64,5 @@ def load_mode(path: str | Path) -> ModeConfig:
         send=raw.get("send"),
         stop_rules=raw.get("stop_rules"),
         synthesis_prompt_hint=raw.get("synthesis_prompt_hint"),
+        phases=raw.get("phases"),
     )
