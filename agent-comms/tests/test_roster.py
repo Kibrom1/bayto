@@ -43,7 +43,7 @@ def test_unknown_or_empty_roster_rejected(tmp_path):
 
 def test_tool_cli_args_builds_claude_flags():
     assert tool_cli_args({"allow": ["Read", "Write"], "deny": ["WebFetch"]}) == [
-        "--allowedTools", "Read", "Write", "--disallowedTools", "WebFetch",
+        "--allowedTools", "Read", "Write", "--disallowedTools", "WebFetch", "--permission-mode", "dontAsk",
     ]
 
 
@@ -51,7 +51,7 @@ def test_tool_cli_args_omits_empty_lists():
     assert tool_cli_args({"allow": [], "deny": ["Write", "Edit", "Bash"]}) == [
         "--disallowedTools", "Write", "Edit", "Bash",
     ]
-    assert tool_cli_args({"allow": ["Read"], "deny": []}) == ["--allowedTools", "Read"]
+    assert tool_cli_args({"allow": ["Read"], "deny": []}) == ["--allowedTools", "Read", "--permission-mode", "dontAsk"]
     assert tool_cli_args({}) == []
 
 
@@ -64,3 +64,22 @@ def test_tool_cli_args_matches_tools_json_for_every_catalog_role():
             assert tool in flags
         for tool in entry["deny"]:
             assert tool in flags
+
+
+def test_bash_denied_roles_get_scoped_messaging_bash(tmp_path):
+    cat = load_catalog(CATALOG)
+    build_team([{"role": "coordinator"}, {"role": "backend-engineer"}], cat, tmp_path, comms="crew")
+    tools = json.loads((tmp_path / "tools.json").read_text())
+    assert "Bash" not in tools["coordinator"]["deny"] and "Bash" not in tools["coordinator"]["allow"]
+    assert {"Bash(handoff:*)", "Bash(crew:*)"} <= set(tools["coordinator"]["allow"])
+    assert "Bash" in tools["backend-engineer"]["allow"] and not any(t.startswith("Bash(") for t in tools["backend-engineer"]["allow"])
+    assert "Bash(handoff:*)" in (tmp_path / "roles" / "coordinator.md").read_text()
+
+
+def test_build_team_writes_per_seat_flag_files(tmp_path):
+    cat = load_catalog(CATALOG)
+    build_team([{"role": "coordinator"}, {"role": "qa-tester"}], cat, tmp_path, comms="crew")
+    tools = json.loads((tmp_path / "tools.json").read_text())
+    for seat, entry in tools.items():
+        assert (tmp_path / "tool-flags" / seat).read_text().split("\n")[:-1] == tool_cli_args(entry)
+    assert "--permission-mode" in (tmp_path / "tool-flags" / "coordinator").read_text()

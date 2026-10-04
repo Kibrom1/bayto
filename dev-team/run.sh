@@ -22,18 +22,27 @@ install -m 0755 "$repo/agent-comms/src/acp/crew_notify_fallback.py" "$build/chap
 # The workshop blanks GH_TOKEN/GITHUB_TOKEN for seats; Bayto engineers open PRs, so let them inherit the proxy-managed placeholder.
 sed -i.bak "s/--env GH_TOKEN= --env GITHUB_TOKEN= //" "$build/chapters/support/bin/start-team" && rm "$build/chapters/support/bin/start-team.bak"
 grep -q -- "--env GH_TOKEN=" "$build/chapters/support/bin/start-team" && { echo "start-team still blanks GH_TOKEN"; exit 1; } || true
-# M1.9: the workshop never passes tool permissions to a session. For harness=claude only, inject
-# the seat's tools.json allow/deny lists as Claude Code CLI flags (`acp tool-flags` does the
-# tools.json-entry -> flags translation; this is thin bash glue around it).
+# M1.9: the workshop never passes tool permissions to a session. For harness=claude seats, start-team
+# reads the seat's flags from $FACTORY_DIR/tool-flags/<seat> (written by build-roster.py from tools.json;
+# the sandbox has no `acp` CLI or its dependencies) and refuses to start a seat that has none, rather
+# than silently launching it unrestricted. --add-dir keeps ~/work (briefs, factory) readable under dontAsk.
 sed -i.bak '/if \[ -z "\$ws" \]; then/i\
-  if [ "$harness" = claude ] \&\& [ -f "$FACTORY_DIR/tools.json" ]; then\
-    while IFS= read -r flag; do args+=("$flag"); done < <(acp tool-flags --tools-json "$FACTORY_DIR/tools.json" --role "$role")\
+  if [ "$harness" = claude ]; then\
+    [ -s "$FACTORY_DIR/tool-flags/$role" ] || { echo "No tool-permission flags for $role ($FACTORY_DIR/tool-flags/$role); refusing to start it unrestricted." >&2; exit 2; }\
+    while IFS= read -r flag; do args+=("$flag"); done < "$FACTORY_DIR/tool-flags/$role"\
+    args+=(--add-dir "$WORKSPACE_DIR")\
   fi' "$build/chapters/support/bin/start-team" && rm "$build/chapters/support/bin/start-team.bak"
-grep -q -- 'acp tool-flags --tools-json "\$FACTORY_DIR/tools.json" --role "\$role"' "$build/chapters/support/bin/start-team" \
+grep -q -- 'tool-flags/\$role"' "$build/chapters/support/bin/start-team" \
   || { echo "start-team missing the tool-permission patch"; exit 1; }
+# The launcher only ships bin/, roles/ and a fixed set of files; add tool-flags/ so it lands in the sandbox factory dir.
+sed -i.bak '/^cp "\$chapter\/PROMPT.md" "\$payload\/"$/a\
+[ ! -d "$chapter/tool-flags" ] || { mkdir -p "$payload/factory"; cp -R "$chapter/tool-flags" "$payload/factory/"; }' "$build/chapters/support/launch" && rm "$build/chapters/support/launch.bak"
+grep -q -- 'cp -R "\$chapter/tool-flags"' "$build/chapters/support/launch" \
+  || { echo "launch missing the tool-flags transfer"; exit 1; }
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
 cp "$gen/team.tsv" "$build/factory/team.tsv"
 cp "$gen/tools.json" "$build/factory/tools.json"
+cp -R "$gen/tool-flags" "$build/factory/tool-flags"
 printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=shell\n' > "$build/factory/chapter.env"
 # Claude-only, no Pi kit, no ACR kit; no ports.
 cat > "$build/factory/sbxenv.yaml" <<'YML'
