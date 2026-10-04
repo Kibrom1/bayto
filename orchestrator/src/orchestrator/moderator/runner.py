@@ -49,12 +49,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
-from ..models import Agent, Artifact
+from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
 from ..models import Session as SessionRow
 from ..models import SessionAgent, Turn
 from ..pubsub import PubSub
-from ..sandbox.provider import SandboxInfo, SandboxProvider
+from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..floor import (
     AskHuman,
     ConversationView,
@@ -405,7 +405,7 @@ class ModeratorRunner:
             if row.stale_argument_count >= self._stop_rules.stale_argument_turns:
                 return "no-new-arguments"
             if await self._budget_exceeded(row):
-                return None # M2.12: trigger fallback instead of stopping session
+                return "budget-exceeded"
         return None
 
     async def _budget_exceeded(self, row: SessionRow) -> bool:
@@ -549,10 +549,10 @@ class ModeratorRunner:
             "bayto.session_id": str(self._session_id), "bayto.participant": participant,
             "timeout_s": self._config.grant_timeout_seconds,
         }) as span:
-            # Determine if we should use local fallback based on budget or previous error
+            # Local fallback stays on once a platform limit has been hit this session
             async with self._sessionmaker() as session:
                 row = await session.get(SessionRow, self._session_id)
-                use_fallback = row.fallback_active or await self._budget_exceeded(row)
+                use_fallback = row.fallback_active
 
             # Subscribe BEFORE waking: a fake/fast/same-process participant can publish its
             # response synchronously inside wake_role() itself (as the tests' FakeSandboxProvider
@@ -599,7 +599,7 @@ class ModeratorRunner:
                     # Re-calculate fallback in case it was triggered by the first attempt
                     async with self._sessionmaker() as session:
                         row = await session.get(SessionRow, self._session_id)
-                        use_fallback = row.fallback_active or await self._budget_exceeded(row)
+                        use_fallback = row.fallback_active
 
                     await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
                     response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
@@ -671,65 +671,60 @@ class ModeratorRunner:
     # ---------------------------------------------------------------- turn recording
 
     async def _record_turn(self, view: ConversationView, participant: str, envelope_data: dict) -> None:
-        """M2.7: durably record the agent's response as a Turn row.
-        Calculates the current round using the policy's projection and extracts budget meta."""
-        async with self._sessionmaker() as session:
-            # 1. Resolve participant role to agent_id
-            agent = await session.execute(
-                select(Agent).where(Agent.role == participant)
-            ).scalar_one()
+        meta = envelope_data.get("meta") or {}
+        kind = envelope_data.get("kind", "note")
+        tokens_in, tokens_out, cost = meta.get("tokens_in"), meta.get("tokens_out"), meta.get("cost")
+        if tokens_in is None and tokens_out is None and cost is None:
+            log.warning("budget-accuracy degraded: %s's turn in session %s has no "
+                        "tokens_in/tokens_out/cost in meta", participant, self._session_id)
 
-            # 2. Determine sequence and round
-            last_turn = (await session.execute(
-                select(Turn).where(Turn.session_id == self._session_id).order_by(Turn.seq.desc()).limit(1)
-            )).scalar_one_or_none()
+        with tracer.start_as_current_span("turn.process", attributes={
+            "bayto.session_id": str(self._session_id), "bayto.participant": participant,
+            "bayto.round": view.round,
+        }) as span:
+            async with self._sessionmaker() as session:
+                agent_id = await session.scalar(
+                    select(Agent.id).join(SessionAgent, SessionAgent.agent_id == Agent.id)
+                    .where(SessionAgent.session_id == self._session_id, Agent.role == participant)
+                )
+                if agent_id is None:
+                    raise ValueError(f"no seated Agent with role={participant!r} for session {self._session_id}")
+                next_seq = (await session.scalar(
+                    select(func.coalesce(func.max(Turn.seq), 0)).where(Turn.session_id == self._session_id)
+                )) + 1
+                round_ = self._round_for_grant(view.round, participant, view.seat_order)
+                turn = Turn(
+                    session_id=self._session_id, seq=next_seq, speaker_id=agent_id, round=round_,
+                    content=envelope_data.get("body", ""), tool_calls_json=meta.get("tool_calls"),
+                    tokens_in=tokens_in, tokens_out=tokens_out, cost=cost,
+                )
+                session.add(turn)
+                await session.flush()
 
-            seq = (last_turn.seq + 1) if last_turn else 1
-            round_val = self._round_for_grant(last_turn.round if last_turn else 0, participant, view.seat_order)
+                session.add(UsageLedger(
+                    session_id=self._session_id, turn_id=turn.id,
+                    tokens_in=tokens_in or 0, tokens_out=tokens_out or 0, cost=cost or 0,
+                ))
 
-            # 3. Extract content and budget meta (per la-haiku convention)
-            content = envelope_data.get("body", "")
-            kind = envelope_data.get("kind", "note")
-            meta = envelope_data.get("meta", {})
-            tokens_in = meta.get("tokens_in")
-            tokens_out = meta.get("tokens_out")
-            cost = meta.get("cost")
+                if kind == "decision-request":
+                    row = await session.get(SessionRow, self._session_id)
+                    row.status = STATUS_NEEDS_HUMAN
+                    log.info("session %s: decision request received from %s; pausing for human",
+                             self._session_id, participant)
 
-            # 4. Persist the turn
-            turn = Turn(
-                session_id=self._session_id,
-                seq=seq,
-                speaker_id=agent.id,
-                round=round_val,
-                content=content,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                cost=cost,
-            )
-            session.add(turn)
-            await session.flush() # get turn.id
+                await session.commit()
 
-            # M6: record usage in the ledger
-            from ..models import UsageLedger
-            ledger_entry = UsageLedger(
-                session_id=self._session_id,
-                tokens_in=tokens_in or 0,
-                tokens_out=tokens_out or 0,
-                cost=cost or 0.0,
-                turn_id=turn.id,
-            )
-            session.add(ledger_entry)
+            span.set_attribute("bayto.turn_id", str(turn.id))
+            # Self-reported only: omit entirely rather than estimate when the agent didn't
+            # report it (see the "budget-accuracy degraded" warning above).
+            if tokens_in is not None:
+                span.set_attribute("gen_ai.usage.input_tokens", tokens_in)
+            if tokens_out is not None:
+                span.set_attribute("gen_ai.usage.output_tokens", tokens_out)
+            if cost is not None:
+                span.set_attribute("bayto.cost_usd", cost)
 
-            # M5: if this is a decision-request, pause the session for human input
-            if kind == "decision-request":
-                row = await session.get(SessionRow, self._session_id)
-                row.status = STATUS_NEEDS_HUMAN
-                log.info("session %s: decision request received from %s; pausing for human", self._session_id, participant)
-
-            await session.commit()
-
-            # M2.12: advance the phase machine after a recorded turn
-            await self._advance_phase()
+        await self._advance_phase()
 
 
     async def _advance_phase(self) -> None:

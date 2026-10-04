@@ -39,7 +39,7 @@ class FakeSandboxProvider(SandboxProvider):
     async def start_team(self, sandbox: SandboxInfo) -> None:
         self.started_teams.append(sandbox.name)
 
-    async def wake_role(self, sandbox: SandboxInfo, role: str) -> None:
+    async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
         self.woken.append(role)
         if self._on_wake:
             await self._on_wake(role)

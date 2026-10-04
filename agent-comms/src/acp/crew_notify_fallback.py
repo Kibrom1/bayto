@@ -2,7 +2,7 @@
 import os
 import sys
 import json
-import requests
+import urllib.request
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -47,17 +47,13 @@ def main():
 
     # 2. Call Ollama
     try:
-        response = requests.post(
+        req = urllib.request.Request(
             OLLAMA_URL,
-            json={
-                "model": FALLBACK_MODEL,
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=60
+            data=json.dumps({"model": FALLBACK_MODEL, "prompt": prompt, "stream": False}).encode(),
+            headers={"Content-Type": "application/json"},
         )
-        response.raise_for_status()
-        text = response.json().get("response", "")
+        with urllib.request.urlopen(req, timeout=60) as response:
+            text = json.load(response).get("response", "")
     except Exception as e:
         print(f"Ollama error: {e}")
         sys.exit(1)
