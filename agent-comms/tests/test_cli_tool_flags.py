@@ -14,7 +14,7 @@ def test_tool_flags_prints_one_flag_per_line(tmp_path, capsys):
 
     assert rc == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines == ["--allowedTools", "Read", "Write", "Bash", "--disallowedTools", "WebFetch"]
+    assert lines == ["--allowedTools", "Read", "Write", "Bash", "--disallowedTools", "WebFetch", "--permission-mode", "dontAsk"]
 
 
 def test_tool_flags_unknown_role_prints_nothing(tmp_path, capsys):

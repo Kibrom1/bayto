@@ -9,6 +9,12 @@ import yaml
 
 DEFAULT_MODEL = "claude-haiku"
 COMMS = ("acp", "crew")
+FACTORY_DIR = "/home/agent/work/factory"
+# Seats whose catalog profile denies Bash still need a shell to talk to the team; these are the only commands they get.
+MESSAGING_BASH = {
+    "crew": ["Bash(handoff:*)", "Bash(crew:*)", f"Bash(touch {FACTORY_DIR}/ready/*)"],
+    "acp": ["Bash(acp:*)"],
+}
 
 
 class RosterError(ValueError):
@@ -60,7 +66,11 @@ def build_team(entries: list[dict], catalog: dict[str, dict], out_dir: str | Pat
         role = catalog[e["role"]]
         model = e.get("model", default_model)
         team_rows.append(f"{seat}\t{e.get('harness', 'claude')}\t{e.get('provider', 'anthropic')}\t{model}")
-        tools[seat] = {"allow": role["tools"]["allow"], "deny": role["tools"]["deny"]}
+        allow, deny = list(role["tools"]["allow"]), list(role["tools"]["deny"])
+        if "Bash" in deny:
+            deny.remove("Bash")
+            allow += MESSAGING_BASH[comms]
+        tools[seat] = {"allow": allow, "deny": deny}
         network.update(role.get("team_needs", {}).get("network", []))
     (out / "team.tsv").write_text("\n".join(team_rows) + "\n")
 
@@ -78,12 +88,16 @@ def build_team(entries: list[dict], catalog: dict[str, dict], out_dir: str | Pat
         text = (f"{role['_brief_text'].rstrip()}\n\n## Your seat\nYou are `{seat}`. Task: {topic or '(sent by the human)'}\n\n"
                 f"## The team\n{table}\n- `human` — the person who owns the task; the only one who sends `decision`.\n\n"
                 f"## How to talk\n{talk}"
-                f"Tools you may use: {', '.join(role['tools']['allow'])}. Denied: {', '.join(role['tools']['deny']) or 'none'}.\n")
+                f"Tools you may use: {', '.join(tools[seat]['allow'])}. Denied: {', '.join(tools[seat]['deny']) or 'none'}.\n")
         if extra.strip():
             text += f"\n## Project rules\n{extra.strip()}\n"
         (out / "roles" / f"{seat}.md").write_text(text)
 
     (out / "tools.json").write_text(json.dumps(tools, indent=2))
+    flags_dir = out / "tool-flags"
+    flags_dir.mkdir(exist_ok=True)
+    for seat, entry in tools.items():
+        (flags_dir / seat).write_text("".join(f"{flag}\n" for flag in tool_cli_args(entry)))
     (out / "network.json").write_text(json.dumps(sorted(network), indent=2))
     roster = {"conversation": conversation, "roles": seats}
     (out / "roster.json").write_text(json.dumps(roster, indent=2))
@@ -92,7 +106,9 @@ def build_team(entries: list[dict], catalog: dict[str, dict], out_dir: str | Pat
 
 def tool_cli_args(entry: dict[str, list[str]]) -> list[str]:
     """A `tools.json` seat entry ({"allow": [...], "deny": [...]}) -> Claude Code CLI flags
-    (M1.9). Empty allow/deny lists are omitted rather than passed as empty flags."""
+    (M1.9). Empty allow/deny lists are omitted rather than passed as empty flags. An allow list
+    only restricts a seat under dontAsk (anything not allowed is refused, no prompt), so it
+    comes with --permission-mode dontAsk."""
     args: list[str] = []
     allow = entry.get("allow") or []
     deny = entry.get("deny") or []
@@ -100,4 +116,6 @@ def tool_cli_args(entry: dict[str, list[str]]) -> list[str]:
         args += ["--allowedTools", *allow]
     if deny:
         args += ["--disallowedTools", *deny]
+    if allow:
+        args += ["--permission-mode", "dontAsk"]
     return args
