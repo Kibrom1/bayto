@@ -391,9 +391,9 @@ Skipping a role is safe: if the team has no Researcher, the discovery route fall
 ## Open questions
 
 - [ ] Include domain sub-stages in core (as the workshop's coding stages are today) or move them all to extensions?
-- [ ] Is a CLI worth keeping next to MCP? It's needed for Pi and other harnesses without an MCP client (as in the workshop), so probably yes.
-- [ ] Should `hand-raise` come only from the central Haiku call, or should agents with persistent loops be allowed to send their own?
+- [x] Is a CLI worth keeping next to MCP? It's needed for Pi and other harnesses without an MCP client (as in the workshop), so probably yes. **Resolved (2026-10-04): yes, keep both -- not exclusive.** The acp CLI is the real, used surface across M1-M3 (every role brief, every conformance test); MCP exposure is a separate, additive milestone (M4, Bayto MCP server via the SBX gateway) wrapping the same verbs for harnesses with an MCP client, while the CLI stays needed for Pi and similar harnesses.
+- [x] Should `hand-raise` come only from the central Haiku call, or should agents with persistent loops be allowed to send their own? **Resolved (2026-10-04): both, already shipped.** M2.6 implemented the central-scorer path (`AnthropicHandRaiseScorer`) and M2.7 implemented the self-emitted `hand-raise` Envelope convention side by side; both produce the same `HandRaise` record, exactly as this question anticipated. No further decision needed.
 - [ ] Should the spec adopt A2A message shapes for external interoperability, or keep `acp/1` and bridge to it?
 - [ ] Should `agent-comms` be open-sourced to drive adoption?
-- [ ] When do we add isolated per-agent sandboxes (an `isolation: own` participant flag): for imported agents, untrusted code, or per-role network limits?
+- [x] When do we add isolated per-agent sandboxes (an `isolation: own` participant flag): for imported agents, untrusted code, or per-role network limits? **Resolved (2026-10-04): deferred, per the existing 2026-09-28 decision.** Already Decided separately (docs/decisions.md, 2026-09-28: all agents of a task share one team sandbox for now, per-agent sandboxes are a later option); this open question was simply never synced to that decision. No new condition set now -- revisit when a concrete need appears.
 - [ ] Is message-level streaming (Herdr) enough for the Bayto room, or do we need the headless turn runner for token-level streaming?

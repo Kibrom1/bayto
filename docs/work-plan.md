@@ -69,6 +69,7 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [ ] **M1.13** Check streaming: is message-level output enough for the Bayto room? If not, prototype the headless turn runner (`claude -p --output-format stream-json` through `sbx exec` in the same sandbox).
 - [ ] **M1.14** Check that agent state survives a sandbox stop and start (needed for task-scoped memory).
 - [ ] **M1.15** Security check: agents can't read the real API key, the network allowlist blocks other domains, and role tool permissions actually deny what they should.
+- [ ] **M1.16** Live-credentials smoke test of `AnthropicHandRaiseScorer` against a real Anthropic API call (sbx/live-credentials gated, same framing as the M1.10-M1.15 skip note below): today it is only verified against canned tool_use fixtures, with no real evidence of live turn-order quality, latency or cost; this is a non-blocking follow-up from the 2026-10-04 conditional floor-policy decision in docs/decisions.md, not required before raise-hand ships as a mode default.
 
 **M1.15 static review (2026-10-04):** (1) tool permissions were not enforced in the dev-team sandbox (`tools.json` never shipped, `start-team` skipped the flags); fixed in PR #46, but it needs a relaunch via `dev-team/run.sh` and a live check on the Mac. (2) `kits/bayto-team/spec.yaml` uses exact hostnames; `github.com` is broad, so repo scoping rests on the GitHub credential's own permissions. `api.github.com` is not in the kit allowlist because the product team sandbox does not use `gh`; the dev-team sandbox's own policy is set on the host with `sbx policy`. Confirm there whether matching is exact-host or suffix. (3) The Anthropic key is proxy-managed and not set as an env var for claude seats. `GH_TOKEN` is set in every seat's environment in GitHub-token format; confirm on the host whether it is a proxy stand-in or a real token, and whether seats without a push role (qa-tester has full Bash) should have it.
 
@@ -137,8 +138,8 @@ Breakdown drafted by product-owner, reconciled with architect's feasibility/sequ
 
 ## Decisions needed before or during M1
 
-- [ ] Confirm raise-hand as the default floor policy (currently Proposed).
-- [ ] Confirm the `acp/1` protocol direction (currently Proposed).
+- [x] Confirm raise-hand as the default floor policy (currently Proposed) -- see docs/decisions.md (2026-10-04 conditional default).
+- [x] Confirm the `acp/1` protocol direction (decided 2026-10-04).
 - [x] Topology: all agents share one team sandbox per task for now (decided 2026-09-28); per-agent isolation is a later option.
 - [x] Language for `acp` and the orchestrator: Python (decided 2026-09-28), one shared package.
 - [ ] Pricing/billing is out of scope while Bayto runs locally only; revisit if it becomes a hosted product.
