@@ -13,6 +13,10 @@ tar -C "$src" --exclude=.local -cf - . | tar -C "$build" -xf -
 [ ! -d "$src/.local" ] || ln -s "$src/.local" "$build/.local"
 cp "$here/roles/"*.md "$build/chapters/support/roles/"
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
+# The vendored team.tsv ships a stale "claude-haiku" model alias that the Claude CLI rejects outright
+# (every seat fails to start); override it with the real model id, same override principle as
+# dev-team/run.sh's own "cp $gen/team.tsv $build/factory/team.tsv" step.
+printf 'coordinator\tclaude\tanthropic\tclaude-haiku-4-5-20251001\ndeveloper\tclaude\tanthropic\tclaude-haiku-4-5-20251001\nqa\tclaude\tanthropic\tclaude-haiku-4-5-20251001\n' > "$build/factory/team.tsv"
 mkdir -p "$here/runs"
 echo "Topics to paste after start-team:"; head -n1 "$here"/topics/*.txt
 exec "$build/scripts/launch-factory.sh" "$name" "$build/workspace"
