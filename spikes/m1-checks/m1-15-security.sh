@@ -25,7 +25,7 @@ say
 
 # ---------------------------------------------------------------- A: API key
 say "## A. Agents cannot read the real API key"
-a="$(sbx exec -i "$name" bash -lc 'bash -s' <<'EOS' 2>&1
+a="$(sx_script "$name" <<'EOS' 2>&1
 echo "env-var-names: $(env | cut -d= -f1 | grep -iE 'anthropic|claude|api_?key|token|secret' | sort | tr '\n' ' ')"
 echo "env-has-sk-ant: $(env | grep -cE 'sk-ant-[A-Za-z0-9_-]{20,}')"
 n=0; for f in /proc/[0-9]*/environ; do c=$(grep -acE 'sk-ant-[A-Za-z0-9_-]{20,}' "$f" 2>/dev/null); [ "${c:-0}" -gt 0 ] && n=$((n+1)); done
@@ -60,7 +60,7 @@ say
 
 # ---------------------------------------------------------------- C: GH_TOKEN
 say "## C. GH_TOKEN exposure (per running seat)"
-c="$(sbx exec -i "$name" bash -lc 'bash -s' <<'EOS' 2>&1
+c="$(sx_script "$name" <<'EOS' 2>&1
 for d in /proc/[0-9]*; do
   e="$d/environ"; [ -r "$e" ] || continue
   role=$(tr '\0' '\n' < "$e" 2>/dev/null | sed -n 's/^FACTORY_ROLE=//p'); [ -n "$role" ] || continue
@@ -88,7 +88,7 @@ say
 
 # ---------------------------------------------------------------- D: tool permissions
 say "## D. Role tool permissions are enforced"
-d="$(sbx exec -i "$name" bash -lc 'bash -s' <<'EOS' 2>&1
+d="$(sx_script "$name" <<'EOS' 2>&1
 for d in /proc/[0-9]*; do
   [ -r "$d/environ" ] || continue
   role=$(tr '\0' '\n' < "$d/environ" 2>/dev/null | sed -n 's/^FACTORY_ROLE=//p'); [ -n "$role" ] || continue
@@ -109,7 +109,7 @@ if [ "$use_llm" -eq 1 ]; then
   say; say "Behavioural probe: each seat's own flags file is used with \`claude -p\` (Haiku) to try a Write-tool call and a Bash \`touch\`."
   roles="${ROLES:-$(sx "$name" 'ls "$HOME/work/factory/tool-flags" 2>/dev/null' | tr '\n' ' ')}"
   for role in $roles; do
-    res="$(sbx exec -i "$name" bash -lc "bash -s $role" <<'EOS' 2>&1
+    res="$(sx_script "$name" "$role" <<'EOS' 2>&1
 role="$1"; f="$HOME/work/factory/tool-flags/$role"; cd "$HOME/work/app" || exit 3
 mapfile -t flags < "$f"
 w="$PWD/.m115-write-$role.probe"; b="/tmp/.m115-bash-$role.probe"; rm -f "$w" "$b"

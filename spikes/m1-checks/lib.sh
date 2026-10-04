@@ -31,6 +31,15 @@ need_sbx() { command -v sbx >/dev/null || { echo "sbx not found. Run this on the
 # sx NAME 'script' : run a bash -lc script inside the sandbox (stdout+stderr returned).
 sx() { sbx exec "$1" bash -lc "$2" 2>&1; }
 
+# sx_script NAME [ARGS...] < script : run the script on stdin inside the sandbox WITHOUT piping it through `sbx exec -i`.
+# The script travels base64-encoded in the command line and runs from a temp file, so nothing in it can consume the script's
+# own stdin, and its exit status is returned. Used by m1-15 after sections C and D came back empty with `bash -s` over `-i`.
+sx_script() {
+  local n="$1" b; shift
+  b="$(base64 | tr -d '\n')"
+  sbx exec "$n" bash -lc "echo $b | base64 -d > /tmp/.m1-probe.sh; bash /tmp/.m1-probe.sh $*; rc=\$?; rm -f /tmp/.m1-probe.sh; exit \$rc"
+}
+
 now_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
 
 # stop_sandbox NAME : tries SBX_STOP_CMD (default "sbx stop NAME"); if that fails, asks the human to stop it.
