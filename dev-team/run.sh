@@ -41,9 +41,13 @@ grep -q -- 'cp -R "\$chapter/tool-flags"' "$build/chapters/support/launch" \
   || { echo "launch missing the tool-flags transfer"; exit 1; }
 cp "$here/PROMPT.md" "$build/factory/PROMPT.md"
 cp "$gen/team.tsv" "$build/factory/team.tsv"
+sed -i.bak '/^if \[ "\${SESSION:-claude}" = shell \]; then$/i\
+if [ "${SESSION:-}" = none ]; then exit 0; fi' "$build/chapters/support/launch" && rm "$build/chapters/support/launch.bak"
+grep -q 'SESSION:-}" = none' "$build/chapters/support/launch" || { echo "launch missing the SESSION=none patch"; exit 1; }
 cp "$gen/tools.json" "$build/factory/tools.json"
 cp -R "$gen/tool-flags" "$build/factory/tool-flags"
-printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=shell\n' > "$build/factory/chapter.env"
+# SESSION=none creates and prepares the sandbox without attaching a terminal (used by spikes/m1-checks).
+printf 'TASK=wad-102\nMODE=manual\nUSE_ACR=0\nSESSION=%s\n' "${SESSION:-shell}" > "$build/factory/chapter.env"
 # Claude-only, no Pi kit, no ACR kit; no ports.
 cat > "$build/factory/sbxenv.yaml" <<'YML'
 schemaVersion: "1"
@@ -62,6 +66,6 @@ sandboxOptions:
 kits:
   - source: ../chapters/kits/herdr
 YML
-git -C "$repo" switch main >/dev/null 2>&1 || true
+[ -n "${NO_SWITCH:-}" ] || git -C "$repo" switch main >/dev/null 2>&1 || true
 echo "Mounting $repo read-write. Engineers commit to sbx/<task> branches, push them and open PRs (GitHub secret needed, see dev-team/README.md)"
 exec "$build/scripts/launch-factory.sh" "$name" "$repo"
