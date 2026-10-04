@@ -156,6 +156,13 @@ class LocalSbxSandboxProvider(SandboxProvider):
         # or fires automatically as a post-create hook from team.sbxenv.yaml
         await self._run(["exec", sandbox.name, "start-team"])
 
+    async def restart_team(self, sandbox: SandboxInfo) -> None:
+        # M1.14 (live, 2026-10-04): files and transcripts survive a stop/start, processes do not,
+        # and the leftover `team-started` marker makes `start-team` a no-op. Remove it, then start
+        # the team again; seats re-ack their briefs. Whether they pick up their earlier
+        # conversation (claude --resume) is NOT verified yet.
+        await self._run(["exec", sandbox.name, "bash", "-lc", "rm -f $HOME/work/factory/team-started; start-team"])
+
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
         cmd = "crew-notify-fallback" if fallback else "crew-notify"
         await self._run(["exec", sandbox.name, cmd, role])

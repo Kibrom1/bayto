@@ -111,6 +111,18 @@ async def test_start_team_builds_expected_argv():
     assert runner.calls == [["exec", "sbx-wad-102", "start-team"]]
 
 
+async def test_restart_team_clears_the_team_started_marker_before_start_team():
+    runner = FakeSbxRunner()
+    provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
+    sandbox = _fake_info(name="sbx-wad-102")
+
+    await provider.restart_team(sandbox)
+
+    assert runner.calls == [[
+        "exec", "sbx-wad-102", "bash", "-lc", "rm -f $HOME/work/factory/team-started; start-team",
+    ]]
+
+
 async def test_wake_role_builds_expected_argv():
     runner = FakeSbxRunner()
     provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)

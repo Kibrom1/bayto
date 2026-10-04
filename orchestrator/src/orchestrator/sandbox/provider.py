@@ -70,6 +70,15 @@ class SandboxProvider(abc.ABC):
     async def start_team(self, sandbox: SandboxInfo) -> None:
         """Start one session per roles/team.tsv participant inside the sandbox."""
 
+    async def restart_team(self, sandbox: SandboxInfo) -> None:
+        """Bring the team back after stop() + a restart of the sandbox (M1.14).
+
+        A stop keeps files, the factory dir and Claude transcripts but kills every herdr and
+        claude process, and leaves the factory's `team-started` marker behind, so a plain
+        start_team() would print 'Team already started' and do nothing. Not abstract: the
+        default is start_team(), correct for a sandbox that has never run a team."""
+        await self.start_team(sandbox)
+
     @abc.abstractmethod
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
         """Notify a single role it has a new assignment. If fallback=True, use a local model. """
