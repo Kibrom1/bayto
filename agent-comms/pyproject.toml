@@ -11,6 +11,7 @@ dev = ["pytest>=8", "jsonschema>=4.20"]
 [project.scripts]
 acp = "acp.cli:main"
 handoff = "acp.handoff_compat:main"
+crew-notify-fallback = "acp.crew_notify_fallback:main"
 
 [build-system]
 requires = ["hatchling"]

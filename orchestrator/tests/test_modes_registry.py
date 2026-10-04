@@ -65,5 +65,5 @@ def test_resolve_mode_parses_the_real_brainstorm_mode(monkeypatch):
     monkeypatch.delenv("BAYTO_MODES_DIR", raising=False)
     mode = resolve_mode("brainstorm")
     assert mode.floor_policy == "round-robin"
-    assert mode.stop_rules["max_rounds"] == 4
+    assert mode.stop_rules["max_rounds"] == 6
     assert mode.synthesis_prompt_hint and "cluster" in mode.synthesis_prompt_hint.lower()

@@ -183,8 +183,14 @@ class Turn(Base):
 
 
 class Artifact(Base):
-    # ... (existing Artifact class)
-    pass
+    __tablename__ = "artifact"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("session.id"), nullable=False)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    content_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    source_turn_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
+
 
 class UsageLedger(Base):
     """M6: durable ledger of usage per session for auditing and reporting."""

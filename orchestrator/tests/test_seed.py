@@ -83,7 +83,7 @@ async def test_seed_modes_inserts_all_three_matching_the_real_yaml_files(live_se
     assert by_name["open-chat"].stop_rules_json["max_rounds"] is None
     assert by_name["debate"].turn_policy == "round-robin"
     assert by_name["debate"].stop_rules_json["max_rounds"] == 6
-    assert by_name["brainstorm"].stop_rules_json["max_rounds"] == 4
+    assert by_name["brainstorm"].stop_rules_json["max_rounds"] == 6
     assert all(r.phases_json == {} for r in rows)
     assert all(r.output_schema is None for r in rows)
 
