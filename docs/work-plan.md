@@ -39,8 +39,8 @@ Reuse the workshop almost unchanged to prove a Claude debate works inside SBX an
 - [x] **M0.2** Write role briefs: `moderator.md`, `advocate.md`, `skeptic.md`, keeping the workshop rules (read with `handoff read`, send with `crew send`, end the turn after sending, never poll).
 - [x] **M0.3** Map roles onto the workshop's fixed role names (coordinator = moderator, developer = advocate, qa = skeptic), since `handoff` only accepts those.
 - [x] **M0.4** `PROMPT.md`: one debate topic plus the rules (3 rounds, then moderator summary to `human`).
-- [ ] **M0.5** Run three topics; save transcripts (`messages/*.json`) and the summary under `spikes/m0-debate/runs/`.
-- [ ] **M0.6** Write findings: token use per round, failure modes (echo, dominance, stalls), wake-up reliability.
+- [x] **M0.5** Run three topics; save transcripts (`messages/*.json`) and the summary under `spikes/m0-debate/runs/`. Done 2026-10-04 (run_id `bayto-m0`, attempt 1, all 3 topics).
+- [x] **M0.6** Write findings: token use per round, failure modes (echo, dominance, stalls), wake-up reliability. Done 2026-10-04 -- see `spikes/m0-debate/FINDINGS.md`.
 
 **Done when:** `crew watch` shows a 3-round debate and a moderator summary for 3 topics, and findings are written.
 
