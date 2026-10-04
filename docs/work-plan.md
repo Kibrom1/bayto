@@ -4,7 +4,7 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M3 are broken down to the task level; M4–M6 stay at deliverable level and get detailed when M3 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Status (2026-10-04):** M2–M6 are built and merged on `main` (M3.12 cost meter included). Open: M0.5/M0.6 and M1.10–M1.15, which need the host's `sbx` CLI, plus the decisions at the bottom. **Next up:** run M0.5 and the M1.11–M1.14 measurements on the Mac, then the live checks for M1.15 (see its note below), then the MVP exit test.
+**Status (2026-10-04):** M2–M6 are built and merged on `main` (M3.12 cost meter included). Floor-policy and acp/1 protocol direction confirmed 2026-10-04 (see Decisions section); only the pricing/billing decision remains open there. Open: M0.5/M0.6 and M1.10–M1.16, which need the host's `sbx` CLI. **Next up:** run M0.5 and the M1.11–M1.14 measurements on the Mac, then the live checks for M1.15 (see its note below), then the MVP exit test.
 
 ## Timeline
 
