@@ -4,7 +4,7 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M3 are broken down to the task level; M4–M6 stay at deliverable level and get detailed when M3 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Next up:** M3.12 — Cost meter.
+**Status (2026-10-04):** M2–M6 are built and merged on `main` (M3.12 cost meter included). Open: M0.5/M0.6 and M1.10–M1.15, which need the host's `sbx` CLI, plus the decisions at the bottom. **Next up:** run M0.5 and the M1.11–M1.14 measurements on the Mac, then the live checks for M1.15 (see its note below), then the MVP exit test.
 
 ## Timeline
 
@@ -17,7 +17,7 @@ This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) 
 | M3 | Bayto room UI | 3 weeks | M2 |
 | M4 | Bayto MCP server via SBX gateway | 1–2 weeks | M2 |
 | M5 | Human seat + task-scoped memory | 2 weeks | M3, M4 |
-| M6 | Hardening + usage metering (local) | 2–3 weeks | M5 | [x] Done
+| M6 | Hardening + usage metering (local) | 2–3 weeks | M5 |
 
 MVP exit: 5 real tasks run end to end, artifacts kept, judged better than single-agent answers.
 
@@ -69,6 +69,8 @@ Keep the workshop topology (one sandbox, a Herdr session per agent) but replace 
 - [ ] **M1.13** Check streaming: is message-level output enough for the Bayto room? If not, prototype the headless turn runner (`claude -p --output-format stream-json` through `sbx exec` in the same sandbox).
 - [ ] **M1.14** Check that agent state survives a sandbox stop and start (needed for task-scoped memory).
 - [ ] **M1.15** Security check: agents can't read the real API key, the network allowlist blocks other domains, and role tool permissions actually deny what they should.
+
+**M1.15 static review (2026-10-04):** (1) tool permissions were not enforced in the dev-team sandbox (`tools.json` never shipped, `start-team` skipped the flags); fixed in PR #46, but it needs a relaunch via `dev-team/run.sh` and a live check on the Mac. (2) `kits/bayto-team/spec.yaml` uses exact hostnames; `github.com` is broad, so repo scoping rests on the GitHub credential's own permissions. `api.github.com` is not in the kit allowlist because the product team sandbox does not use `gh`; the dev-team sandbox's own policy is set on the host with `sbx policy`. Confirm there whether matching is exact-host or suffix. (3) The Anthropic key is proxy-managed and not set as an env var for claude seats. `GH_TOKEN` is set in every seat's environment in GitHub-token format; confirm on the host whether it is a proxy stand-in or a real token, and whether seats without a push role (qa-tester has full Bash) should have it.
 
 **M1.10–M1.15 are skipped for now (decided 2026-09-29):** each needs the host's `sbx` CLI (`sbx env create`/`sbx env rm`, `sbx ls`) to actually create/measure/tear down a team sandbox, which is not available inside this dev-team sandbox. They stay unchecked until run from a host with `sbx`. M2 does not depend on them landing first.
 
