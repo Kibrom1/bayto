@@ -15,6 +15,13 @@ begin m1-15
 
 say "Sandbox: $name"; say; say '## Policy as set on the host (`sbx policy ls`)'; say '```'
 sbx policy ls 2>&1 | tee -a "$OUT"; say '```'; say
+sbx policy ls 2>/dev/null | awk '$2=="local" && $3=="all"{f=1} END{exit !f}' && \
+  info "a host-wide local policy (SOURCE=local, APPLIES TO=all) is active and is merged with the kit policy: a 'should be blocked' FAIL in section B may come from that policy rather than kits/bayto-team/spec.yaml; check it with sbx policy ls before changing the kit"
+# Sections C and D read the running claude seats; with no team started they have nothing to check.
+nseats="$(sx "$name" 'n=0; for d in /proc/[0-9]*; do tr "\0" "\n" < $d/environ 2>/dev/null | grep -q "^FACTORY_ROLE=" && n=$((n+1)); done; echo $n' | tail -n1)"
+case "$nseats" in ''|*[!0-9]*) fail "could not count running seats in $name (sbx exec said: $nseats)"; nseats=0;; esac
+[ "$nseats" -gt 0 ] || fail "no process with FACTORY_ROLE is running in $name: run start-team in the sandbox first, or sections C and D have nothing to check"
+say
 
 # ---------------------------------------------------------------- A: API key
 say "## A. Agents cannot read the real API key"
@@ -71,7 +78,9 @@ EOS
 hosthash=""
 if command -v gh >/dev/null && t="$(env -u GH_TOKEN -u GITHUB_TOKEN gh auth token 2>/dev/null)" && [ -n "$t" ]; then hosthash="$(printf %s "$t" | shasum -a 256 | cut -d' ' -f1)"; unset t; fi
 say '```'; printf '%s\n' "$c" | awk -F'|' -v h="$hosthash" '{ m="-"; if ($3=="set" && h!="") m=($5==h?"MATCHES-HOST-TOKEN":"differs-from-host-token"); print $1" "$2" "$3" "$4" "m }' | tee -a "$OUT"; say '```'
-if [ -z "$hosthash" ]; then info "no 'gh auth token' on the host to compare against; if GH_TOKEN is set above, compare by hand"
+if ! printf '%s\n' "$c" | grep -q '^shell|GH_TOKEN|'; then fail "section C got no output from the sandbox (sbx exec said: $(printf '%s' "$c" | tr '\n' ' ' | cut -c1-200)); the GH_TOKEN check did not run"
+elif [ "$nseats" -eq 0 ]; then info "no running seats, so only the sandbox shell's GH_TOKEN was checked; rerun after start-team"
+elif [ -z "$hosthash" ]; then info "no 'gh auth token' on the host to compare against; if GH_TOKEN is set above, compare by hand"
 elif printf '%s\n' "$c" | awk -F'|' -v h="$hosthash" '$3=="set" && $5==h {f=1} END{exit !f}'; then fail "a seat holds your REAL GitHub token (matches 'gh auth token'): it is not a proxy stand-in"
 else pass "no seat holds a token equal to your host 'gh auth token' (any set GH_TOKEN is a stand-in)"; fi
 printf '%s\n' "$c" | awk -F'|' '$2=="GH_TOKEN" && $3=="set" && $1!="shell" {print $1}' | tr '\n' ' ' | { read -r roles; [ -n "$roles" ] && info "seats with GH_TOKEN set: $roles. Decide whether read-only seats (qa-tester, researcher...) should have it; the fix is a per-seat env in start-team" || true; }
