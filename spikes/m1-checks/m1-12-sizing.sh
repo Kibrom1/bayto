@@ -16,7 +16,7 @@ say "Sizes tested: $counts. Sandbox spec from dev-team/run.sh: $(grep -E '^\s+(c
 say "| agents | create+prepare (s) | start-team (s) | warm exec (ms) | RAM idle base (MB) | RAM after team (MB) | RAM peak under task (MB) | MB/agent | CPU avg during task (%) | assignment -> first message (s) |"
 say "|---|---|---|---|---|---|---|---|---|---|"
 
-# Runs inside the sandbox (first message = first one NOT from the human; the submission itself is a message): samples memory every 2s and CPU over the window while a task is submitted.
+# Runs inside the sandbox. The probe asks the coordinator for one handoff message, because a reply typed in its terminal never becomes a factory message (the first run timed out for that reason). First message = first one NOT from the human; the submission itself is a message): samples memory every 2s and CPU over the window while a task is submitted.
 read -r -d '' PROBE <<'EOS'
 used() { free -m | awk '/^Mem:/{print $3}'; }
 cpu() { awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8, $5+$6}' /proc/stat; }
@@ -24,7 +24,7 @@ export PATH="$HOME/work/bin:$HOME/.local/bin:$PATH" FACTORY_DIR="$HOME/work/fact
 msgs() { cat "$FACTORY_DIR"/messages/*.json 2>/dev/null | jq -s '[.[] | select(.from != "human")] | length' 2>/dev/null || echo 0; }
 before=$(msgs); read -r t0 i0 <<<"$(cpu)"; start=$(date +%s%N)
 ( peak=0; while :; do u=$(used); [ "$u" -gt "$peak" ] && peak=$u; echo "$peak" > /tmp/m112-peak; sleep 2; done ) & sampler=$!
-crew ask "Sizing probe, not real work. Do not start any task. Reply to the user with one short note that says 'ack' and stop." </dev/null >/dev/null 2>&1
+crew ask "Sizing probe, not real work. Your only action: run  handoff send --to backend-engineer --from coordinator --kind assignment --body ack  and then stop. Do not read or change any files." </dev/null >/dev/null 2>&1
 first=""
 for _ in $(seq 1 1500); do                       # up to 300s at 0.2s
   if [ "$(msgs)" -gt "$before" ]; then first=$(( ($(date +%s%N) - start) / 1000000 )); break; fi
@@ -45,10 +45,11 @@ for n in $counts; do
   fi
   create_s=$(( ($(now_ms) - t0) / 1000 ))
   t0=$(now_ms); sx "$sb" true >/dev/null; warm_ms=$(( $(now_ms) - t0 ))
-  base=$(sx "$sb" "free -m | awk '/^Mem:/{print \$3}'" | tail -n1)
+  mem3() { sx "$sb" 'for i in 1 2 3; do free -m | awk "/^Mem:/{print \$3}"; sleep 3; done' | grep -E '^[0-9]+$' | sort -n | sed -n 2p; }
+  base=$(mem3)
   t0=$(now_ms); ensure_team "$sb" >&2; team_s=$(( ($(now_ms) - t0) / 1000 ))
   sleep 30   # settle before the idle reading
-  after=$(sx "$sb" "free -m | awk '/^Mem:/{print \$3}'" | tail -n1)
+  after=$(mem3)
   out="$(sbx exec -i "$sb" bash -lc 'bash -s' <<<"$PROBE" 2>&1 | tail -n1)"
   first_ms=$(printf '%s' "$out" | sed -n 's/.*first_ms=\([0-9A-Z]*\).*/\1/p'); peak=$(printf '%s' "$out" | sed -n 's/.*peak_mb=\([0-9]*\).*/\1/p'); cpu=$(printf '%s' "$out" | sed -n 's/.*cpu_pct=\([0-9]*\).*/\1/p')
   per=$(( (${after:-0} - ${base:-0}) / n ))
