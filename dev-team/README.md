@@ -2,7 +2,9 @@
 
 A team of role seats (default: coordinator, product-owner, researcher, architect, backend-engineer, qa-tester), running in one Docker Sandbox, implements work-plan tasks in THIS repo
 (mounted read-write). Chosen policy: engineer seats commit on `sbx/<task>` branches and, after QA passes, push the branch and open a PR from inside the sandbox
-(the sandbox proxy injects the GitHub credential over HTTPS); you review and merge on GitHub. Agents never push `main`, force-push or merge.
+(the sandbox proxy injects the GitHub credential over HTTPS); `code-reviewer`, if seated, reviews it and may merge it itself once every gate in `roles/code-reviewer.md` holds,
+otherwise it reports "ready for human merge" and you review and merge on GitHub -- that includes every PR touching `vendor/`, secrets, `.github/`, `.claude/`, `AGENTS.md`,
+`roles/`, `dev-team/`, `scripts/` or `docs/decisions.md` history, which `code-reviewer` never merges itself. Agents never push `main` or force-push.
 
 No GitHub token is stored in the VM: the proxy adds it to HTTPS requests. Needs the host secret once: `sbx secret set github --sandbox bayto-dev -t "$(gh auth token)"`.
 `origin` is usually an SSH URL, so agents push to the `https://github.com/<owner>/<repo>.git` form (see `AGENTS.md`).

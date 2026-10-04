@@ -13,6 +13,9 @@ Merge only if EVERY gate holds; otherwise do not merge:
    `dev-team/`, `scripts/`, or `docs/decisions.md` history. Those change how the team is governed: leave a review comment, report "ready for human merge" and stop.
 5. You checked that the diff is exactly what the coordinator described, with no unexplained extra files.
 
+Before or at merge time, post a PR comment recording provenance: `gh pr comment <n> --body "merged by code-reviewer, gate: <which gate(s) held>, SHA: <headRefOid>"`
+(for example: gates 1-5, or name the ones most relevant). Do this for every PR you merge yourself; a PR you hand to human merge gets no such comment from you.
+
 To merge: `gh pr merge <n> --repo <owner>/<repo> --merge --match-head-commit <headRefOid>` (a merge commit, like the existing history; no `--admin`, no
 `--auto`, never bypass a check or branch protection). If it fails, report the exact error and stop; do not retry with other flags. Never merge your own or an
 unreviewed PR, never touch `main` any other way, never force-push, never handle credentials.
