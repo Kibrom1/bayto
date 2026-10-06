@@ -48,20 +48,21 @@ for n in $counts; do
   t0=$(now_ms); sx "$sb" true >/dev/null; warm_ms=$(( $(now_ms) - t0 ))
   mem3() { sx "$sb" 'for i in 1 2 3; do free -m | awk "/^Mem:/{print \$3}"; sleep 3; done' | grep -E '^[0-9]+$' | sort -n | sed -n 2p; }
   base=$(mem3)
-  t0=$(now_ms); ensure_team "$sb" >&2; team_s=$(( ($(now_ms) - t0) / 1000 ))
+  t0=$(now_ms); hold_team "$sb" >&2; team_s=$(( ($(now_ms) - t0) / 1000 ))
   sleep 30   # settle before the idle reading
   after=$(mem3)
   out="$(sbx exec -i -w "$REPO" "$sb" bash -lc 'bash -s' <<<"$PROBE" 2>&1 | tail -n1)"
   first_ms=$(printf '%s' "$out" | sed -n 's/.*first_ms=\([0-9A-Z]*\).*/\1/p'); peak=$(printf '%s' "$out" | sed -n 's/.*peak_mb=\([0-9]*\).*/\1/p'); cpu=$(printf '%s' "$out" | sed -n 's/.*cpu_pct=\([0-9]*\).*/\1/p')
   per=$(( (${after:-0} - ${base:-0}) / n ))
   if [ "${first_ms:-NONE}" = NONE ]; then   # dump what the seats are doing before this sandbox is removed
-    say ""; say "Diagnostics for $n agents (no first message): ready markers, herdr agents, herdr log tail"; say '```'
+    say ""; say "Diagnostics for $n agents (no first message): ready markers, herdr agents, herdr log tail (the team was started under a held-open exec)"; say '```'
     sbx exec -w "$REPO" "$sb" bash -lc 'ls "$HOME/work/factory/ready" 2>&1; echo ---; herdr agent list 2>&1 | head -c 2500; echo; echo ---; tail -n 15 "$HOME/work/factory/evidence/herdr.log" 2>&1; echo --- herdr-server.log; tail -n 40 "$HOME/.config/herdr/herdr-server.log" 2>&1; echo --- processes; ps -eo pid,etime,args 2>&1 | grep -E "herdr|claude" | grep -v grep | cut -c1-160 | head -20; echo --- team-started; ls -l "$HOME/work/factory/team-started" 2>&1; echo --- memory; free -m | head -2; dmesg 2>/dev/null | grep -i -E "oom|killed process" | tail -5' 2>&1 | tee -a "$OUT"
     say '```'
   fi
   first_s="NONE (300s timeout)"; [ "${first_ms:-NONE}" != NONE ] && first_s="$(python3 -c "print(round($first_ms/1000,1))")"
   say "| $n | $create_s | $team_s | $warm_ms | ${base:-?} | ${after:-?} | ${peak:-?} | $per | ${cpu:-?} | $first_s |"
   last_peak="${peak:-0}"; last_n="$n"
+  release_team "$sb"
   echo "== removing $sb" >&2
   sbx env rm "$envfile" --env-arg "name=$sb" >&2 || say "(!) removing $sb failed: run: sbx env rm $envfile --env-arg name=$sb"
 done
