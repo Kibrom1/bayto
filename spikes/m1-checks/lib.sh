@@ -56,4 +56,7 @@ stop_sandbox() {
 # Run from the app directory: start-team opens every seat in the CURRENT directory, and only $REPO (the mounted repo, same path inside
 # the sandbox) is trusted by `prepare`. From the default home directory the seats stop at Claude's trust / outside-directory prompt and
 # never acknowledge (the 3- and 5-agent M1.12 runs: start-team took its full timeouts, RAM barely moved, no message in 300 s).
-ensure_team() { sbx exec -w "$REPO" "$1" bash -lc 'start-team' 2>&1 | tail -n 3; }
+# Suspected (M1.12 diagnostics, 2026-10-06): everything start-team launches (herdr server + the claude seats) dies when this `sbx exec`
+# returns, so the team is gone before the probe runs. setsid --wait puts start-team in its own session so it can outlive the exec.
+# Unproven: if the diagnostics still say "server_not_running", sbx tears down every process of the exec and a different approach is needed.
+ensure_team() { sbx exec -w "$REPO" "$1" bash -lc 'if command -v setsid >/dev/null 2>&1; then setsid --wait bash -lc start-team; else start-team; fi' 2>&1 | tail -n 3; }
