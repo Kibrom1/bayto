@@ -129,7 +129,7 @@ Breakdown drafted by product-owner, reconciled with architect's feasibility/sequ
 | Milestone | Deliverables |
 | --- | --- |
 | M4 Bayto MCP server | `mcp/bayto-mcp` with `get_task_context`, `request_human`, `cite_source`; attached through the SBX MCP gateway; per-participant identity |
-| M5 Human seat + memory | `decision-request` flow in the UI; pause/stop the team sandbox while waiting; team sandbox kept for the task so each role resumes its own Claude session; second session support |
+| M5 Human seat + memory | `decision-request` flow in the UI; pausing a session keeps the team sandbox running (it stops only on an explicit user stop or when the task ends, decided 2026-10-05); team sandbox kept for the task so each role resumes its own Claude session; second session support |
 | M6 Hardening + usage metering | Team sandbox sizing and agent cap from M1 measurements; cleanup of orphaned sandboxes on restart (`sbx ls` reconcile); token budgets per session; usage ledger and audit trail |
 
 ## Working agreements
