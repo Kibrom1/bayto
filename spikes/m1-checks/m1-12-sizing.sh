@@ -7,8 +7,9 @@ set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 need_sbx
 counts="${1:-3 5 7}"
+[ "$(printf '%s\n' $counts | sort -n | tail -n1)" -le 8 ] || { echo "roster_for has 8 roles: use counts of 8 or fewer" >&2; exit 2; }
 roster_for() {  # first N of this fixed order; coordinator always first (first contact)
-  local all=(coordinator backend-engineer qa-tester architect code-reviewer researcher frontend-engineer) i
+  local all=(coordinator backend-engineer qa-tester architect code-reviewer researcher frontend-engineer product-owner) i
   for ((i = 0; i < $1; i++)); do echo "${all[i]}"; done
 }
 begin m1-12
@@ -53,6 +54,11 @@ for n in $counts; do
   out="$(sbx exec -i -w "$REPO" "$sb" bash -lc 'bash -s' <<<"$PROBE" 2>&1 | tail -n1)"
   first_ms=$(printf '%s' "$out" | sed -n 's/.*first_ms=\([0-9A-Z]*\).*/\1/p'); peak=$(printf '%s' "$out" | sed -n 's/.*peak_mb=\([0-9]*\).*/\1/p'); cpu=$(printf '%s' "$out" | sed -n 's/.*cpu_pct=\([0-9]*\).*/\1/p')
   per=$(( (${after:-0} - ${base:-0}) / n ))
+  if [ "${first_ms:-NONE}" = NONE ]; then   # dump what the seats are doing before this sandbox is removed
+    say ""; say "Diagnostics for $n agents (no first message): ready markers, herdr agents, herdr log tail"; say '```'
+    sbx exec -w "$REPO" "$sb" bash -lc 'ls "$HOME/work/factory/ready" 2>&1; echo ---; herdr agent list 2>&1 | head -c 2500; echo; echo ---; tail -n 15 "$HOME/work/factory/evidence/herdr.log" 2>&1' 2>&1 | tee -a "$OUT"
+    say '```'
+  fi
   first_s="NONE (300s timeout)"; [ "${first_ms:-NONE}" != NONE ] && first_s="$(python3 -c "print(round($first_ms/1000,1))")"
   say "| $n | $create_s | $team_s | $warm_ms | ${base:-?} | ${after:-?} | ${peak:-?} | $per | ${cpu:-?} | $first_s |"
   last_peak="${peak:-0}"; last_n="$n"
