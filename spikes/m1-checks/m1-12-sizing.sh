@@ -50,7 +50,7 @@ for n in $counts; do
   t0=$(now_ms); ensure_team "$sb" >&2; team_s=$(( ($(now_ms) - t0) / 1000 ))
   sleep 30   # settle before the idle reading
   after=$(mem3)
-  out="$(sbx exec -i "$sb" bash -lc 'bash -s' <<<"$PROBE" 2>&1 | tail -n1)"
+  out="$(sbx exec -i -w "$REPO" "$sb" bash -lc 'bash -s' <<<"$PROBE" 2>&1 | tail -n1)"
   first_ms=$(printf '%s' "$out" | sed -n 's/.*first_ms=\([0-9A-Z]*\).*/\1/p'); peak=$(printf '%s' "$out" | sed -n 's/.*peak_mb=\([0-9]*\).*/\1/p'); cpu=$(printf '%s' "$out" | sed -n 's/.*cpu_pct=\([0-9]*\).*/\1/p')
   per=$(( (${after:-0} - ${base:-0}) / n ))
   first_s="NONE (300s timeout)"; [ "${first_ms:-NONE}" != NONE ] && first_s="$(python3 -c "print(round($first_ms/1000,1))")"

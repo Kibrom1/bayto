@@ -53,4 +53,7 @@ stop_sandbox() {
 }
 
 # ensure_team NAME : start-team is idempotent (exits 0 if team-started exists).
-ensure_team() { sx "$1" 'start-team' | tail -n 3; }
+# Run from the app directory: start-team opens every seat in the CURRENT directory, and only $REPO (the mounted repo, same path inside
+# the sandbox) is trusted by `prepare`. From the default home directory the seats stop at Claude's trust / outside-directory prompt and
+# never acknowledge (the 3- and 5-agent M1.12 runs: start-team took its full timeouts, RAM barely moved, no message in 300 s).
+ensure_team() { sbx exec -w "$REPO" "$1" bash -lc 'start-team' 2>&1 | tail -n 3; }
