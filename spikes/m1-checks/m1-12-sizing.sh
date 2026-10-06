@@ -56,7 +56,7 @@ for n in $counts; do
   per=$(( (${after:-0} - ${base:-0}) / n ))
   if [ "${first_ms:-NONE}" = NONE ]; then   # dump what the seats are doing before this sandbox is removed
     say ""; say "Diagnostics for $n agents (no first message): ready markers, herdr agents, herdr log tail"; say '```'
-    sbx exec -w "$REPO" "$sb" bash -lc 'ls "$HOME/work/factory/ready" 2>&1; echo ---; herdr agent list 2>&1 | head -c 2500; echo; echo ---; tail -n 15 "$HOME/work/factory/evidence/herdr.log" 2>&1' 2>&1 | tee -a "$OUT"
+    sbx exec -w "$REPO" "$sb" bash -lc 'ls "$HOME/work/factory/ready" 2>&1; echo ---; herdr agent list 2>&1 | head -c 2500; echo; echo ---; tail -n 15 "$HOME/work/factory/evidence/herdr.log" 2>&1; echo --- herdr-server.log; tail -n 40 "$HOME/.config/herdr/herdr-server.log" 2>&1; echo --- processes; ps -eo pid,etime,args 2>&1 | grep -E "herdr|claude" | grep -v grep | cut -c1-160 | head -20; echo --- team-started; ls -l "$HOME/work/factory/team-started" 2>&1; echo --- memory; free -m | head -2; dmesg 2>/dev/null | grep -i -E "oom|killed process" | tail -5' 2>&1 | tee -a "$OUT"
     say '```'
   fi
   first_s="NONE (300s timeout)"; [ "${first_ms:-NONE}" != NONE ] && first_s="$(python3 -c "print(round($first_ms/1000,1))")"
