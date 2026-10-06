@@ -13,7 +13,7 @@ roster_for() {  # first N of this fixed order; coordinator always first (first c
   for ((i = 0; i < $1; i++)); do echo "${all[i]}"; done
 }
 begin m1-12
-say "Sizes tested: $counts. Sandbox spec from dev-team/run.sh: $(grep -E '^\s+(cpus|memory):' "$REPO/dev-team/run.sh" | tr -s ' ' | tr '\n' ' ')"; say
+say "Sizes tested: $counts. Sandbox spec: cpus ${SBX_CPUS:-4}, memory ${SBX_MEMORY:-8g} (override with SBX_CPUS / SBX_MEMORY; run.sh default is 4 / 8g)"; say
 say "| agents | create+prepare (s) | start-team (s) | warm exec (ms) | RAM idle base (MB) | RAM after team (MB) | RAM peak under task (MB) | MB/agent | CPU avg during task (%) | assignment -> first message (s) |"
 say "|---|---|---|---|---|---|---|---|---|---|"
 
@@ -33,7 +33,7 @@ for _ in $(seq 1 1500); do                       # up to 300s at 0.2s
 done
 sleep 20                                         # let the team settle so the peak includes follow-on turns
 read -r t1 i1 <<<"$(cpu)"; kill "$sampler" 2>/dev/null
-echo "first_ms=${first:-NONE} peak_mb=$(cat /tmp/m112-peak) cpu_pct=$(awk -v t0=$t0 -v t1=$t1 -v i0=$i0 -v i1=$i1 'BEGIN{d=t1-t0; printf "%.0f", d>0 ? 100*(d-(i1-i0))/d : 0}')"
+echo "first_ms=${first:-NONE} peak_mb=$(cat /tmp/m112-peak) cpu_pct=$(awk -v a=$t0 -v b=$t1 -v c=$i0 -v e=$i1 'BEGIN{d=b-a; if (d>0) printf "%d", 100*(d-(e-c))/d; else printf "0"}') cpu_raw=$t0,$t1,$i0,$i1"
 EOS
 
 for n in $counts; do
@@ -52,7 +52,7 @@ for n in $counts; do
   sleep 30   # settle before the idle reading
   after=$(mem3)
   out="$(sbx exec -i -w "$REPO" "$sb" bash -lc 'bash -s' <<<"$PROBE" 2>&1 | tail -n1)"
-  first_ms=$(printf '%s' "$out" | sed -n 's/.*first_ms=\([0-9A-Z]*\).*/\1/p'); peak=$(printf '%s' "$out" | sed -n 's/.*peak_mb=\([0-9]*\).*/\1/p'); cpu=$(printf '%s' "$out" | sed -n 's/.*cpu_pct=\([0-9]*\).*/\1/p')
+  first_ms=$(printf '%s' "$out" | sed -n 's/.*first_ms=\([0-9A-Z]*\).*/\1/p'); peak=$(printf '%s' "$out" | sed -n 's/.*peak_mb=\([0-9]*\).*/\1/p'); cpu=$(printf '%s' "$out" | sed -n 's/.*cpu_pct=\(-\{0,1\}[0-9]*\).*/\1/p'); cpuraw=$(printf '%s' "$out" | sed -n 's/.*cpu_raw=\([0-9,]*\).*/\1/p')
   per=$(( (${after:-0} - ${base:-0}) / n ))
   if [ "${first_ms:-NONE}" = NONE ]; then   # dump what the seats are doing before this sandbox is removed
     say ""; say "Diagnostics for $n agents (no first message): ready markers, herdr agents, herdr log tail (the team was started under a held-open exec)"; say '```'
@@ -61,6 +61,7 @@ for n in $counts; do
   fi
   first_s="NONE (300s timeout)"; [ "${first_ms:-NONE}" != NONE ] && first_s="$(python3 -c "print(round($first_ms/1000,1))")"
   say "| $n | $create_s | $team_s | $warm_ms | ${base:-?} | ${after:-?} | ${peak:-?} | $per | ${cpu:-?} | $first_s |"
+  [ -n "${cpu:-}" ] || say "(cpu parse failed for $n; raw probe line: $out)"
   last_peak="${peak:-0}"; last_n="$n"
   release_team "$sb"
   echo "== removing $sb" >&2
