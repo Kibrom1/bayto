@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ConfirmDialog } from '../components/Dialog'
 import { Link, useParams } from 'react-router-dom'
 import {
   getAgentTemplates,
@@ -180,7 +181,6 @@ export function BaytoRoom() {
           </div>
         </div>
         <div className="room-actions">
-          <Link className="btn" to="/">Tasks</Link>
           {paused ? (
             <button type="button" className="btn primary" onClick={() => run(() => resumeSession(sessionId!), 'Session resumed')}>Resume</button>
           ) : (
@@ -191,11 +191,15 @@ export function BaytoRoom() {
       </header>
 
       {confirmStop && (
-        <div className="confirm-bar" role="alertdialog" aria-label="Confirm end session">
-          <span>End the session and write the final synthesis? This can't be undone.</span>
-          <button type="button" className="btn danger" onClick={() => { setConfirmStop(false); run(() => stopSession(sessionId!), 'Session ending…') }}>End session</button>
-          <button type="button" className="btn" onClick={() => setConfirmStop(false)}>Keep going</button>
-        </div>
+        <ConfirmDialog
+          title="End session and synthesize?"
+          message="The moderator will stop the discussion and write the final synthesis. This can't be undone."
+          confirmLabel="End session"
+          cancelLabel="Keep going"
+          danger
+          onCancel={() => setConfirmStop(false)}
+          onConfirm={() => { setConfirmStop(false); run(() => stopSession(sessionId!), 'Session ending…') }}
+        />
       )}
       {notice && <div className={`notice${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</div>}
 

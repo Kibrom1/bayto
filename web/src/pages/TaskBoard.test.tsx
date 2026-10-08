@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TaskBoard } from './TaskBoard'
 
@@ -44,15 +45,14 @@ describe('TaskBoard', () => {
   it('lists tasks from GET /tasks with status, last session and output artifact', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(TASKS))
 
-    render(<TaskBoard />)
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
 
     expect(await screen.findByText('Write a launch memo')).toBeInTheDocument()
-    expect(screen.getByText('completed')).toBeInTheDocument()
-    expect(screen.getByText('s1')).toBeInTheDocument()
-    expect(screen.getByText('a1')).toBeInTheDocument()
+    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /view result/i })).toHaveAttribute('href', '/room/s1')
 
     expect(screen.getByText('Review the pricing page')).toBeInTheDocument()
-    expect(screen.getByText('not started')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /start session/i })).toHaveAttribute('href', '/setup/t2')
 
     expect(fetch).toHaveBeenCalledWith('/tasks')
   })
@@ -60,7 +60,7 @@ describe('TaskBoard', () => {
   it('shows an empty state when there are no tasks', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]))
 
-    render(<TaskBoard />)
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
 
     expect(await screen.findByText(/no tasks yet/i)).toBeInTheDocument()
   })
@@ -70,7 +70,7 @@ describe('TaskBoard', () => {
       jsonResponse({ detail: 'db down' }, { status: 500, statusText: 'Internal Server Error' }),
     )
 
-    render(<TaskBoard />)
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('db down')
   })
@@ -79,7 +79,7 @@ describe('TaskBoard', () => {
     const user = userEvent.setup()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]))
 
-    render(<TaskBoard />)
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
     await screen.findByText(/no tasks yet/i)
 
     await user.click(screen.getByRole('button', { name: /new task/i }))
@@ -123,7 +123,7 @@ describe('TaskBoard', () => {
     const user = userEvent.setup()
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]))
 
-    render(<TaskBoard />)
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
     await screen.findByText(/no tasks yet/i)
     await user.click(screen.getByRole('button', { name: /new task/i }))
 
