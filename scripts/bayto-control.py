@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Bayto control panel: start/stop the dev stack and drive sessions/sandboxes from one local page.
+"""Bayto control API (backs the Services page of the Bayto UI): start/stop the dev stack and drive sessions/sandboxes from one local page.
 
-Run from anywhere:  python3 scripts/bayto-control.py     then open http://127.0.0.1:8787
+Run from anywhere:  python3 scripts/bayto-control.py
+It starts the web dev server itself; the controls live in the Bayto UI at http://localhost:5173/services
+(this process only serves the API behind it on 127.0.0.1:8787).
 Stdlib only. Binds to 127.0.0.1. The API key typed into the page is kept in this process's
 memory only (never written to disk, never logged) and is passed to the orchestrator's environment.
 """
@@ -178,6 +180,8 @@ def do_action(a):
         proc = {"orchestrator": ORCH_PROC, "web": WEB_PROC}.get(name)
         if proc is None or op not in ("start", "stop"):
             return "bad request"
+        if name == "web" and op == "stop" and a.get("from_web"):
+            return "the web server serves this page; stop it from the terminal running bayto-control.py (Ctrl+C)"
         return proc.start() if op == "start" else proc.stop()
     if kind == "config":
         for k in ("summary_model", "synthesis_model", "hand_raise_model"):
@@ -204,52 +208,6 @@ def do_action(a):
     return "bad request"
 
 
-PAGE = r"""<!doctype html><meta charset=utf-8><title>Bayto control</title>
-<meta name=viewport content="width=device-width,initial-scale=1">
-<style>
-:root{--bg:#fff;--fg:#1c1b19;--mut:#6b6a66;--line:#e2e0da;--ok:#1f7a3d;--bad:#b3261e}
-@media(prefers-color-scheme:dark){:root{--bg:#161614;--fg:#ecebe6;--mut:#9a9890;--line:#2e2d29;--ok:#5fc47e;--bad:#f2867f}}
-body{background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif;margin:0;padding:16px;max-width:900px;margin-inline:auto}
-h1{font-size:18px}h2{font-size:14px;margin:24px 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
-table{width:100%;border-collapse:collapse}td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left}
-button{font:inherit;padding:3px 10px;border:1px solid var(--line);background:none;color:var(--fg);border-radius:6px;cursor:pointer}
-input[type=text],input[type=password]{font:inherit;padding:4px 6px;border:1px solid var(--line);background:none;color:var(--fg);border-radius:6px;width:240px}
-.running,.active{color:var(--ok)}.failed,.absent{color:var(--bad)}pre{background:none;border:1px solid var(--line);padding:8px;border-radius:6px;max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
-</style>
-<h1>Bayto control</h1><div id=msg style="color:var(--mut)"></div>
-<h2>Services</h2><table id=svc></table>
-<h2>Orchestrator settings</h2>
-<div class=row><label>Summary model <input type=text id=sm></label><label>Synthesis model <input type=text id=sy></label></div>
-<div class=row><label>Anthropic API key <input type=password id=key placeholder="kept in memory only" autocomplete=off></label><span id=keyst></span>
-<label><input type=checkbox id=stream> streaming turns</label><button onclick=saveCfg()>Save</button></div>
-<div style="color:var(--mut)">Changes apply the next time the orchestrator starts.</div>
-<h2>Sessions</h2><table id=ses></table>
-<div class=row><input type=text id=sid placeholder="session id"><button onclick="sess(sid.value,'start')">start</button>
-<button onclick="sess(sid.value,'pause')">pause</button><button onclick="sess(sid.value,'resume')">resume</button><button onclick="sess(sid.value,'stop')">stop</button></div>
-<h2>Sandboxes</h2><div class=row><button onclick="sbx('ls')">list</button><input type=text id=sbn placeholder="sandbox name"><button onclick="sbx('stop')">stop sandbox</button></div>
-<pre id=sbo></pre>
-<h2>Logs</h2><div class=row><button onclick="lg='orchestrator'">orchestrator</button><button onclick="lg='web'">web</button></div><pre id=log></pre>
-<p><a id=weblink href="http://localhost:5173" target=_blank>Open Bayto UI</a></p>
-<script>
-let lg='orchestrator';
-const H={'content-type':'application/json','x-bayto-control':'1'};
-async function act(o){const r=await fetch('/api/action',{method:'POST',headers:H,body:JSON.stringify(o)});const t=await r.text();msg.textContent=t;refresh();return t}
-function svcBtn(n,s){return `<button onclick="act({action:'service',name:'${n}',op:'start'})">start</button> <button onclick="act({action:'service',name:'${n}',op:'stop'})">stop</button>`}
-async function refresh(){
- const s=await (await fetch('/api/state')).json();
- svc.innerHTML=Object.entries(s.services).map(([n,v])=>`<tr><td>${n}</td><td class="${v}">${v}</td><td>${svcBtn(n,v)}</td></tr>`).join('');
- ses.innerHTML='<tr><th>task</th><th>session</th><th>status</th></tr>'+s.sessions.map(x=>`<tr><td>${x.task}</td><td><a href="#" onclick="sid.value='${x.id}';return false">${x.id.slice(0,8)}</a> <a target=_blank href="http://localhost:5173/room/${x.id}">room</a></td><td class="${x.status}">${x.status}</td></tr>`).join('');
- if(document.activeElement!==sm&&!sm.value){sm.value=s.config.summary_model;sy.value=s.config.synthesis_model;stream.checked=s.config.streaming}
- keyst.textContent=s.config.api_key?'key set':'no key';
- log.textContent=(await (await fetch('/api/log?name='+lg)).text())}
-function saveCfg(){act({action:'config',summary_model:sm.value,synthesis_model:sy.value,streaming:stream.checked,api_key:key.value});key.value=''}
-function sess(id,op){act({action:'session',id:id.trim(),op})}
-async function sbx(op){sbo.textContent=await act({action:'sbx',op,name:sbn.value.trim()})}
-refresh();setInterval(refresh,3000);
-</script>"""
-
-
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -269,7 +227,7 @@ class H(BaseHTTPRequestHandler):
         if not self._ok_host():
             return self._send(403, "bad host", "text/plain")
         if self.path == "/":
-            return self._send(200, PAGE, "text/html; charset=utf-8")
+            return self._send(200, "Bayto control API. The UI is the Services page: http://localhost:5173/services", "text/plain; charset=utf-8")
         if self.path == "/api/state":
             return self._send(200, json.dumps(state()))
         if self.path.startswith("/api/log"):
@@ -293,6 +251,7 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
+    print(WEB_PROC.start() and "web dev server: " + WEB_PROC.status())
     print(f"Bayto control on http://127.0.0.1:{PORT}  (Ctrl+C stops this panel and the services it started)")
     try:
         srv.serve_forever()
