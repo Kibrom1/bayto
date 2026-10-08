@@ -10,7 +10,7 @@ A debated answer from a Bayto team is better than one agent's answer to the same
 
 - [ ] M1.12 measured, agent cap and sandbox size recorded (open).
 - [ ] M1.15 closed: GH_TOKEN confirmed a stand-in, the three open hosts decided (open).
-- [ ] Live streaming works in the room (M1.13 verdict: the headless turn runner is needed in M2; check it is built before counting "live streaming" as met).
+- [x] Live streaming works at the sandbox level: `m5-turn-live.sh` on `bayto-dev` passed both checks (result event seen, text deltas streamed), 2026-10-08. Opt-in with `BAYTO_STREAMING_TURNS=1`. The check does not inspect the result's token and cost fields, and the full UI path with several seats is untried.
 - [ ] Resume after a sandbox stop works (M1.14: the `team-started` marker must be cleared; `SandboxProvider.restart_team` exists on `sbx/m5-restart-team` but nothing calls it yet).
 - [ ] Token budget set per session so a run cannot overspend (M6).
 
