@@ -20,7 +20,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from ..models import Agent, Message, Mode, Session, SessionAgent, Task, Turn
+from ..models import Agent, Artifact, Message, Mode, Session, SessionAgent, Task, Turn
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
@@ -524,6 +524,39 @@ async def get_session(
         turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
                      for role, agent_id, count in turn_counts_rows],
     ))
+
+
+# ---------------------------------------------------------------- GET /sessions/{id}/artifacts
+
+class ArtifactOut(BaseModel):
+    id: uuid.UUID
+    type: str  # "synthesis" | "minority_report"
+    content_json: dict
+    source_turn_ids: list[uuid.UUID]
+
+
+class ArtifactsResponse(BaseModel):
+    artifacts: list[ArtifactOut]
+
+
+@router.get("/sessions/{session_id}/artifacts", response_model=ArtifactsResponse)
+async def get_session_artifacts(
+    session_id: uuid.UUID,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> ArtifactsResponse:
+    """The synthesis (and minority report, if any) the moderator wrote when the session
+    stopped. Empty until then. `content_json` is free-form: its shape is chosen by the
+    synthesizer, so clients should render it generically."""
+    async with sessionmaker() as db:
+        if await db.get(Session, session_id) is None:
+            raise HTTPException(404, detail=_error("not_found", f"session {session_id} not found", "id"))
+        rows = (await db.execute(
+            select(Artifact).where(Artifact.session_id == session_id).order_by(Artifact.type.desc(), Artifact.id)
+        )).scalars().all()
+    return ArtifactsResponse(artifacts=[
+        ArtifactOut(id=r.id, type=r.type, content_json=r.content_json, source_turn_ids=r.source_turn_ids)
+        for r in rows
+    ])
 
 
 # ---------------------------------------------------------------- GET /sessions/{id}/events (SSE)

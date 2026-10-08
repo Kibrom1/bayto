@@ -286,3 +286,22 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
   .composer-row select { flex: 1; }
   .jump { bottom: 9rem; }
 }
+
+.synthesis {
+  max-width: 46rem;
+  margin: 0 auto var(--space-6);
+  padding: var(--space-4) var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.syn-head { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-3); }
+.syn-title { margin: 0; font-size: 1.25rem; }
+.syn-h { margin: var(--space-4) 0 var(--space-1); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); }
+.syn-h2 { margin: var(--space-3) 0 var(--space-1); font-size: 0.95rem; }
+.syn-text { margin: 0 0 var(--space-2); line-height: 1.6; max-width: 68ch; white-space: pre-wrap; }
+.syn-list { margin: 0 0 var(--space-2); padding-left: 1.25rem; line-height: 1.6; max-width: 68ch; }
+.syn-source { margin: var(--space-4) 0 0; font-size: 0.78rem; color: var(--ink-3); }
+.syn-minority { margin-top: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--warn-soft); border-radius: var(--radius-sm); }

@@ -3,15 +3,18 @@ import { Link, useParams } from 'react-router-dom'
 import {
   getAgentTemplates,
   getModes,
+  getSessionArtifacts,
   getSessionDetail,
   interjectSession,
   listTasks,
   pauseSession,
   resumeSession,
   stopSession,
+  type ArtifactOut,
   type SessionDetailOut,
 } from '../api/sessions'
 import { useSessionEvents } from '../hooks/useSessionEvents'
+import { Synthesis } from './Synthesis'
 import './BaytoRoom.css'
 
 interface AgentInfo {
@@ -30,6 +33,7 @@ function hueFor(key: string): number {
 }
 
 const PAUSED = ['needs_human', 'paused']
+const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'ended']
 
 export function BaytoRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -44,6 +48,7 @@ export function BaytoRoom() {
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [confirmStop, setConfirmStop] = useState(false)
+  const [artifacts, setArtifacts] = useState<ArtifactOut[]>([])
   const [atBottom, setAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -68,6 +73,18 @@ export function BaytoRoom() {
   useEffect(() => {
     if (messages.length) loadSession()
   }, [messages.length, loadSession])
+
+  // The synthesis is written when the session stops; keep checking until it shows up.
+  const sessionStatus = session?.status
+  useEffect(() => {
+    if (!sessionId || !sessionStatus) return
+    if (![...FINISHED, 'stopping'].includes(sessionStatus)) return
+    let cancelled = false
+    const load = () => getSessionArtifacts(sessionId).then((a) => { if (!cancelled) setArtifacts(a) }).catch(() => {})
+    load()
+    const t = setInterval(load, 4000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [sessionId, sessionStatus])
 
   // Names, stances, task title and mode are enrichments: the room works without them.
   useEffect(() => {
@@ -141,7 +158,7 @@ export function BaytoRoom() {
 
   const status = session.status
   const paused = PAUSED.includes(status)
-  const finished = ['completed', 'stopped', 'failed', 'ended'].includes(status)
+  const finished = FINISHED.includes(status)
   const tokens = session.usage.tokens_in + session.usage.tokens_out
   const budgetTokens: number | null = session.budget?.tokens ?? session.budget?.max_tokens ?? null
   const pct = budgetTokens ? Math.min(100, Math.round((tokens / budgetTokens) * 100)) : null
@@ -204,6 +221,8 @@ export function BaytoRoom() {
         <main className="transcript">
           <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll}>
             <h2 className="sr-only">Transcript</h2>
+            <Synthesis title={taskTitle ?? 'Discussion'} artifacts={artifacts} />
+            {status === 'stopping' && artifacts.length === 0 && <p className="empty">Writing the final synthesis…</p>}
             <div className="transcript-inner" role="log" aria-live="polite" aria-label="Transcript">
               {messages.length === 0 && liveEntries.length === 0 && (
                 <p className="empty">Waiting for the first seat to speak…</p>
