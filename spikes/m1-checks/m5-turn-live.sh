@@ -6,7 +6,7 @@ name="${1:?sandbox name}"; role="${2:-coordinator}"
 out="$(printf 'Reply with exactly the word PONG.' | sbx exec -i "$name" bash -lc "$(python3 - <<'PY'
 import re,sys
 src=open('orchestrator/src/orchestrator/sandbox/local.py').read()
-m=re.search(r'TURN_SCRIPT = r'''(.*?)'''',src,re.S)
+m=re.search(r"TURN_SCRIPT = r'''(.*?)'''",src,re.S)
 print(m.group(1) if m else '')
 PY
 )" _ "$role" 2>&1)"
