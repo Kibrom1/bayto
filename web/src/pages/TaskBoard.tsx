@@ -73,7 +73,7 @@ export function TaskBoard() {
                   <button
                     type="button"
                     className="task-row-action"
-                    onClick={() => window.location.assign(`/tasks/${task.id}/session-setup`)}
+                    onClick={() => window.location.assign(`/setup/${task.id}`)}
                   >
                     Start session
                   </button>
