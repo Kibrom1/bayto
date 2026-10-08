@@ -200,6 +200,12 @@ class LocalSbxSandboxProvider(SandboxProvider):
         for name in list(self._held):
             self._drop_client(name)
 
+    async def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
+        result = await asyncio.to_thread(self._runner.run, argv)
+        if result.returncode != 0:
+            raise SandboxCommandError(argv, result.returncode, result.stderr)
+        return result
+
     async def create(self, task_id: uuid.UUID, *, name: str) -> SandboxInfo:
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
@@ -269,12 +275,13 @@ class LocalSbxSandboxProvider(SandboxProvider):
         await self._run(["exec", sandbox.name, cmd, role])
 
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:
-        await self.release_team(sandbox)
+        self._drop_client(sandbox.name)
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
                 raise SandboxProviderError(f"no sandbox row for id={sandbox.id}")
             if row.status != "stopped":
+                await self.release_team(sandbox)  # end the sandbox-side holder first
                 await self._run(["env", "stop", sandbox.name])  # *unverified subcommand name
                 row.status = "stopped"
             await session.commit()

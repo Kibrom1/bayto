@@ -62,3 +62,16 @@ fails identically on a clean `main` (checked), so it is not caused by this chang
 difference (Python 3.13 here, the project targets 3.14). Restart wiring: `reconcile_on_startup` already
 relaunches active sessions through `launch_runner`, which calls `create()` and `start_team()`, and
 `start_team()` clears the stale marker, so no separate `restart_team` wiring is needed.
+
+## Revision after the first live check (2026-10-08)
+
+`spikes/m1-checks/m5-held-team-live.sh bayto-dev` (8 seats): start_team returned with the team up after
+512 s and the seats stayed alive; a second start_team was a no-op. But `close()` did not stop the team:
+terminating the host-side `sbx exec` client leaves the sandbox-side exec running. And `restart_team`
+on that live team returned in 1 s and left one more process (17, not 16), so it started again on top
+of a running team. Changes: the holder script writes its PID to `team-holder.pid`; `start_team`
+adopts a team whose holder PID is alive and `team-started` exists; `release_team` kills the holder by
+PID (best effort); `stop`, `remove` and `restart_team` use it; `close()` only drops the clients (a
+sandbox stops only on user action); timeout raised to 900 s. Tests: 269 passed (all but the
+pre-existing SSE failure). Not yet confirmed live: that killing the holder by PID stops the team; rerun
+the live check, whose last step tests exactly that.
