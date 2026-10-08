@@ -10,8 +10,11 @@ source "$(dirname "$0")/lib.sh"
 # inside $( ) for the closing paren and chokes on the `case ... ;;` patterns and parentheses below (sections C and D died with 'syntax error near ;;').
 need_sbx
 name="${1:?sandbox name, e.g. bayto-dev}"; use_llm=1; [ "${2:-}" = "--no-llm" ] && use_llm=0
-ALLOWED="${ALLOWED:-api.anthropic.com github.com registry.npmjs.org pypi.org files.pythonhosted.org}"
-DENIED="${DENIED:-example.com httpbin.org pastebin.com gist.github.com raw.githubusercontent.com registry.yarnpkg.com}"
+# raw.githubusercontent.com is an accepted exception (read-only downloads; decided 2026-10-07). gist.github.com and registry.yarnpkg.com are denied for the sandbox with:
+#   sbx policy deny network --sandbox <name> gist.github.com   (one host per command)
+#   sbx policy deny network --sandbox <name> registry.yarnpkg.com
+ALLOWED="${ALLOWED:-api.anthropic.com github.com registry.npmjs.org pypi.org files.pythonhosted.org raw.githubusercontent.com}"
+DENIED="${DENIED:-example.com httpbin.org pastebin.com gist.github.com registry.yarnpkg.com}"
 SUFFIX_PROBES="${SUFFIX_PROBES:-api.github.com codeload.github.com}"   # reported only: tells you exact-host vs suffix matching
 begin m1-15
 
