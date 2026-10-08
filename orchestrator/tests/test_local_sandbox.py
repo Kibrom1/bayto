@@ -15,7 +15,23 @@ from sqlalchemy import select
 
 from orchestrator.models import Sandbox, Task
 from orchestrator.sandbox.local import LocalSbxSandboxProvider
-from orchestrator.sandbox.provider import SandboxCommandError, SandboxInfo
+from orchestrator.sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProviderError
+
+
+class FakeHeld:
+    def __init__(self):
+        self.exit_code: int | None = None
+        self.terminated = False
+
+    def poll(self):
+        return self.exit_code
+
+    def terminate(self):
+        self.terminated = True
+        self.exit_code = -15
+
+    def log_tail(self):
+        return "fake log"
 
 
 class FakeSbxRunner:
@@ -26,6 +42,10 @@ class FakeSbxRunner:
     def __init__(self, responses: dict[str, subprocess.CompletedProcess] | None = None):
         self.calls: list[list[str]] = []
         self._responses = responses or {}
+        self.started: list[list[str]] = []
+        self.helds: list[FakeHeld] = []
+        self.probes = 0
+        self.team_ready_after: int | None = 0  # probe number (0-based) at which team-started appears
 
     @staticmethod
     def _key(argv: list[str]) -> str:
@@ -35,8 +55,18 @@ class FakeSbxRunner:
             return f"exec {argv[2]}"
         return argv[0]
 
+    def start(self, argv):
+        self.started.append(argv)
+        held = FakeHeld()
+        self.helds.append(held)
+        return held
+
     def run(self, argv, *, timeout=None):
         self.calls.append(argv)
+        if argv[:2] == ["exec", argv[1]] and argv[2:3] == ["bash"] and "team-started" in argv[-1] and "test -f" in argv[-1]:
+            ready = self.team_ready_after is not None and self.probes >= self.team_ready_after
+            self.probes += 1
+            return subprocess.CompletedProcess(argv, returncode=0 if ready else 1, stdout="", stderr="")
         return self._responses.get(
             self._key(argv), subprocess.CompletedProcess(argv, returncode=0, stdout="", stderr=""),
         )
@@ -99,28 +129,110 @@ async def test_create_reissues_command_when_existing_row_is_not_running_or_creat
     assert again.status == "running"
 
 
-async def test_start_team_builds_expected_argv():
-    # No DB touched by this method, so no live_sessionmaker (and no Postgres) needed --
-    # the sessionmaker is never called.
+def _team_provider(runner, **kw):
+    return LocalSbxSandboxProvider(sessionmaker=None, runner=runner, team_poll_interval=0, **kw)
+
+
+async def test_start_team_holds_the_exec_open_and_waits_for_the_marker():
     runner = FakeSbxRunner()
-    provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
+    runner.team_ready_after = 2  # the third probe sees team-started
+    provider = _team_provider(runner)
+
+    await provider.start_team(_fake_info(name="sbx-wad-102"))
+
+    assert runner.started == [[
+        "exec", "sbx-wad-102", "bash", "-lc",
+        "rm -f $HOME/work/factory/team-started; start-team; sleep infinity",
+    ]]
+    assert runner.probes == 3
+    assert runner.helds[0].terminated is False  # still held: the team lives as long as it does
+
+
+async def test_start_team_is_a_noop_when_a_live_holder_exists():
+    runner = FakeSbxRunner()
+    provider = _team_provider(runner)
     sandbox = _fake_info(name="sbx-wad-102")
 
     await provider.start_team(sandbox)
+    await provider.start_team(sandbox)
 
-    assert runner.calls == [["exec", "sbx-wad-102", "start-team"]]
+    assert len(runner.started) == 1
 
 
-async def test_restart_team_clears_the_team_started_marker_before_start_team():
+async def test_start_team_raises_and_releases_when_the_holder_exits_early():
     runner = FakeSbxRunner()
-    provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
+    runner.team_ready_after = None
+    provider = _team_provider(runner)
     sandbox = _fake_info(name="sbx-wad-102")
+    real_start = runner.start
+
+    def start_and_die(argv):
+        held = real_start(argv)
+        held.exit_code = 1
+        return held
+
+    runner.start = start_and_die
+    with pytest.raises(SandboxProviderError, match="exited with 1"):
+        await provider.start_team(sandbox)
+    assert "sbx-wad-102" not in provider._held
+
+
+async def test_start_team_times_out_and_releases_the_holder():
+    runner = FakeSbxRunner()
+    runner.team_ready_after = None  # never appears
+    provider = _team_provider(runner, team_ready_timeout=0.0)
+
+    with pytest.raises(SandboxProviderError, match="team-started not seen"):
+        await provider.start_team(_fake_info(name="sbx-wad-102"))
+
+    assert runner.helds[0].terminated is True
+    assert provider._held == {}
+
+
+async def test_restart_team_releases_the_old_holder_and_starts_a_new_one():
+    runner = FakeSbxRunner()
+    provider = _team_provider(runner)
+    sandbox = _fake_info(name="sbx-wad-102")
+    await provider.start_team(sandbox)
 
     await provider.restart_team(sandbox)
 
-    assert runner.calls == [[
-        "exec", "sbx-wad-102", "bash", "-lc", "rm -f $HOME/work/factory/team-started; start-team",
-    ]]
+    assert len(runner.started) == 2
+    assert runner.helds[0].terminated is True
+    assert runner.helds[1].terminated is False
+
+
+async def test_close_releases_every_held_exec():
+    runner = FakeSbxRunner()
+    provider = _team_provider(runner)
+    await provider.start_team(_fake_info(name="a"))
+    await provider.start_team(_fake_info(name="b"))
+
+    await provider.close()
+
+    assert all(h.terminated for h in runner.helds)
+    assert provider._held == {}
+
+
+async def test_orchestrator_restart_brings_the_team_back_without_recreating_the_sandbox(live_sessionmaker):
+    # Process 1 creates the sandbox and starts the team; the orchestrator then exits and the held exec
+    # (a child of it) dies. Process 2 is a fresh provider, as after a restart: reconcile_on_startup ->
+    # launch_runner -> create() + start_team() must reuse the running sandbox and start a new holder.
+    runner1 = FakeSbxRunner()
+    task_id = await _make_task(live_sessionmaker)
+    first = LocalSbxSandboxProvider(live_sessionmaker, runner=runner1, team_poll_interval=0)
+    info = await first.create(task_id, name="sbx-wad-102")
+    await first.start_team(info)
+    runner1.helds[0].exit_code = -9  # the orchestrator process went away
+
+    runner2 = FakeSbxRunner()
+    second = LocalSbxSandboxProvider(live_sessionmaker, runner=runner2, team_poll_interval=0)
+    again = await second.create(task_id, name="sbx-wad-102")
+    await second.start_team(again)
+
+    assert again.id == info.id
+    assert [c for c in runner2.calls if c[:2] == ["env", "create"]] == []  # not re-created
+    assert len(runner2.started) == 1 and runner2.helds[0].terminated is False
 
 
 async def test_wake_role_builds_expected_argv():
@@ -143,6 +255,18 @@ async def test_stop_builds_expected_argv_and_updates_status(live_sessionmaker):
 
     assert runner.calls[-1] == ["env", "stop", "sbx-wad-102"]
     assert stopped.status == "stopped"
+
+
+async def test_stop_releases_the_held_exec(live_sessionmaker):
+    runner = FakeSbxRunner()
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner, team_poll_interval=0)
+    task_id = await _make_task(live_sessionmaker)
+    info = await provider.create(task_id, name="sbx-wad-102")
+    await provider.start_team(info)
+
+    await provider.stop(info)
+
+    assert runner.helds[0].terminated is True
 
 
 async def test_stop_is_a_noop_when_already_stopped(live_sessionmaker):

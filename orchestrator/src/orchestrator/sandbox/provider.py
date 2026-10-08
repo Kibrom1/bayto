@@ -68,7 +68,10 @@ class SandboxProvider(abc.ABC):
 
     @abc.abstractmethod
     async def start_team(self, sandbox: SandboxInfo) -> None:
-        """Start one session per roles/team.tsv participant inside the sandbox."""
+        """Start one session per roles/team.tsv participant inside the sandbox, and return once the team is up.
+
+        An implementation that starts the team with a one-shot exec must keep that exec open: processes
+        started by `sbx exec` die when it returns (M1.12). Can take minutes (about 55 s per agent)."""
 
     async def restart_team(self, sandbox: SandboxInfo) -> None:
         """Bring the team back after stop() + a restart of the sandbox (M1.14).

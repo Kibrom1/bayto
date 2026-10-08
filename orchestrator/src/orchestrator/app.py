@@ -19,6 +19,7 @@ no rate limiting. Anyone who can reach this port can create tasks/sessions and
 interject/stop on any session. Do not expose this service beyond a private/internal
 network until M5 (human seat/auth) lands.
 """
+import functools
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -63,6 +64,9 @@ async def lifespan(app: FastAPI):
         log.exception("startup reconciliation failed entirely (e.g. Postgres unreachable at boot) "
                       "-- continuing to serve; no session was automatically relaunched this boot")
     yield
+    close = getattr(sandbox_provider, "close", None)
+    if close is not None:
+        await close()  # releases held execs; the teams die with them
 
 
 app = FastAPI(title="Bayto Orchestrator", lifespan=lifespan)
@@ -73,7 +77,14 @@ app.state.session_runtimes = {}  # session_id -> api.runtime.SessionRuntime
 
 # Dependency-injection factories (api/deps.py reads these); tests replace them via
 # app.dependency_overrides on the get_*() functions, not by mutating these directly.
-app.state.sandbox_provider_factory = lambda: LocalSbxSandboxProvider(get_sessionmaker())
+# One provider for the whole process: it keeps the held `sbx exec` per sandbox (the team dies if its
+# exec is released), so a fresh provider per request would lose track of every running team.
+@functools.cache
+def _local_sandbox_provider() -> LocalSbxSandboxProvider:
+    return LocalSbxSandboxProvider(get_sessionmaker())
+
+
+app.state.sandbox_provider_factory = _local_sandbox_provider
 app.state.summarizer_factory = AnthropicSummarizer
 app.state.synthesizer_factory = AnthropicSynthesizer
 app.state.scorer_factory = AnthropicHandRaiseScorer

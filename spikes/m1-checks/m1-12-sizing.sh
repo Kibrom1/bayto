@@ -13,7 +13,7 @@ roster_for() {  # first N of this fixed order; coordinator always first (first c
   for ((i = 0; i < $1; i++)); do echo "${all[i]}"; done
 }
 begin m1-12
-say "Sizes tested: $counts. Sandbox spec: cpus ${SBX_CPUS:-4}, memory ${SBX_MEMORY:-8g} (override with SBX_CPUS / SBX_MEMORY; run.sh default is 4 / 8g)"; say
+say "Sizes tested: $counts. Sandbox spec: cpus ${SBX_CPUS:-4}, memory ${SBX_MEMORY:-4g} (override with SBX_CPUS / SBX_MEMORY; run.sh default is 4 / 4g)"; say
 say "| agents | create+prepare (s) | start-team (s) | warm exec (ms) | RAM idle base (MB) | RAM after team (MB) | RAM peak under task (MB) | MB/agent | CPU avg during task (%) | assignment -> first message (s) |"
 say "|---|---|---|---|---|---|---|---|---|---|"
 

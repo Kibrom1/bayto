@@ -67,7 +67,7 @@ kits:
   - source: ../chapters/kits/herdr
 YML
 # Sizing overrides for the M1.12 spike (defaults unchanged): SBX_CPUS, SBX_MEMORY.
-sed -e "s/^  cpus: .*/  cpus: ${SBX_CPUS:-4}/" -e "s/^  memory: .*/  memory: ${SBX_MEMORY:-8g}/" "$build/factory/sbxenv.yaml" > "$build/factory/sbxenv.yaml.tmp" && mv "$build/factory/sbxenv.yaml.tmp" "$build/factory/sbxenv.yaml"
+sed -e "s/^  cpus: .*/  cpus: ${SBX_CPUS:-4}/" -e "s/^  memory: .*/  memory: ${SBX_MEMORY:-4g}/" "$build/factory/sbxenv.yaml" > "$build/factory/sbxenv.yaml.tmp" && mv "$build/factory/sbxenv.yaml.tmp" "$build/factory/sbxenv.yaml"
 [ -n "${NO_SWITCH:-}" ] || git -C "$repo" switch main >/dev/null 2>&1 || true
 echo "Mounting $repo read-write. Engineers commit to sbx/<task> branches, push them and open PRs (GitHub secret needed, see dev-team/README.md)"
 exec "$build/scripts/launch-factory.sh" "$name" "$repo"
