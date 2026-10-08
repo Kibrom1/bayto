@@ -105,9 +105,13 @@ async def test_create_builds_expected_argv_and_inserts_a_row(live_sessionmaker):
 
     info = await provider.create(task_id, name="sbx-wad-102")
 
+    from orchestrator.sandbox.local import DEFAULT_SBXENV
+
     assert runner.calls == [
-        ["env", "create", "team.sbxenv.yaml", "--env-arg", "name=sbx-wad-102", "--auto-approve"],
+        ["env", "create", str(DEFAULT_SBXENV), "--env-arg", "name=sbx-wad-102", "--auto-approve"],
     ]
+    assert DEFAULT_SBXENV.is_absolute() and DEFAULT_SBXENV.name == "team.sbxenv.yaml"
+    assert DEFAULT_SBXENV.exists(), "the default sandbox definition must exist in the repo"
     assert info.task_id == task_id
     assert info.name == "sbx-wad-102"
     assert info.status == "running"
