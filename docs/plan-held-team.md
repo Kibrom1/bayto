@@ -75,3 +75,25 @@ PID (best effort); `stop`, `remove` and `restart_team` use it; `close()` only dr
 sandbox stops only on user action); timeout raised to 900 s. Tests: 269 passed (all but the
 pre-existing SSE failure). Not yet confirmed live: that killing the holder by PID stops the team; rerun
 the live check, whose last step tests exactly that.
+
+## Second live run (2026-10-08, 18:53): 6 pass, 1 fail
+
+Start took 39 s (the first run took 512 s; likely warm images, not a faster algorithm). A second
+start_team was a no-op, `close()` left the team running, and a fresh provider adopted it in 1.4 s with
+the same 16 seat processes. The failure was `restart_team`: after the holder was ended by PID, the
+seats were still there and `start-team` stopped at `agent_name_taken` ("agent name coordinator is
+already used"), so `team-started` never came back and the call timed out at 900 s.
+
+Cause: `start-team` runs `nohup herdr server &`, so the herdr server and the seats are detached from
+the exec that started them. Ending the holder does not stop them. The M1.12 finding that the team
+"dies when the starting exec returns" was observed, but it is not the whole picture: what we can say is
+that the team survived the host-side client being killed and survived the holder being killed. How
+`sbx` ties exec lifetime to those processes is still unexplained, so nothing here relies on it.
+
+Change: `TEAM_KILL` now stops a team explicitly: end the holder, kill every process with a
+`FACTORY_ROLE` in its environment, kill the herdr server (`pkill -f "[h]erdr server"`; the bracket stops
+the pattern matching the kill script's own command line), then remove `team-holder.pid` and
+`team-started`. Tested on the Linux VM with stand-in processes (seat, fake herdr server, holder, an
+unrelated bystander): the first three die, the bystander lives, both markers are removed. Tests: 269
+passed. Still to confirm on the real `sbx`: rerun `spikes/m1-checks/m5-held-team-live.sh bayto-dev`.
+

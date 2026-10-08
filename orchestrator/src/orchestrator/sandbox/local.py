@@ -58,8 +58,17 @@ TEAM_SCRIPT = f"rm -f {TEAM_DIR}/team-started; echo $$ > {HOLDER_PID}; start-tea
 TEAM_READY_PROBE = f'test -f "{TEAM_DIR}/team-started"'
 # Exit 0 only if a holder from an earlier start is still alive and the team came up.
 TEAM_ALIVE_PROBE = f'p=$(cat "{HOLDER_PID}" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" && test -f "{TEAM_DIR}/team-started"'
-# Ending the holder ends the exec session, and the team with it.
-TEAM_KILL = f'p=$(cat "{HOLDER_PID}" 2>/dev/null); [ -n "$p" ] && {{ pkill -P "$p"; kill "$p"; }}; rm -f "{HOLDER_PID}" "{TEAM_DIR}/team-started"; true'
+# Stop the team explicitly. start-team runs `nohup herdr server &`, so the herdr server and every seat
+# are detached from the exec that started them: ending the holder alone leaves them running (live check,
+# 2026-10-08: a restart then failed with "agent name coordinator is already used"). So: end the holder,
+# kill every process that carries a FACTORY_ROLE (the seats), kill the herdr server, clear the markers.
+TEAM_KILL = (
+    f'p=$(cat "{HOLDER_PID}" 2>/dev/null); [ -n "$p" ] && {{ pkill -P "$p"; kill "$p"; }}; '
+    'for d in /proc/[0-9]*; do pid=${d#/proc/}; [ "$pid" = "$$" ] && continue; '
+    'tr "\\0" "\\n" 2>/dev/null < $d/environ | grep -q "^FACTORY_ROLE=" && kill "$pid"; done; '
+    'pkill -f "[h]erdr server"; sleep 2; '
+    f'rm -f "{HOLDER_PID}" "{TEAM_DIR}/team-started"; true'
+)
 
 
 class HeldExec(Protocol):
