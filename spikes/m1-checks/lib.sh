@@ -52,5 +52,24 @@ stop_sandbox() {
   fi
 }
 
-# ensure_team NAME : start-team is idempotent (exits 0 if team-started exists).
-ensure_team() { sx "$1" 'start-team' | tail -n 3; }
+# hold_team / release_team: start the team and keep it alive (start-team itself is idempotent: exits 0 if team-started exists).
+# Run from the app directory: start-team opens every seat in the CURRENT directory, and only $REPO (the mounted repo, same path inside
+# the sandbox) is trusted by `prepare`. From the default home directory the seats stop at Claude's trust / outside-directory prompt and
+# never acknowledge (the 3- and 5-agent M1.12 runs: start-team took its full timeouts, RAM barely moved, no message in 300 s).
+# M1.12 finding (2026-10-06): herdr and every claude seat die as soon as the `sbx exec` that ran start-team returns (the herdr log just
+# stops, no shutdown line; setsid did not help). The interactive dev-team shell works because it stays open. So the team is started
+# inside an exec that is HELD OPEN in the background on the host for as long as the checks need it. release_team ends it.
+hold_team() {  # hold_team NAME : start the team under a long-lived exec and wait (up to 400 s) for the team-started marker
+  local n="$1" i
+  sbx exec -w "$REPO" "$n" bash -lc 'start-team; sleep 3000' >"$RESULTS/.hold-$n.log" 2>&1 &
+  echo $! > "$RESULTS/.hold-$n.pid"
+  for i in $(seq 1 80); do
+    sx "$n" 'test -f "$HOME/work/factory/team-started" && echo up' | grep -q '^up$' && return 0
+    sleep 5
+  done
+  echo "team-started not seen after 400 s; see $RESULTS/.hold-$n.log" >&2; return 1
+}
+release_team() {  # release_team NAME : end the held exec (this also stops the team)
+  local f="$RESULTS/.hold-$1.pid"
+  [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; rm -f "$f"; return 0
+}
