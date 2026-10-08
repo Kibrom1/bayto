@@ -3,9 +3,10 @@
 Run on the Mac via m5-held-team-live.sh <sandbox>. Needs an existing, running sandbox (e.g. bayto-dev
 created by dev-team/run.sh) with NO team running. Uses the real `sbx` CLI; touches no database.
 
-Checks: (1) start_team returns only after team-started exists and the seats are alive AFTER it returns
-(the M1.12 bug was that they died when the exec returned); (2) a second start_team is a no-op;
-(3) close() kills the team; (4) restart_team brings it back even though a stale marker is left over.
+Checks: (1) start_team returns only after team-started exists and the seats stay alive after it returns;
+(2) a second start_team is a no-op; (3) close() leaves the team running; (4) a fresh provider adopts it
+without starting a second set of seats; (5) restart_team replaces it (same seat count); (6) release_team
+ends the holder and the team dies (the open question: does ending the sandbox-side holder stop the team?).
 """
 import asyncio
 import datetime
@@ -55,20 +56,32 @@ async def main(name: str) -> int:
         await provider.start_team(info)
         check("second start_team is a no-op", time.monotonic() - t1 < 5, f"{time.monotonic() - t1:.1f} s")
 
-        await provider.close()
+        await provider.close()  # drops the host-side client only
         time.sleep(15)
         n3 = seats(name)
-        check("close() releases the holder and the team dies", n3 == 0, f"seats={n3}")
+        check("close() leaves the team running (a sandbox stops only on user action)", n3 == n, f"seats={n3}")
 
+        fresh = LocalSbxSandboxProvider(sessionmaker=None)  # as after an orchestrator restart
         t2 = time.monotonic()
-        await provider.restart_team(info)  # a stale team-started marker is left over from above
+        await fresh.start_team(info)
         n4 = seats(name)
-        check("restart_team brings the team back past the stale marker", n4 > 0,
-              f"{time.monotonic() - t2:.0f} s, seats={n4}")
+        check("a fresh provider adopts the running team without starting a second set",
+              n4 == n and time.monotonic() - t2 < 20, f"{time.monotonic() - t2:.1f} s, seats={n4}")
+
+        t3 = time.monotonic()
+        await fresh.restart_team(info)
+        n5 = seats(name)
+        check("restart_team replaces the team (same seat count, not doubled)", n5 == n,
+              f"{time.monotonic() - t3:.0f} s, seats={n5}")
+
+        await fresh.release_team(info)
+        time.sleep(15)
+        n6 = seats(name)
+        check("release_team ends the holder and the team dies", n6 == 0, f"seats={n6}")
     except Exception as exc:  # report, still clean up
         check("unexpected error", False, repr(exc))
     finally:
-        await provider.close()
+        await provider.release_team(info)  # leave nothing running
     fails = sum(1 for _, ok, _ in results if not ok)
     out_dir = Path(__file__).parent / "results"
     out_dir.mkdir(exist_ok=True)

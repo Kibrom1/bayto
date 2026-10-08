@@ -45,6 +45,8 @@ class FakeSbxRunner:
         self.started: list[list[str]] = []
         self.helds: list[FakeHeld] = []
         self.probes = 0
+        self.kills = 0
+        self.team_alive = False  # a sandbox-side holder is alive (set once the team came up)
         self.team_ready_after: int | None = 0  # probe number (0-based) at which team-started appears
 
     @staticmethod
@@ -63,10 +65,20 @@ class FakeSbxRunner:
 
     def run(self, argv, *, timeout=None):
         self.calls.append(argv)
-        if argv[:2] == ["exec", argv[1]] and argv[2:3] == ["bash"] and "team-started" in argv[-1] and "test -f" in argv[-1]:
-            ready = self.team_ready_after is not None and self.probes >= self.team_ready_after
-            self.probes += 1
-            return subprocess.CompletedProcess(argv, returncode=0 if ready else 1, stdout="", stderr="")
+        if argv[2:3] == ["bash"]:
+            cmd = argv[-1]
+            if "kill -0" in cmd:  # TEAM_ALIVE_PROBE: a holder from an earlier start is still alive
+                return subprocess.CompletedProcess(argv, returncode=0 if self.team_alive else 1, stdout="", stderr="")
+            if "pkill" in cmd:  # TEAM_KILL: end the sandbox-side holder
+                self.kills += 1
+                self.team_alive = False
+                return subprocess.CompletedProcess(argv, returncode=0, stdout="", stderr="")
+            if "test -f" in cmd and "team-started" in cmd:  # TEAM_READY_PROBE
+                ready = self.team_ready_after is not None and self.probes >= self.team_ready_after
+                self.probes += 1
+                if ready:
+                    self.team_alive = True
+                return subprocess.CompletedProcess(argv, returncode=0 if ready else 1, stdout="", stderr="")
         return self._responses.get(
             self._key(argv), subprocess.CompletedProcess(argv, returncode=0, stdout="", stderr=""),
         )
@@ -142,7 +154,7 @@ async def test_start_team_holds_the_exec_open_and_waits_for_the_marker():
 
     assert runner.started == [[
         "exec", "sbx-wad-102", "bash", "-lc",
-        "rm -f $HOME/work/factory/team-started; start-team; sleep infinity",
+        "rm -f $HOME/work/factory/team-started; echo $$ > $HOME/work/factory/team-holder.pid; start-team; sleep infinity",
     ]]
     assert runner.probes == 3
     assert runner.helds[0].terminated is False  # still held: the team lives as long as it does
@@ -159,7 +171,7 @@ async def test_start_team_is_a_noop_when_a_live_holder_exists():
     assert len(runner.started) == 1
 
 
-async def test_start_team_raises_and_releases_when_the_holder_exits_early():
+async def test_start_team_raises_when_the_holder_exits_early():
     runner = FakeSbxRunner()
     runner.team_ready_after = None
     provider = _team_provider(runner)
@@ -177,7 +189,7 @@ async def test_start_team_raises_and_releases_when_the_holder_exits_early():
     assert "sbx-wad-102" not in provider._held
 
 
-async def test_start_team_times_out_and_releases_the_holder():
+async def test_start_team_times_out_and_ends_the_holder():
     runner = FakeSbxRunner()
     runner.team_ready_after = None  # never appears
     provider = _team_provider(runner, team_ready_timeout=0.0)
@@ -185,11 +197,22 @@ async def test_start_team_times_out_and_releases_the_holder():
     with pytest.raises(SandboxProviderError, match="team-started not seen"):
         await provider.start_team(_fake_info(name="sbx-wad-102"))
 
-    assert runner.helds[0].terminated is True
+    assert runner.helds[0].terminated is True  # client dropped
+    assert runner.kills == 1                   # and the sandbox-side holder ended
     assert provider._held == {}
 
 
-async def test_restart_team_releases_the_old_holder_and_starts_a_new_one():
+async def test_start_team_adopts_a_team_a_previous_process_left_running():
+    runner = FakeSbxRunner()
+    runner.team_alive = True  # the sandbox-side holder from an earlier orchestrator process is alive
+    provider = _team_provider(runner)
+
+    await provider.start_team(_fake_info(name="sbx-wad-102"))
+
+    assert runner.started == []  # nothing started, so no second set of seats
+
+
+async def test_restart_team_ends_the_old_holder_then_starts_a_new_one():
     runner = FakeSbxRunner()
     provider = _team_provider(runner)
     sandbox = _fake_info(name="sbx-wad-102")
@@ -197,12 +220,13 @@ async def test_restart_team_releases_the_old_holder_and_starts_a_new_one():
 
     await provider.restart_team(sandbox)
 
+    assert runner.kills == 1
     assert len(runner.started) == 2
     assert runner.helds[0].terminated is True
     assert runner.helds[1].terminated is False
 
 
-async def test_close_releases_every_held_exec():
+async def test_close_drops_the_clients_but_leaves_the_teams_running():
     runner = FakeSbxRunner()
     provider = _team_provider(runner)
     await provider.start_team(_fake_info(name="a"))
@@ -212,27 +236,41 @@ async def test_close_releases_every_held_exec():
 
     assert all(h.terminated for h in runner.helds)
     assert provider._held == {}
+    assert runner.kills == 0  # a sandbox stops only on user action
 
 
-async def test_orchestrator_restart_brings_the_team_back_without_recreating_the_sandbox(live_sessionmaker):
+async def test_release_team_ends_the_sandbox_side_holder_and_the_client():
+    runner = FakeSbxRunner()
+    provider = _team_provider(runner)
+    sandbox = _fake_info(name="sbx-wad-102")
+    await provider.start_team(sandbox)
+
+    await provider.release_team(sandbox)
+
+    assert runner.kills == 1 and runner.helds[0].terminated is True
+
+
+async def test_orchestrator_restart_adopts_the_running_team_without_recreating_the_sandbox(live_sessionmaker):
     # Process 1 creates the sandbox and starts the team; the orchestrator then exits and the held exec
-    # (a child of it) dies. Process 2 is a fresh provider, as after a restart: reconcile_on_startup ->
-    # launch_runner -> create() + start_team() must reuse the running sandbox and start a new holder.
+    # (a child of it) dies, but the team keeps running. Process 2 is a fresh provider, as after a restart:
+    # reconcile_on_startup -> launch_runner -> create() + start_team() must reuse the running sandbox and
+    # adopt the team.
     runner1 = FakeSbxRunner()
     task_id = await _make_task(live_sessionmaker)
     first = LocalSbxSandboxProvider(live_sessionmaker, runner=runner1, team_poll_interval=0)
     info = await first.create(task_id, name="sbx-wad-102")
     await first.start_team(info)
-    runner1.helds[0].exit_code = -9  # the orchestrator process went away
+    runner1.helds[0].exit_code = -9  # the orchestrator process went away; the sandbox-side holder lives on
 
     runner2 = FakeSbxRunner()
+    runner2.team_alive = True
     second = LocalSbxSandboxProvider(live_sessionmaker, runner=runner2, team_poll_interval=0)
     again = await second.create(task_id, name="sbx-wad-102")
     await second.start_team(again)
 
     assert again.id == info.id
     assert [c for c in runner2.calls if c[:2] == ["env", "create"]] == []  # not re-created
-    assert len(runner2.started) == 1 and runner2.helds[0].terminated is False
+    assert runner2.started == []  # the running team is adopted, not started twice
 
 
 async def test_wake_role_builds_expected_argv():
