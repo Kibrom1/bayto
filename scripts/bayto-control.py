@@ -42,13 +42,14 @@ CONFIG = {
 class Proc:
     """A child process in its own process group, with a rolling log."""
 
-    def __init__(self, name, argv, cwd, env_fn=None):
-        self.name, self.argv, self.cwd, self.env_fn = name, argv, cwd, env_fn
+    def __init__(self, name, argv, cwd, env_fn=None, pre=None):
+        self.name, self.argv, self.cwd, self.env_fn, self.pre = name, argv, cwd, env_fn, pre
         self.p: subprocess.Popen | None = None
         self.log = collections.deque(maxlen=400)
+        self.launching = False
 
     def running(self):
-        return self.p is not None and self.p.poll() is None
+        return self.launching or (self.p is not None and self.p.poll() is None)
 
     def start(self):
         if self.running():
@@ -59,11 +60,30 @@ class Proc:
         env.pop("VIRTUAL_ENV", None)
         if self.env_fn:
             env.update(self.env_fn())
+        self.launching = True
+        threading.Thread(target=self._launch, args=(env,), daemon=True).start()
+        return "starting (see the log)"
+
+    def _launch(self, env):
+        try:
+            self._launch_inner(env)
+        finally:
+            self.launching = False
+
+    def _launch_inner(self, env):
+        # Runs off the request thread: `pre` (for example `uv sync`) can take a while.
+        if self.pre:
+            self.log.append(f"--- preparing: {' '.join(self.pre)}")
+            r = subprocess.run(self.pre, cwd=self.cwd, env=env, capture_output=True, text=True)
+            self.log.extend((r.stdout + r.stderr).strip().splitlines()[-15:])
+            if r.returncode:
+                self.log.append(f"--- preparation failed with code {r.returncode}; not starting")
+                return
         self.log.append(f"--- starting {' '.join(self.argv)} in {self.cwd}")
         self.p = subprocess.Popen(self.argv, cwd=self.cwd, env=env, stdout=subprocess.PIPE,
                                   stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        threading.Thread(target=self._pump, args=(self.p,), daemon=True).start()
-        return "started"
+        self.launching = False
+        self._pump(self.p)
 
     def _pump(self, p):
         for line in p.stdout:
@@ -73,6 +93,8 @@ class Proc:
     def stop(self):
         if not self.running():
             return "not running"
+        if self.p is None or self.p.poll() is not None:
+            return "still preparing; try again in a moment"
         pgid = os.getpgid(self.p.pid)
         os.killpg(pgid, signal.SIGTERM)
         for _ in range(50):
@@ -97,7 +119,9 @@ def run(argv, timeout=60):
 
 
 def orch_env():
-    e = {"BAYTO_SUMMARY_MODEL": CONFIG["summary_model"], "BAYTO_SYNTHESIS_MODEL": CONFIG["synthesis_model"],
+    # `src` on the path is a safety net for an editable install that went missing from the venv.
+    e = {"PYTHONPATH": str(ROOT / "orchestrator" / "src") + os.pathsep + str(ROOT / "agent-comms" / "src"),
+         "BAYTO_SUMMARY_MODEL": CONFIG["summary_model"], "BAYTO_SYNTHESIS_MODEL": CONFIG["synthesis_model"],
          "BAYTO_HAND_RAISE_MODEL": CONFIG["hand_raise_model"]}
     if CONFIG["streaming"]:
         e["BAYTO_STREAMING_TURNS"] = "1"
@@ -106,8 +130,8 @@ def orch_env():
     return e
 
 
-ORCH_PROC = Proc("orchestrator", ["uv", "run", "uvicorn", "orchestrator.app:app", "--port", "8000"],
-                 str(ROOT / "orchestrator"), orch_env)
+ORCH_PROC = Proc("orchestrator", ["uv", "run", "--all-extras", "uvicorn", "orchestrator.app:app", "--port", "8000"],
+                 str(ROOT / "orchestrator"), orch_env, pre=["uv", "sync", "--all-extras"])
 WEB_PROC = Proc("web", ["npm", "run", "dev"], str(ROOT / "web"))
 
 
