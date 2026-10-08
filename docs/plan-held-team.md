@@ -97,3 +97,12 @@ the pattern matching the kill script's own command line), then remove `team-hold
 unrelated bystander): the first three die, the bystander lives, both markers are removed. Tests: 269
 passed. Still to confirm on the real `sbx`: rerun `spikes/m1-checks/m5-held-team-live.sh bayto-dev`.
 
+## Third live run (2026-10-08, 19:17): 8 pass, 0 fail
+
+Confirmed on the real `sbx` (bayto-dev, 8 seats): start_team returns with the team up and the seats
+stay alive; a second call is a no-op; `close()` leaves the team running; a fresh provider adopts the
+running team without a second set of seats; `restart_team` replaces the team with the same seat count;
+`release_team` ends it (seats go to 0). Report: `spikes/m1-checks/results/m5-held-team-20261008-191701.md`
+(git-ignored). Still unverified: whether seats resume their earlier conversation after a restart
+(`claude --resume`), and behaviour with several teams at once.
+
