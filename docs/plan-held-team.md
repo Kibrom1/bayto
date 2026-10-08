@@ -51,3 +51,14 @@ releases the handle; second `start_team` is a no-op; `restart_team` releases the
 
 Reduced start time (sequential startup and acknowledgment waits), the CPU question from M1.12, and the
 MVP exit test itself.
+
+## Test results (2026-10-08)
+
+Run in the cloud workspace against a real Postgres 16 (the Mac's Linux VM cannot install one): the
+whole orchestrator suite gives 266 passed and 1 failed; `tests/test_local_sandbox.py` alone gives
+17 passed, including the restart case (a fresh provider reuses the running sandbox, does not run
+`env create` again, and starts a new holder). The one failure, `test_sse_emits_rolling_summary_events`,
+fails identically on a clean `main` (checked), so it is not caused by this change; likely an environment
+difference (Python 3.13 here, the project targets 3.14). Restart wiring: `reconcile_on_startup` already
+relaunches active sessions through `launch_runner`, which calls `create()` and `start_team()`, and
+`start_team()` clears the stale marker, so no separate `restart_team` wiring is needed.
