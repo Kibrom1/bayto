@@ -119,3 +119,9 @@
   background: #eef2ff;
   color: #312e81;
 }
+
+.task-board-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}

@@ -36,9 +36,12 @@ export function TaskBoard() {
     <section className="task-board">
       <header className="task-board-header">
         <h1>Tasks</h1>
-        <button type="button" onClick={() => setFormOpen(true)}>
-          New task
-        </button>
+        <div className="task-board-actions">
+          <a href="/services">Services</a>
+          <button type="button" onClick={() => setFormOpen(true)}>
+            New task
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -73,7 +76,7 @@ export function TaskBoard() {
                   <button
                     type="button"
                     className="task-row-action"
-                    onClick={() => window.location.assign(`/tasks/${task.id}/session-setup`)}
+                    onClick={() => window.location.assign(`/setup/${task.id}`)}
                   >
                     Start session
                   </button>

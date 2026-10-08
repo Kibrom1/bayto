@@ -1,0 +1,79 @@
+.services {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.services-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.services h2 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+  margin: 1.75rem 0 0.5rem;
+}
+
+.services-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.services-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.services-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  margin: 0.5rem 0;
+}
+
+.services-hint {
+  color: #6b7280;
+  margin: 0;
+}
+
+.services-error {
+  color: #b91c1c;
+}
+
+.services-message {
+  color: #6b7280;
+  white-space: pre-wrap;
+}
+
+.services pre {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.6rem;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 0.75rem;
+}
+
+.svc-running,
+.svc-active {
+  color: #15803d;
+}
+
+.svc-failed,
+.svc-absent {
+  color: #b91c1c;
+}
+
+.services button.link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #7c3aed;
+  text-decoration: underline;
+}
