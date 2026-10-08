@@ -57,6 +57,11 @@ class FakeSbxRunner:
             return f"exec {argv[2]}"
         return argv[0]
 
+    def stream(self, argv, *, stdin):
+        self.streamed = getattr(self, "streamed", [])
+        self.streamed.append((argv, stdin))
+        yield from getattr(self, "stream_lines", [])
+
     def start(self, argv):
         self.started.append(argv)
         held = FakeHeld()
@@ -389,3 +394,59 @@ def _fake_info(*, name: str) -> SandboxInfo:
         id=uuid.uuid4(), task_id=uuid.uuid4(), provider="local-sbx", name=name,
         status="running", image=None, created_at=None, closed_at=None,
     )
+
+
+# ---------------------------------------------------------------- streaming turns
+
+import json as _json
+
+from orchestrator.sandbox.turns import TextDelta, ToolUse, TurnResult, parse_stream_line
+
+
+def _delta(t):
+    return _json.dumps({"type": "stream_event", "event": {"type": "content_block_delta",
+                                                           "delta": {"type": "text_delta", "text": t}}})
+
+
+RESULT = _json.dumps({"type": "result", "subtype": "success", "result": "hello", "session_id": "s1",
+                      "total_cost_usd": 0.5,
+                      "usage": {"input_tokens": 3, "cache_creation_input_tokens": 4,
+                                "cache_read_input_tokens": 5, "output_tokens": 7}})
+
+
+def test_parse_stream_line_events():
+    assert parse_stream_line(_delta("hi")) == TextDelta("hi")
+    tu = _json.dumps({"type": "stream_event", "event": {"type": "content_block_start",
+                                                        "content_block": {"type": "tool_use", "name": "Bash"}}})
+    assert parse_stream_line(tu) == ToolUse("Bash")
+    r = parse_stream_line(RESULT)
+    assert r == TurnResult(text="hello", tokens_in=12, tokens_out=7, cost=0.5, session_id="s1")
+    assert parse_stream_line("not json") is None
+    assert parse_stream_line(_json.dumps({"type": "system"})) is None
+    err = parse_stream_line(_json.dumps({"type": "result", "subtype": "error_max_turns", "result": ""}))
+    assert err.is_error
+
+
+async def _collect(provider, role="dev"):
+    return [e async for e in provider.run_turn(SandboxInfo(id=uuid.uuid4(), task_id=uuid.uuid4(), provider="local-sbx",
+                                                          name="sbx-1", status="running", image=None,
+                                                          created_at=None, closed_at=None), role, "do it")]
+
+
+async def test_run_turn_streams_in_order(live_sessionmaker):
+    runner = FakeSbxRunner()
+    runner.stream_lines = [_delta("a"), "junk", _delta("b"), RESULT]
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner)
+    events = await _collect(provider)
+    assert events[:2] == [TextDelta("a"), TextDelta("b")]
+    assert isinstance(events[2], TurnResult)
+    argv, stdin = runner.streamed[0]
+    assert argv[:4] == ["exec", "-i", "sbx-1", "bash"] and argv[-1] == "dev" and stdin == "do it"
+
+
+async def test_run_turn_without_result_raises(live_sessionmaker):
+    runner = FakeSbxRunner()
+    runner.stream_lines = [_delta("a")]
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner)
+    with pytest.raises(SandboxProviderError):
+        await _collect(provider)

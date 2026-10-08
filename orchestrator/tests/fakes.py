@@ -56,6 +56,21 @@ class FakeSandboxProvider(SandboxProvider):
         return self._reconcile_result
 
 
+class FakeStreamingProvider(FakeSandboxProvider):
+    """Streams scripted TurnEvents instead of waking a seat."""
+    supports_streaming = True
+
+    def __init__(self, events, **kw):
+        super().__init__(**kw)
+        self.events = events
+        self.prompts: list[tuple[str, str]] = []
+
+    async def run_turn(self, sandbox, role, prompt):
+        self.prompts.append((role, prompt))
+        for e in self.events:
+            yield e
+
+
 def fake_sandbox() -> SandboxInfo:
     return SandboxInfo(id=uuid.uuid4(), task_id=uuid.uuid4(), provider="fake", name="sbx-test",
                         status="running", image=None, created_at=None, closed_at=None)

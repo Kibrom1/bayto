@@ -55,6 +55,7 @@ from ..models import Session as SessionRow
 from ..models import SessionAgent, Turn
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
+from ..sandbox.turns import TextDelta, ToolUse, TurnResult
 from ..floor import (
     AskHuman,
     ConversationView,
@@ -561,8 +562,16 @@ class ModeratorRunner:
             # could miss it.
             queue = self._pubsub.subscribe()
             try:
+                streamed = False
+                if getattr(self._sandbox_provider, "supports_streaming", False):
+                    try:
+                        streamed = await self._stream_turn(view, participant)
+                    except Exception:
+                        log.exception("session %s: streaming turn for %s failed; using the seat path",
+                                      self._session_id, participant)
                 try:
-                    await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
+                    if not streamed:
+                        await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
                 except SandboxCommandError as e:
                     # Reactive Fallback: if we hit a platform limit (Weekly/Daily), switch to Ollama immediately
                     if "limit" in e.stderr.lower() or "rate limit" in e.stderr.lower():
@@ -615,6 +624,31 @@ class ModeratorRunner:
             await self._record_turn(view, participant, response)
 
         await self._update_rolling_summary()
+
+    async def _stream_turn(self, view: ConversationView, participant: str) -> bool:
+        """Headless live turn: runs the seat's model with the assignment as the prompt and
+        publishes `turn_delta` / `turn_tool` / `turn_done` events while it generates. The final
+        text is sent as the seat's answer Envelope (tokens and cost in meta) so the normal
+        mirror -> `_await_response` -> `_record_turn` path records it. Returns True when the
+        answer was sent."""
+        sid = str(self._session_id)
+        prompt = await self._build_context(view)
+        result: TurnResult | None = None
+        async for event in self._sandbox_provider.run_turn(self._sandbox, participant, prompt):
+            if isinstance(event, TextDelta):
+                self._pubsub.publish({"type": "turn_delta", "data": {"session_id": sid, "from": participant, "text": event.text}})
+            elif isinstance(event, ToolUse):
+                self._pubsub.publish({"type": "turn_tool", "data": {"session_id": sid, "from": participant, "name": event.name}})
+            elif isinstance(event, TurnResult):
+                result = event
+        if result is None or result.is_error:
+            self._pubsub.publish({"type": "turn_error", "data": {"session_id": sid, "from": participant}})
+            return False
+        self._pubsub.publish({"type": "turn_done", "data": {"session_id": sid, "from": participant}})
+        await self._conversation.send(
+            sender=participant, to=[self._mode.moderator or "moderator"], kind="answer", body=result.text,
+            meta={"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost": result.cost})
+        return True
 
     async def _build_context(self, view: ConversationView) -> str:
         async with self._sessionmaker() as session:
