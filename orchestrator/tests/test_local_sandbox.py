@@ -214,6 +214,27 @@ async def test_close_releases_every_held_exec():
     assert provider._held == {}
 
 
+async def test_orchestrator_restart_brings_the_team_back_without_recreating_the_sandbox(live_sessionmaker):
+    # Process 1 creates the sandbox and starts the team; the orchestrator then exits and the held exec
+    # (a child of it) dies. Process 2 is a fresh provider, as after a restart: reconcile_on_startup ->
+    # launch_runner -> create() + start_team() must reuse the running sandbox and start a new holder.
+    runner1 = FakeSbxRunner()
+    task_id = await _make_task(live_sessionmaker)
+    first = LocalSbxSandboxProvider(live_sessionmaker, runner=runner1, team_poll_interval=0)
+    info = await first.create(task_id, name="sbx-wad-102")
+    await first.start_team(info)
+    runner1.helds[0].exit_code = -9  # the orchestrator process went away
+
+    runner2 = FakeSbxRunner()
+    second = LocalSbxSandboxProvider(live_sessionmaker, runner=runner2, team_poll_interval=0)
+    again = await second.create(task_id, name="sbx-wad-102")
+    await second.start_team(again)
+
+    assert again.id == info.id
+    assert [c for c in runner2.calls if c[:2] == ["env", "create"]] == []  # not re-created
+    assert len(runner2.started) == 1 and runner2.helds[0].terminated is False
+
+
 async def test_wake_role_builds_expected_argv():
     runner = FakeSbxRunner()
     provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
