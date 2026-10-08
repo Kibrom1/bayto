@@ -6,6 +6,8 @@
 # It never prints a secret: only names, lengths, a 4-char format prefix and yes/no comparisons.
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
+# NOTE: the probe scripts are held in variables, never written as a heredoc inside $( ). macOS ships bash 3.2, which scans a heredoc body
+# inside $( ) for the closing paren and chokes on the `case ... ;;` patterns and parentheses below (sections C and D died with 'syntax error near ;;').
 need_sbx
 name="${1:?sandbox name, e.g. bayto-dev}"; use_llm=1; [ "${2:-}" = "--no-llm" ] && use_llm=0
 ALLOWED="${ALLOWED:-api.anthropic.com github.com registry.npmjs.org pypi.org files.pythonhosted.org}"
@@ -25,7 +27,7 @@ say
 
 # ---------------------------------------------------------------- A: API key
 say "## A. Agents cannot read the real API key"
-a="$(sx_script "$name" <<'EOS' 2>&1
+read -r -d '' PROBE_A <<'EOS'
 echo "env-var-names: $(env | cut -d= -f1 | grep -iE 'anthropic|claude|api_?key|token|secret' | sort | tr '\n' ' ')"
 echo "env-has-sk-ant: $(env | grep -cE 'sk-ant-[A-Za-z0-9_-]{20,}')"
 n=0; for f in /proc/[0-9]*/environ; do c=$(grep -acE 'sk-ant-[A-Za-z0-9_-]{20,}' "$f" 2>/dev/null); [ "${c:-0}" -gt 0 ] && n=$((n+1)); done
@@ -34,7 +36,7 @@ echo "files-with-sk-ant: $(grep -rIlE 'sk-ant-[A-Za-z0-9_-]{20,}' "$HOME" --excl
 echo "claude-credentials-file: $([ -e "$HOME/.claude/.credentials.json" ] && echo present || echo absent)"
 echo "ANTHROPIC_API_KEY-set: $([ -n "${ANTHROPIC_API_KEY:-}" ] && echo "yes(len=${#ANTHROPIC_API_KEY})" || echo no)"
 EOS
-)"
+a="$(sx_script "$name" <<<"$PROBE_A" 2>&1)"
 say '```'; say "$a"; say '```'
 real=$(printf '%s\n' "$a" | awk -F': ' '/^(env-has-sk-ant|procs-with-sk-ant-in-environ|files-with-sk-ant)/{s+=$2} END{print s+0}')
 if [ "$real" -eq 0 ]; then pass "no value shaped like a real Anthropic key (sk-ant-...) in env, any process environment, or home files"
@@ -60,7 +62,7 @@ say
 
 # ---------------------------------------------------------------- C: GH_TOKEN
 say "## C. GH_TOKEN exposure (per running seat)"
-c="$(sx_script "$name" <<'EOS' 2>&1
+read -r -d '' PROBE_C <<'EOS'
 for d in /proc/[0-9]*; do
   e="$d/environ"; [ -r "$e" ] || continue
   role=$(tr '\0' '\n' < "$e" 2>/dev/null | sed -n 's/^FACTORY_ROLE=//p'); [ -n "$role" ] || continue
@@ -74,7 +76,7 @@ for d in /proc/[0-9]*; do
 done | sort -u
 echo "shell|GH_TOKEN|$([ -n "${GH_TOKEN:-}" ] && echo "set|len=${#GH_TOKEN}|$(printf %s "$GH_TOKEN" | sha256sum | cut -d' ' -f1)" || echo 'unset|-|-')"
 EOS
-)"
+c="$(sx_script "$name" <<<"$PROBE_C" 2>&1)"
 hosthash=""
 if command -v gh >/dev/null && t="$(env -u GH_TOKEN -u GITHUB_TOKEN gh auth token 2>/dev/null)" && [ -n "$t" ]; then hosthash="$(printf %s "$t" | shasum -a 256 | cut -d' ' -f1)"; unset t; fi
 say '```'; printf '%s\n' "$c" | awk -F'|' -v h="$hosthash" '{ m="-"; if ($3=="set" && h!="") m=($5==h?"MATCHES-HOST-TOKEN":"differs-from-host-token"); print $1" "$2" "$3" "$4" "m }' | tee -a "$OUT"; say '```'
@@ -88,7 +90,7 @@ say
 
 # ---------------------------------------------------------------- D: tool permissions
 say "## D. Role tool permissions are enforced"
-d="$(sx_script "$name" <<'EOS' 2>&1
+read -r -d '' PROBE_D <<'EOS'
 for d in /proc/[0-9]*; do
   [ -r "$d/environ" ] || continue
   role=$(tr '\0' '\n' < "$d/environ" 2>/dev/null | sed -n 's/^FACTORY_ROLE=//p'); [ -n "$role" ] || continue
@@ -98,7 +100,7 @@ for d in /proc/[0-9]*; do
 done | sort -u
 echo "flag-files: $(ls "$HOME/work/factory/tool-flags" 2>/dev/null | tr '\n' ' ')"
 EOS
-)"
+d="$(sx_script "$name" <<<"$PROBE_D" 2>&1)"
 say '```'; say "$d"; say '```'
 if printf '%s\n' "$d" | grep -q '|dontAsk=yes|allowedTools=yes|bypass=no$'; then
   bad="$(printf '%s\n' "$d" | grep '|dontAsk=' | grep -v '|dontAsk=yes|allowedTools=yes|bypass=no$' || true)"
@@ -109,7 +111,7 @@ if [ "$use_llm" -eq 1 ]; then
   say; say "Behavioural probe: each seat's own flags file is used with \`claude -p\` (Haiku) to try a Write-tool call and a Bash \`touch\`."
   roles="${ROLES:-$(sx "$name" 'ls "$HOME/work/factory/tool-flags" 2>/dev/null' | tr '\n' ' ')}"
   for role in $roles; do
-    res="$(sx_script "$name" "$role" <<'EOS' 2>&1
+    read -r -d '' PROBE_ROLE <<'EOS'
 role="$1"; f="$HOME/work/factory/tool-flags/$role"; cd "$HOME/work/app" || exit 3
 mapfile -t flags < "$f"
 w="$PWD/.m115-write-$role.probe"; b="/tmp/.m115-bash-$role.probe"; rm -f "$w" "$b"
@@ -120,7 +122,7 @@ echo "write-allowed-by-flags=$(awk '/^--allowedTools$/{a=1;next} /^--/{a=0} a&&(
 echo "bash-full-by-flags=$(awk '/^--allowedTools$/{a=1;next} /^--/{a=0} a&&($0=="Bash"){print "yes"}' "$f" | head -n1)"
 rm -f "$w" "$b"
 EOS
-)"
+    res="$(sx_script "$name" "$role" <<<"$PROBE_ROLE" 2>&1)"
     got_w=$(printf '%s' "$res" | sed -n 's/.*write=\([a-z]*\).*/\1/p' | head -n1); got_b=$(printf '%s' "$res" | sed -n 's/.* bash=\([a-z]*\).*/\1/p' | head -n1)
     exp_w=refused; printf '%s\n' "$res" | grep -q '^write-allowed-by-flags=yes' && exp_w=created
     exp_b=refused; printf '%s\n' "$res" | grep -q '^bash-full-by-flags=yes' && exp_b=created
