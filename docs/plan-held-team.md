@@ -39,8 +39,7 @@ Findings from M1.12 and the M1.15 rerun (docs/decisions.md 2026-10-06, docs/work
   restart the orchestrator must call `restart_team` for sessions that were active; wiring that into
   startup/`reconcile` is a follow-up.
 - Timing comes from M1.12 on one machine. The 600 s timeout is a guess, not a measured ceiling.
-- Not yet verified against a live `sbx`: the new code is tested with a fake runner only. A live check is
-  `dev-team/run.sh` plus a provider call from a Python shell on the Mac.
+- Not yet verified against a live `sbx`: the new code is tested with a fake runner only. Live check: `spikes/m1-checks/m5-held-team-live.sh bayto-dev` (sandbox running, no team started).
 
 ## Tests (fake runner, no `sbx` needed)
 
