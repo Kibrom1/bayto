@@ -11,7 +11,8 @@ source "$(dirname "$0")/lib.sh"
 need_sbx
 name="${1:?sandbox name, e.g. bayto-dev}"; use_llm=1; [ "${2:-}" = "--no-llm" ] && use_llm=0
 # raw.githubusercontent.com is an accepted exception (read-only downloads; decided 2026-10-07). gist.github.com and registry.yarnpkg.com are denied for the sandbox with:
-#   sbx policy deny network --sandbox <name> gist.github.com registry.yarnpkg.com
+#   sbx policy deny network --sandbox <name> gist.github.com   (one host per command)
+#   sbx policy deny network --sandbox <name> registry.yarnpkg.com
 ALLOWED="${ALLOWED:-api.anthropic.com github.com registry.npmjs.org pypi.org files.pythonhosted.org raw.githubusercontent.com}"
 DENIED="${DENIED:-example.com httpbin.org pastebin.com gist.github.com registry.yarnpkg.com}"
 SUFFIX_PROBES="${SUFFIX_PROBES:-api.github.com codeload.github.com}"   # reported only: tells you exact-host vs suffix matching
