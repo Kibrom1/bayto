@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import signal
 import subprocess
 import threading
@@ -135,10 +136,25 @@ ORCH_PROC = Proc("orchestrator", ["uv", "run", "--all-extras", "uvicorn", "orche
 WEB_PROC = Proc("web", ["npm", "run", "dev"], str(ROOT / "web"))
 
 
+def port_open(port=5432):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def pg_status():
+    # Any Postgres on 5432 counts, including one started outside this panel (another container, brew).
+    if port_open():
+        return "running"
     code, out = run(["docker", "inspect", "-f", "{{.State.Running}}", PG_NAME], 15)
     if code != 0:
-        return "absent" if "No such" in out else ("docker unavailable" if code == 127 else "stopped")
+        if code == 127:
+            return "docker missing"
+        if "Cannot connect" in out or "daemon" in out or "docker.sock" in out:
+            return "docker not running"
+        return "absent" if "No such" in out else "stopped"
     return "running" if out.strip() == "true" else "stopped"
 
 
@@ -146,6 +162,9 @@ def pg_start():
     st = pg_status()
     if st == "running":
         return "already running"
+    if st in ("docker missing", "docker not running"):
+        return ("Docker is not installed or on PATH." if st == "docker missing"
+                else "Docker is not running. Open Docker Desktop, wait for it to start, then try again.")
     if st == "absent":
         code, out = run(["docker", "run", "-d", "--name", PG_NAME, "-e", "POSTGRES_USER=bayto", "-e",
                          "POSTGRES_PASSWORD=bayto", "-e", "POSTGRES_DB=bayto", "-p", "5432:5432",
