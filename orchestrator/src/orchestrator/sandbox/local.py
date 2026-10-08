@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,9 +47,43 @@ from .provider import (
 
 PROVIDER_NAME = "local-sbx"
 
+# Clear a stale marker (a leftover one makes start-team exit at once and start nothing), start the
+# team, then keep this exec alive: the team dies when the exec that started it returns.
+TEAM_SCRIPT = "rm -f $HOME/work/factory/team-started; start-team; sleep infinity"
+TEAM_READY_PROBE = 'test -f "$HOME/work/factory/team-started"'
+
+
+class HeldExec(Protocol):
+    """A long-lived `sbx exec` the provider keeps open. Processes started inside a sandbox by
+    `sbx exec` die when that exec returns (M1.12), so the team lives exactly as long as this does."""
+
+    def poll(self) -> int | None: ...
+    def terminate(self) -> None: ...
+    def log_tail(self) -> str: ...
+
 
 class SbxRunner(Protocol):
     def run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]: ...
+    def start(self, argv: list[str]) -> HeldExec: ...
+
+
+class _PopenHeldExec:
+    def __init__(self, proc: subprocess.Popen, log_path: str) -> None:
+        self._proc = proc
+        self._log_path = log_path
+
+    def poll(self) -> int | None:
+        return self._proc.poll()
+
+    def terminate(self) -> None:
+        self._proc.terminate()
+
+    def log_tail(self) -> str:
+        try:
+            with open(self._log_path, errors="replace") as f:
+                return f.read()[-2000:]
+        except OSError:
+            return ""
 
 
 class SubprocessSbxRunner:
@@ -56,6 +91,12 @@ class SubprocessSbxRunner:
 
     def run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["sbx", *argv], capture_output=True, text=True, timeout=timeout, check=False)
+
+    def start(self, argv: list[str]) -> HeldExec:
+        log = tempfile.NamedTemporaryFile(prefix="sbx-held-", suffix=".log", delete=False)
+        proc = subprocess.Popen(["sbx", *argv], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+        log.close()
+        return _PopenHeldExec(proc, log.name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,10 +160,25 @@ def _diff(live: dict[str, str], rows: list[SandboxRow]) -> list[SandboxDrift]:
 
 class LocalSbxSandboxProvider(SandboxProvider):
     def __init__(self, sessionmaker: async_sessionmaker, *, runner: SbxRunner | None = None,
-                 sbxenv_path: Path = Path("team.sbxenv.yaml")) -> None:
+                 sbxenv_path: Path = Path("team.sbxenv.yaml"),
+                 team_ready_timeout: float = 600.0, team_poll_interval: float = 5.0) -> None:
         self._sessionmaker = sessionmaker
         self._runner = runner or SubprocessSbxRunner()
         self._sbxenv_path = sbxenv_path
+        # 8 agents took 437 s to start in M1.12; 600 s leaves headroom.
+        self._team_ready_timeout = team_ready_timeout
+        self._team_poll_interval = team_poll_interval
+        self._held: dict[str, HeldExec] = {}
+
+    def _release(self, name: str) -> None:
+        held = self._held.pop(name, None)
+        if held is not None and held.poll() is None:
+            held.terminate()
+
+    async def close(self) -> None:
+        """Release every held exec (orchestrator shutdown). The teams die with them."""
+        for name in list(self._held):
+            self._release(name)
 
     async def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         result = await asyncio.to_thread(self._runner.run, argv)
@@ -152,22 +208,49 @@ class LocalSbxSandboxProvider(SandboxProvider):
             return _sandbox_info(row)
 
     async def start_team(self, sandbox: SandboxInfo) -> None:
-        # *unverified: doc doesn't say explicitly whether start-team is invoked this way
-        # or fires automatically as a post-create hook from team.sbxenv.yaml
-        await self._run(["exec", sandbox.name, "start-team"])
+        """Start the team under a held-open exec and wait until `team-started` appears.
+
+        No-op if a live holder already exists. Raises SandboxProviderError if the holder exits
+        early or the team is not up within the timeout; the holder is released in both cases."""
+        name = sandbox.name
+        held = self._held.get(name)
+        if held is not None and held.poll() is None:
+            return
+        self._release(name)
+        held = self._runner.start(["exec", name, "bash", "-lc", TEAM_SCRIPT])
+        self._held[name] = held
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._team_ready_timeout
+        while True:
+            code = held.poll()
+            if code is not None:
+                tail = held.log_tail()
+                self._release(name)
+                raise SandboxProviderError(f"start-team exec for {name} exited with {code} before the team was up: {tail}")
+            probe = await asyncio.to_thread(self._runner.run, ["exec", name, "bash", "-lc", TEAM_READY_PROBE])
+            if probe.returncode == 0:
+                return
+            if loop.time() >= deadline:
+                tail = held.log_tail()
+                self._release(name)
+                raise SandboxProviderError(
+                    f"team-started not seen in {name} after {self._team_ready_timeout:.0f} s: {tail}")
+            await asyncio.sleep(self._team_poll_interval)
 
     async def restart_team(self, sandbox: SandboxInfo) -> None:
-        # M1.14 (live, 2026-10-04): files and transcripts survive a stop/start, processes do not,
-        # and the leftover `team-started` marker makes `start-team` a no-op. Remove it, then start
-        # the team again; seats re-ack their briefs. Whether they pick up their earlier
+        # M1.14: a stop keeps files and transcripts but kills processes, and the leftover marker
+        # would make start-team a no-op. start_team() clears the marker itself, so restarting is
+        # releasing the dead holder and starting again. Whether seats resume their earlier
         # conversation (claude --resume) is NOT verified yet.
-        await self._run(["exec", sandbox.name, "bash", "-lc", "rm -f $HOME/work/factory/team-started; start-team"])
+        self._release(sandbox.name)
+        await self.start_team(sandbox)
 
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
         cmd = "crew-notify-fallback" if fallback else "crew-notify"
         await self._run(["exec", sandbox.name, cmd, role])
 
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:
+        self._release(sandbox.name)
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
@@ -180,6 +263,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
             return _sandbox_info(row)
 
     async def remove(self, sandbox: SandboxInfo) -> SandboxInfo:
+        self._release(sandbox.name)
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
