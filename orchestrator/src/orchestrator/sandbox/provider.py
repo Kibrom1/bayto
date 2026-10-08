@@ -14,8 +14,11 @@ from __future__ import annotations
 
 import abc
 import uuid
+from typing import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
+
+from .turns import TurnEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +84,15 @@ class SandboxProvider(abc.ABC):
         start_team() would print 'Team already started' and do nothing. Not abstract: the
         default is start_team(), correct for a sandbox that has never run a team."""
         await self.start_team(sandbox)
+
+    # Headless streamed turns (M1.13 verdict). Off by default: a provider that supports them sets
+    # `supports_streaming` and implements run_turn(); the moderator falls back to wake_role() otherwise.
+    supports_streaming: bool = False
+
+    def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str) -> AsyncIterator[TurnEvent]:
+        """Run ONE turn of `role` headlessly and yield its events as they arrive (TextDelta..., then
+        exactly one TurnResult). The prompt is the whole input: a headless turn has no inbox."""
+        raise NotImplementedError(f"{type(self).__name__} does not support streamed turns")
 
     @abc.abstractmethod
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:

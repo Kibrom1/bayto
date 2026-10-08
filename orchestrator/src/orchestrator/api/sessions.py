@@ -577,9 +577,9 @@ async def session_events(
                     continue
                 if event.get("type") == "message":
                     yield json.dumps(event["data"])
-                elif event.get("type") == "rolling_summary":
+                elif event.get("type") in ("rolling_summary", "turn_delta", "turn_tool", "turn_done", "turn_error"):
                     yield {
-                        "event": "rolling_summary",
+                        "event": event["type"],
                         "data": json.dumps(event["data"])
                     }
         finally:

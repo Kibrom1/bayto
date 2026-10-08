@@ -812,3 +812,38 @@ async def test_rolling_summary_publishes_to_pubsub(tmp_path, live_sessionmaker):
     summary_events = [e for e in events if e.get("type") == "rolling_summary"]
     assert len(summary_events) == 1
     assert summary_events[0]["data"]["summary"] == "The new summary text"
+
+
+# ---------------------------------------------------------------- streaming turns (M5)
+
+async def test_streaming_turn_publishes_deltas_and_records_turn(tmp_path, live_sessionmaker):
+    from orchestrator.sandbox.turns import TextDelta, TurnResult
+    from fakes import FakeStreamingProvider
+
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config()
+    runner, transport, mirror, _ = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy())
+    provider = FakeStreamingProvider([TextDelta("hel"), TextDelta("lo"),
+                                      TurnResult(text="hello", tokens_in=10, tokens_out=5, cost=0.01, session_id="s")])
+    runner._sandbox_provider = provider
+    seen = runner._pubsub.subscribe()
+
+    async def mirror_later():
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            await mirror.poll_once()
+    task = asyncio.create_task(mirror_later())
+    await runner.run_once()
+    task.cancel()
+
+    types = []
+    while not seen.empty():
+        types.append(seen.get_nowait()["type"])
+    assert types.count("turn_delta") == 2 and "turn_done" in types
+    assert provider.woken == []  # the seat was not poked: the turn ran headless
+    async with live_sessionmaker() as session:
+        turn = (await session.execute(select(Turn).where(Turn.session_id == session_id))).scalars().one()
+    assert turn.content == "hello" and turn.tokens_in == 10 and float(turn.cost) == 0.01

@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import AsyncIterator, Iterator, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -44,6 +45,7 @@ from .provider import (
     SandboxProvider,
     SandboxProviderError,
 )
+from .turns import TextDelta, ToolUse, TurnEvent, TurnResult, parse_stream_line
 
 PROVIDER_NAME = "local-sbx"
 
@@ -55,6 +57,20 @@ HOLDER_PID = TEAM_DIR + "/team-holder.pid"
 # Clear a stale marker (a leftover one makes start-team exit at once and start nothing), record the PID,
 # start the team, then keep this exec alive: the team dies when the exec that started it ends.
 TEAM_SCRIPT = f"rm -f {TEAM_DIR}/team-started; echo $$ > {HOLDER_PID}; start-team; sleep infinity"
+# One headless turn for a role (positional $1). Mirrors how start-team launches a seat: the role's own
+# tool-flag file (one argv element per line; refuses to run a role with none), its model from team.tsv, the
+# workspace as an extra dir, and the role brief as the system prompt. The prompt arrives on stdin.
+TURN_SCRIPT = r'''set -euo pipefail
+role="$1"
+export WORKSPACE_DIR="$HOME/work" FACTORY_DIR="$HOME/work/factory" PATH="$HOME/work/bin:$HOME/.local/bin:$PATH" FACTORY_ROLE="$role"
+cd "$WORKSPACE_DIR/app"
+[ -s "$FACTORY_DIR/tool-flags/$role" ] || { echo "no tool-permission flags for $role; refusing to run it unrestricted" >&2; exit 2; }
+model="$(awk -v r="$role" '$1==r {print $4}' "$WORKSPACE_DIR/team.tsv")"
+args=(--model "$model")
+while IFS= read -r flag; do args+=("$flag"); done < "$FACTORY_DIR/tool-flags/$role"
+exec claude -p "${args[@]}" --add-dir "$WORKSPACE_DIR" --append-system-prompt "$(cat "$WORKSPACE_DIR/roles/$role.md")" \
+  --output-format stream-json --verbose --include-partial-messages
+'''
 TEAM_READY_PROBE = f'test -f "{TEAM_DIR}/team-started"'
 # Exit 0 only if a holder from an earlier start is still alive and the team came up.
 TEAM_ALIVE_PROBE = f'p=$(cat "{HOLDER_PID}" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" && test -f "{TEAM_DIR}/team-started"'
@@ -83,6 +99,7 @@ class HeldExec(Protocol):
 class SbxRunner(Protocol):
     def run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]: ...
     def start(self, argv: list[str]) -> HeldExec: ...
+    def stream(self, argv: list[str], *, stdin: str) -> Iterator[str]: ...
 
 
 class _PopenHeldExec:
@@ -109,6 +126,25 @@ class SubprocessSbxRunner:
 
     def run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(["sbx", *argv], capture_output=True, text=True, timeout=timeout, check=False)
+
+    def stream(self, argv: list[str], *, stdin: str) -> Iterator[str]:
+        """Run `sbx <argv>` with `stdin` as input and yield stdout lines as they arrive. Raises
+        SandboxCommandError if the process exits non-zero. Closing the generator early kills it."""
+        proc = subprocess.Popen(["sbx", *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
+        try:
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(stdin)
+            proc.stdin.close()
+            yield from proc.stdout
+            err = proc.stderr.read() if proc.stderr else ""
+            code = proc.wait()
+            if code != 0:
+                raise SandboxCommandError(argv, code, err)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
     def start(self, argv: list[str]) -> HeldExec:
         log = tempfile.NamedTemporaryFile(prefix="sbx-held-", suffix=".log", delete=False)
@@ -187,6 +223,8 @@ class LocalSbxSandboxProvider(SandboxProvider):
         self._team_ready_timeout = team_ready_timeout
         self._team_poll_interval = team_poll_interval
         self._held: dict[str, HeldExec] = {}
+        # Streamed turns are opt-in until they have been checked on a live team (m5-turn-live.sh).
+        self.supports_streaming = os.environ.get("BAYTO_STREAMING_TURNS") == "1"
 
     def _drop_client(self, name: str) -> None:
         """Forget and terminate the host-side `sbx exec` client. This does NOT stop the team."""
@@ -278,6 +316,28 @@ class LocalSbxSandboxProvider(SandboxProvider):
         # Whether seats resume their earlier conversation (claude --resume) is NOT verified yet.
         await self.release_team(sandbox)
         await self.start_team(sandbox)
+
+    async def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str) -> AsyncIterator[TurnEvent]:
+        argv = ["exec", "-i", sandbox.name, "bash", "-lc", TURN_SCRIPT, "_", role]
+        lines = iter(self._runner.stream(argv, stdin=prompt))
+        saw_result = False
+        try:
+            while True:
+                line = await asyncio.to_thread(next, lines, None)
+                if line is None:
+                    break
+                event = parse_stream_line(line)
+                if event is None:
+                    continue
+                if isinstance(event, TurnResult):
+                    saw_result = True
+                yield event
+        finally:
+            close = getattr(lines, "close", None)
+            if close is not None:
+                await asyncio.to_thread(close)
+        if not saw_result:
+            raise SandboxProviderError(f"turn for {role} in {sandbox.name} ended without a result event")
 
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
         cmd = "crew-notify-fallback" if fallback else "crew-notify"
