@@ -47,10 +47,28 @@ from .provider import (
 
 PROVIDER_NAME = "local-sbx"
 
-# Clear a stale marker (a leftover one makes start-team exit at once and start nothing), start the
-# team, then keep this exec alive: the team dies when the exec that started it returns.
-TEAM_SCRIPT = "rm -f $HOME/work/factory/team-started; start-team; sleep infinity"
-TEAM_READY_PROBE = 'test -f "$HOME/work/factory/team-started"'
+# The team lives as long as the sandbox-side exec does; killing the `sbx exec` CLIENT on the host does
+# NOT end it (live check, 2026-10-08: seats kept running after the client was terminated). So the exec
+# records its own PID, and the team is adopted or released through that PID, not through the client.
+TEAM_DIR = "$HOME/work/factory"
+HOLDER_PID = TEAM_DIR + "/team-holder.pid"
+# Clear a stale marker (a leftover one makes start-team exit at once and start nothing), record the PID,
+# start the team, then keep this exec alive: the team dies when the exec that started it ends.
+TEAM_SCRIPT = f"rm -f {TEAM_DIR}/team-started; echo $$ > {HOLDER_PID}; start-team; sleep infinity"
+TEAM_READY_PROBE = f'test -f "{TEAM_DIR}/team-started"'
+# Exit 0 only if a holder from an earlier start is still alive and the team came up.
+TEAM_ALIVE_PROBE = f'p=$(cat "{HOLDER_PID}" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" && test -f "{TEAM_DIR}/team-started"'
+# Stop the team explicitly. start-team runs `nohup herdr server &`, so the herdr server and every seat
+# are detached from the exec that started them: ending the holder alone leaves them running (live check,
+# 2026-10-08: a restart then failed with "agent name coordinator is already used"). So: end the holder,
+# kill every process that carries a FACTORY_ROLE (the seats), kill the herdr server, clear the markers.
+TEAM_KILL = (
+    f'p=$(cat "{HOLDER_PID}" 2>/dev/null); [ -n "$p" ] && {{ pkill -P "$p"; kill "$p"; }}; '
+    'for d in /proc/[0-9]*; do pid=${d#/proc/}; [ "$pid" = "$$" ] && continue; '
+    'tr "\\0" "\\n" 2>/dev/null < $d/environ | grep -q "^FACTORY_ROLE=" && kill "$pid"; done; '
+    'pkill -f "[h]erdr server"; sleep 2; '
+    f'rm -f "{HOLDER_PID}" "{TEAM_DIR}/team-started"; true'
+)
 
 
 class HeldExec(Protocol):
@@ -161,24 +179,35 @@ def _diff(live: dict[str, str], rows: list[SandboxRow]) -> list[SandboxDrift]:
 class LocalSbxSandboxProvider(SandboxProvider):
     def __init__(self, sessionmaker: async_sessionmaker, *, runner: SbxRunner | None = None,
                  sbxenv_path: Path = Path("team.sbxenv.yaml"),
-                 team_ready_timeout: float = 600.0, team_poll_interval: float = 5.0) -> None:
+                 team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0) -> None:
         self._sessionmaker = sessionmaker
         self._runner = runner or SubprocessSbxRunner()
         self._sbxenv_path = sbxenv_path
-        # 8 agents took 437 s to start in M1.12; 600 s leaves headroom.
+        # 8 agents took 437 s in M1.12 and 512 s in the 2026-10-08 live check; 900 s leaves headroom.
         self._team_ready_timeout = team_ready_timeout
         self._team_poll_interval = team_poll_interval
         self._held: dict[str, HeldExec] = {}
 
-    def _release(self, name: str) -> None:
+    def _drop_client(self, name: str) -> None:
+        """Forget and terminate the host-side `sbx exec` client. This does NOT stop the team."""
         held = self._held.pop(name, None)
         if held is not None and held.poll() is None:
             held.terminate()
 
+    async def release_team(self, sandbox: SandboxInfo) -> None:
+        """Stop the team: end the sandbox-side holder (best effort; the sandbox may already be stopped)
+        and drop the host-side client."""
+        try:
+            await asyncio.to_thread(self._runner.run, ["exec", sandbox.name, "bash", "-lc", TEAM_KILL])
+        except Exception:
+            pass
+        self._drop_client(sandbox.name)
+
     async def close(self) -> None:
-        """Release every held exec (orchestrator shutdown). The teams die with them."""
+        """Orchestrator shutdown: drop the host-side clients only. Teams keep running in their sandboxes
+        (a sandbox stops only on user action) and the next start_team() adopts them."""
         for name in list(self._held):
-            self._release(name)
+            self._drop_client(name)
 
     async def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
         result = await asyncio.to_thread(self._runner.run, argv)
@@ -208,15 +237,21 @@ class LocalSbxSandboxProvider(SandboxProvider):
             return _sandbox_info(row)
 
     async def start_team(self, sandbox: SandboxInfo) -> None:
-        """Start the team under a held-open exec and wait until `team-started` appears.
+        """Make sure the team is running, and return once it is up.
 
-        No-op if a live holder already exists. Raises SandboxProviderError if the holder exits
-        early or the team is not up within the timeout; the holder is released in both cases."""
+        If a holder is already alive (here, or left by an earlier orchestrator process: the sandbox
+        side is checked by PID) the team is adopted and nothing is started, so a relaunch never
+        starts a second set of seats. Otherwise the team is started under a held-open exec and we
+        wait until `team-started` appears. Raises SandboxProviderError if the exec exits early or the
+        team is not up in time; the exec is then ended."""
         name = sandbox.name
         held = self._held.get(name)
         if held is not None and held.poll() is None:
             return
-        self._release(name)
+        self._drop_client(name)
+        alive = await asyncio.to_thread(self._runner.run, ["exec", name, "bash", "-lc", TEAM_ALIVE_PROBE])
+        if alive.returncode == 0:
+            return  # adopt the running team
         held = self._runner.start(["exec", name, "bash", "-lc", TEAM_SCRIPT])
         self._held[name] = held
         loop = asyncio.get_running_loop()
@@ -225,24 +260,23 @@ class LocalSbxSandboxProvider(SandboxProvider):
             code = held.poll()
             if code is not None:
                 tail = held.log_tail()
-                self._release(name)
+                self._drop_client(name)
                 raise SandboxProviderError(f"start-team exec for {name} exited with {code} before the team was up: {tail}")
             probe = await asyncio.to_thread(self._runner.run, ["exec", name, "bash", "-lc", TEAM_READY_PROBE])
             if probe.returncode == 0:
                 return
             if loop.time() >= deadline:
                 tail = held.log_tail()
-                self._release(name)
+                await self.release_team(sandbox)
                 raise SandboxProviderError(
                     f"team-started not seen in {name} after {self._team_ready_timeout:.0f} s: {tail}")
             await asyncio.sleep(self._team_poll_interval)
 
     async def restart_team(self, sandbox: SandboxInfo) -> None:
-        # M1.14: a stop keeps files and transcripts but kills processes, and the leftover marker
-        # would make start-team a no-op. start_team() clears the marker itself, so restarting is
-        # releasing the dead holder and starting again. Whether seats resume their earlier
-        # conversation (claude --resume) is NOT verified yet.
-        self._release(sandbox.name)
+        # M1.14: a stop keeps files and transcripts but kills processes. Also used to replace a team that
+        # is still running. End any old holder first (otherwise start_team would adopt it), then start.
+        # Whether seats resume their earlier conversation (claude --resume) is NOT verified yet.
+        await self.release_team(sandbox)
         await self.start_team(sandbox)
 
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
@@ -250,12 +284,13 @@ class LocalSbxSandboxProvider(SandboxProvider):
         await self._run(["exec", sandbox.name, cmd, role])
 
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:
-        self._release(sandbox.name)
+        self._drop_client(sandbox.name)
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
                 raise SandboxProviderError(f"no sandbox row for id={sandbox.id}")
             if row.status != "stopped":
+                await self.release_team(sandbox)  # end the sandbox-side holder first
                 await self._run(["env", "stop", sandbox.name])  # *unverified subcommand name
                 row.status = "stopped"
             await session.commit()
@@ -263,7 +298,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
             return _sandbox_info(row)
 
     async def remove(self, sandbox: SandboxInfo) -> SandboxInfo:
-        self._release(sandbox.name)
+        await self.release_team(sandbox)
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
