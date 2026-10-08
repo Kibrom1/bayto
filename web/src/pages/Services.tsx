@@ -1,13 +1,32 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { controlAction, getControlState, getLog, type ControlState } from '../api/control'
 import './Services.css'
 
 type ServiceName = 'postgres' | 'orchestrator' | 'web'
 
+const SERVICE_INFO: Record<ServiceName, { title: string; hint: string }> = {
+  postgres: { title: 'Postgres', hint: 'Database, in Docker (container bayto-pg, port 5432)' },
+  orchestrator: { title: 'Orchestrator', hint: 'API and moderator, port 8000' },
+  web: { title: 'Web app', hint: 'This page, port 5173' },
+}
+
+function tone(status: string): 'ok' | 'bad' | 'idle' | 'busy' {
+  if (status === 'running' || status === 'active') return 'ok'
+  if (status === 'starting' || status === 'stopping') return 'busy'
+  if (status === 'failed' || status.startsWith('docker')) return 'bad'
+  return 'idle'
+}
+
+function StatusPill({ status }: { status: string }) {
+  return <span className={`pill pill-${tone(status)}`}><span className="pill-dot" />{status}</span>
+}
+
 export function Services() {
   const [state, setState] = useState<ControlState | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [results, setResults] = useState<Record<string, { text: string; bad: boolean }>>({})
   const [log, setLog] = useState('')
   const [logName, setLogName] = useState<'orchestrator' | 'web'>('orchestrator')
   const [sessionId, setSessionId] = useState('')
@@ -17,26 +36,24 @@ export function Services() {
   const [synthesisModel, setSynthesisModel] = useState('')
   const [streaming, setStreaming] = useState(true)
   const [apiKey, setApiKey] = useState('')
-  const [, setSeeded] = useState(false)
+  const [seeded, setSeeded] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
       const s = await getControlState()
       setState(s)
       setError(null)
-      setSeeded((done) => {
-        if (!done) {
-          setSummaryModel(s.config.summary_model)
-          setSynthesisModel(s.config.synthesis_model)
-          setStreaming(s.config.streaming)
-        }
-        return true
-      })
+      if (!seeded) {
+        setSummaryModel(s.config.summary_model)
+        setSynthesisModel(s.config.synthesis_model)
+        setStreaming(s.config.streaming)
+        setSeeded(true)
+      }
       setLog(await getLog(logName))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
-  }, [logName])
+  }, [logName, seeded])
 
   useEffect(() => {
     refresh()
@@ -44,93 +61,154 @@ export function Services() {
     return () => clearInterval(t)
   }, [refresh])
 
-  async function act(body: Record<string, unknown>) {
-    const out = await controlAction(body)
-    setMessage(out)
-    refresh()
-    return out
+  async function act(key: string, body: Record<string, unknown>): Promise<string> {
+    setBusy(key)
+    try {
+      const out = await controlAction(body)
+      const bad = /not running|not installed|not found|failed|error|denied|unreachable|bad request|cannot|no such/i.test(out)
+      setResults((r) => ({ ...r, [key]: { text: out, bad } }))
+      return out
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e)
+      setResults((r) => ({ ...r, [key]: { text, bad: true } }))
+      return text
+    } finally {
+      setBusy(null)
+      refresh()
+    }
   }
 
-  async function saveConfig() {
-    await act({ action: 'config', summary_model: summaryModel, synthesis_model: synthesisModel, streaming, api_key: apiKey })
-    setApiKey('')
-  }
+  const services = state ? (Object.keys(state.services) as ServiceName[]) : []
+  const result = (key: string) => results[key]
 
   return (
-    <section className="services">
-      <header className="services-header">
-        <h1>Services</h1>
-        <a href="/">Tasks</a>
+    <div className="svc-page">
+      <header className="svc-header">
+        <div>
+          <p className="svc-kicker">Bayto</p>
+          <h1>Services</h1>
+        </div>
+        <Link className="svc-btn" to="/">← Tasks</Link>
       </header>
 
-      {error && <p role="alert" className="services-error">{error}</p>}
-      {message && <p className="services-message">{message}</p>}
+      {error && (
+        <div className="svc-alert bad" role="alert">
+          <strong>The control script isn't reachable.</strong>
+          <span>{error}</span>
+        </div>
+      )}
 
       {state && (
         <>
-          <h2>Dev stack</h2>
-          <table className="services-table">
-            <tbody>
-              {(Object.keys(state.services) as ServiceName[]).map((name) => (
-                <tr key={name}>
-                  <td>{name}{name === 'web' ? ' (this page)' : ''}</td>
-                  <td className={`svc-${state.services[name]}`}>{state.services[name]}</td>
-                  <td>
-                    <button type="button" onClick={() => act({ action: 'service', name, op: 'start' })}>Start</button>{' '}
-                    <button type="button" disabled={name === 'web'} onClick={() => act({ action: 'service', name, op: 'stop' })}>Stop</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <section className="svc-card" aria-label="Dev stack">
+            <h2>Dev stack</h2>
+            {services.map((name) => {
+              const status = state.services[name]
+              const running = tone(status) === 'ok'
+              const r = result(`svc:${name}`)
+              const working = busy === `svc:${name}`
+              return (
+                <div className="svc-row" key={name}>
+                  <div className="svc-row-main">
+                    <div className="svc-row-title">{SERVICE_INFO[name].title}</div>
+                    <div className="svc-row-hint">{SERVICE_INFO[name].hint}</div>
+                    {r && <div className={`svc-result${r.bad ? ' bad' : ''}`} role={r.bad ? 'alert' : 'status'}>{r.text}</div>}
+                  </div>
+                  <StatusPill status={status} />
+                  <div className="svc-row-actions">
+                    <button type="button" className="svc-btn primary" disabled={running || working}
+                      onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'start' })}>
+                      {working ? 'Working…' : 'Start'}
+                    </button>
+                    <button type="button" className="svc-btn" disabled={!running || working || name === 'web'}
+                      title={name === 'web' ? 'Stop it with Ctrl+C in the terminal running bayto-control.py' : undefined}
+                      onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'stop' })}>
+                      Stop
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </section>
 
-          <h2>Orchestrator settings</h2>
-          <p className="services-hint">Applied the next time the orchestrator starts. The API key stays in the control script's memory.</p>
-          <div className="services-row">
-            <label>Summary model <input value={summaryModel} onChange={(e) => setSummaryModel(e.target.value)} /></label>
-            <label>Synthesis model <input value={synthesisModel} onChange={(e) => setSynthesisModel(e.target.value)} /></label>
-          </div>
-          <div className="services-row">
-            <label>Anthropic API key <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={state.config.api_key ? 'key set' : 'not set'} /></label>
-            <label><input type="checkbox" checked={streaming} onChange={(e) => setStreaming(e.target.checked)} /> Streaming turns</label>
-            <button type="button" onClick={saveConfig}>Save</button>
-          </div>
+          <section className="svc-card" aria-label="Orchestrator settings">
+            <h2>Orchestrator settings</h2>
+            <p className="svc-note">Applied the next time the orchestrator starts. The API key stays in the control script's memory and is never written to disk.</p>
+            <div className="svc-form">
+              <label>Summary model<input value={summaryModel} onChange={(e) => setSummaryModel(e.target.value)} /></label>
+              <label>Synthesis model<input value={synthesisModel} onChange={(e) => setSynthesisModel(e.target.value)} /></label>
+              <label>Anthropic API key
+                <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={state.config.api_key ? 'Key is set. Type to replace.' : 'Not set'} />
+              </label>
+              <label className="svc-check"><input type="checkbox" checked={streaming} onChange={(e) => setStreaming(e.target.checked)} />Stream turns live</label>
+            </div>
+            <div className="svc-actions">
+              <button type="button" className="svc-btn primary" disabled={busy === 'cfg'}
+                onClick={async () => { await act('cfg', { action: 'config', summary_model: summaryModel, synthesis_model: synthesisModel, streaming, api_key: apiKey }); setApiKey('') }}>
+                Save settings
+              </button>
+              {result('cfg') && <span className="svc-result">{result('cfg').text}</span>}
+            </div>
+          </section>
 
-          <h2>Sessions</h2>
-          <table className="services-table">
-            <tbody>
-              {state.sessions.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.task}</td>
-                  <td><button type="button" className="link" onClick={() => setSessionId(s.id)}>{s.id.slice(0, 8)}</button> <a href={`/room/${s.id}`}>room</a></td>
-                  <td className={`svc-${s.status}`}>{s.status}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="services-row">
-            <input value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="session id" />
-            {(['start', 'pause', 'resume', 'stop'] as const).map((op) => (
-              <button key={op} type="button" onClick={() => act({ action: 'session', id: sessionId.trim(), op })}>{op}</button>
+          <section className="svc-card" aria-label="Sessions">
+            <h2>Sessions</h2>
+            {state.sessions.length === 0 && <p className="svc-note">No sessions yet. Create one from a task.</p>}
+            {state.sessions.map((s) => (
+              <div className="svc-row" key={s.id}>
+                <div className="svc-row-main">
+                  <div className="svc-row-title">{s.task}</div>
+                  <div className="svc-row-hint">
+                    <button type="button" className="svc-link" onClick={() => setSessionId(s.id)}>{s.id.slice(0, 8)}</button>
+                    {' · '}<Link to={`/room/${s.id}`}>Open room</Link>
+                  </div>
+                </div>
+                <StatusPill status={s.status} />
+              </div>
             ))}
-          </div>
+            <div className="svc-actions">
+              <input className="svc-input" value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="Session id" aria-label="Session id" />
+              {(['start', 'pause', 'resume', 'stop'] as const).map((op) => (
+                <button key={op} type="button" className="svc-btn" disabled={!sessionId.trim() || busy === `ses:${op}`}
+                  onClick={() => act(`ses:${op}`, { action: 'session', id: sessionId.trim(), op })}>
+                  {op[0].toUpperCase() + op.slice(1)}
+                </button>
+              ))}
+            </div>
+            {Object.entries(results).filter(([k]) => k.startsWith('ses:')).slice(-1).map(([k, r]) => (
+              <div key={k} className={`svc-result${r.bad ? ' bad' : ''}`}>{r.text}</div>
+            ))}
+          </section>
 
-          <h2>Sandboxes</h2>
-          <div className="services-row">
-            <button type="button" onClick={async () => setSandboxOut(await act({ action: 'sbx', op: 'ls' }))}>List</button>
-            <input value={sandboxName} onChange={(e) => setSandboxName(e.target.value)} placeholder="sandbox name" />
-            <button type="button" onClick={async () => setSandboxOut(await act({ action: 'sbx', op: 'stop', name: sandboxName.trim() }))}>Stop sandbox</button>
-          </div>
-          {sandboxOut && <pre>{sandboxOut}</pre>}
+          <section className="svc-card" aria-label="Sandboxes">
+            <h2>Sandboxes</h2>
+            <div className="svc-actions">
+              <button type="button" className="svc-btn" disabled={busy === 'sbx:ls'}
+                onClick={async () => setSandboxOut(await act('sbx:ls', { action: 'sbx', op: 'ls' }))}>List sandboxes</button>
+              <input className="svc-input" value={sandboxName} onChange={(e) => setSandboxName(e.target.value)} placeholder="Sandbox name" aria-label="Sandbox name" />
+              <button type="button" className="svc-btn danger" disabled={!sandboxName.trim() || busy === 'sbx:stop'}
+                onClick={async () => { if (confirm(`Stop sandbox ${sandboxName.trim()}?`)) setSandboxOut(await act('sbx:stop', { action: 'sbx', op: 'stop', name: sandboxName.trim() })) }}>
+                Stop sandbox
+              </button>
+            </div>
+            {sandboxOut && <pre className="svc-console">{sandboxOut}</pre>}
+          </section>
 
-          <h2>Logs</h2>
-          <div className="services-row">
-            <button type="button" onClick={() => setLogName('orchestrator')}>orchestrator</button>
-            <button type="button" onClick={() => setLogName('web')}>web</button>
-          </div>
-          <pre>{log}</pre>
+          <section className="svc-card" aria-label="Logs">
+            <div className="svc-card-head">
+              <h2>Logs</h2>
+              <div className="svc-tabs" role="tablist">
+                {(['orchestrator', 'web'] as const).map((n) => (
+                  <button key={n} type="button" role="tab" aria-selected={logName === n}
+                    className={`svc-tab${logName === n ? ' on' : ''}`} onClick={() => setLogName(n)}>{n}</button>
+                ))}
+              </div>
+            </div>
+            <pre className="svc-console">{log || 'No output yet.'}</pre>
+          </section>
         </>
       )}
-    </section>
+    </div>
   )
 }
