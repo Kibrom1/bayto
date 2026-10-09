@@ -30,6 +30,7 @@ export function Services() {
   const [confirmSbx, setConfirmSbx] = useState(false)
   const [results, setResults] = useState<Record<string, { text: string; bad: boolean }>>({})
   const [log, setLog] = useState('')
+  const [copied, setCopied] = useState(false)
   const [logName, setLogName] = useState<'orchestrator' | 'web'>('orchestrator')
   const [sessionId, setSessionId] = useState('')
   const [sandboxName, setSandboxName] = useState('')
@@ -53,11 +54,30 @@ export function Services() {
         setBackend(s.config.llm_backend)
         setSeeded(true)
       }
-      setLog(await getLog(logName))
+      const next = await getLog(logName)
+      setLog((prev) => (prev === next ? prev : next))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }, [logName, seeded])
+
+  async function copyLog() {
+    try {
+      await navigator.clipboard.writeText(log)
+    } catch {
+      // Clipboard API unavailable: select the text so Ctrl/Cmd+C works.
+      const el = document.getElementById('svc-log')
+      if (el) {
+        const r = document.createRange()
+        r.selectNodeContents(el)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(r)
+      }
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
 
   useEffect(() => {
     refresh()
@@ -226,8 +246,9 @@ export function Services() {
                     className={`svc-tab${logName === n ? ' on' : ''}`} onClick={() => setLogName(n)}>{n}</button>
                 ))}
               </div>
+              <button type="button" className="btn sm" disabled={!log} onClick={copyLog}>{copied ? 'Copied' : 'Copy log'}</button>
             </div>
-            <pre className="svc-console">{log || 'No output yet.'}</pre>
+            <pre id="svc-log" className="svc-console" tabIndex={0}>{log || 'No output yet.'}</pre>
           </section>
         </>
       )}
