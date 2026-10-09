@@ -38,7 +38,11 @@ def configure_tracing() -> None:
     if endpoint:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
         exporter = OTLPSpanExporter()  # reads OTEL_EXPORTER_OTLP_ENDPOINT itself
-    else:
+    elif os.environ.get("BAYTO_TRACE_CONSOLE") == "1":
         exporter = ConsoleSpanExporter()
+    else:
+        # Console span dumps flood the log and bury real errors, so they are opt-in.
+        trace.set_tracer_provider(provider)
+        return
     provider.add_span_processor(BatchSpanProcessor(exporter))
     trace.set_tracer_provider(provider)

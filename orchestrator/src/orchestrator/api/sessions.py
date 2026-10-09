@@ -25,7 +25,7 @@ from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
-from .runtime import launch_runner
+from .runtime import launch_runner, session_failures
 
 log = logging.getLogger(__name__)
 
@@ -488,6 +488,7 @@ class SessionDetailOut(BaseModel):
     budget: dict | None
     usage: UsageOut
     turn_counts: list[TurnCountOut]
+    failure_reason: str | None = None
 
 
 class SessionDetailResponse(BaseModel):
@@ -523,6 +524,7 @@ async def get_session(
         usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
         turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
                      for role, agent_id, count in turn_counts_rows],
+        failure_reason=session_failures.get(session_id) if row.status == "failed" else None,
     ))
 
 

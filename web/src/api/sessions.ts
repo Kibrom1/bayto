@@ -79,6 +79,7 @@ export interface SessionDetailOut {
   budget: any | null
   usage: UsageOut
   turn_counts: TurnCountOut[]
+  failure_reason?: string | null
 }
 
 async function parseError(res: Response): Promise<string> {
