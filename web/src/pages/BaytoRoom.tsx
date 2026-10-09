@@ -303,7 +303,8 @@ export function BaytoRoom() {
               <div className={`meter-fill${pct >= 100 ? ' over' : pct >= 80 ? ' warn' : ''}`} style={{ width: `${pct}%` }} />
             </div>
           )}
-          <div className="usage-line"><span>Tokens</span><strong>{fmt(tokens)}{budgetTokens ? ` / ${fmt(budgetTokens)}` : ''}</strong></div>
+          {budgetTokens !== null && tokens > budgetTokens && <p className="hint">Past the suggested token budget. The session continues; only the dollar cap stops it.</p>}
+          <div className="usage-line"><span>Tokens</span><strong>{fmt(tokens)}{budgetTokens ? ` / ${fmt(budgetTokens)} suggested` : ''}</strong></div>
           <div className="usage-line"><span>Cost</span><strong>${session.usage.cost.toFixed(4)}</strong></div>
         </aside>
       </div>

@@ -232,12 +232,13 @@ export function SessionSetup() {
               ))}
             </div>
             <div className="field">
-              <label htmlFor="b-dollars">Dollar cap</label>
+              <label htmlFor="b-dollars">Dollar cap (hard limit)</label>
               <input id="b-dollars" type="number" min="0.01" step="0.01" inputMode="decimal" value={dollars} onChange={(e) => setDollars(e.target.value)} />
             </div>
             <div className="field">
-              <label htmlFor="b-tokens">Token cap</label>
-              <input id="b-tokens" type="number" min="1000" step="1000" inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} />
+              <label htmlFor="b-tokens">Token budget (suggested)</label>
+              <input id="b-tokens" type="number" min="1000" step="1000" inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} aria-describedby="b-tokens-hint" />
+              <span id="b-tokens-hint" className="hint">A guide only. The session keeps going past it. The dollar cap is the hard stop.</span>
             </div>
             <div className="estimate">
               <h3>Estimated cost</h3>
@@ -250,7 +251,7 @@ export function SessionSetup() {
                   <span style={{ width: `${Math.min(100, pct)}%` }} className={pct > 80 ? 'warn' : ''} />
                 </div>
               )}
-              <p className="hint">A planning estimate, not a quote. The session stops at the cap.</p>
+              <p className="hint">A planning estimate, not a quote. The session stops at the dollar cap.</p>
             </div>
           </section>
 
