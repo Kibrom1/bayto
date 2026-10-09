@@ -48,7 +48,7 @@ class Proc:
     def __init__(self, name, argv, cwd, env_fn=None, pre=None):
         self.name, self.argv, self.cwd, self.env_fn, self.pre = name, argv, cwd, env_fn, pre
         self.p: subprocess.Popen | None = None
-        self.log = collections.deque(maxlen=400)
+        self.log = collections.deque(maxlen=3000)
         self.launching = False
 
     def running(self):

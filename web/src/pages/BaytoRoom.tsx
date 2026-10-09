@@ -201,6 +201,12 @@ export function BaytoRoom() {
           onConfirm={() => { setConfirmStop(false); run(() => stopSession(sessionId!), 'Session ending…') }}
         />
       )}
+      {session.status === 'failed' && (
+        <div className="notice error" role="alert">
+          This session failed{session.failure_reason ? `: ${session.failure_reason}` : ' before it could start.'}
+          {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}
+        </div>
+      )}
       {notice && <div className={`notice${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</div>}
 
       <div className="room-body">

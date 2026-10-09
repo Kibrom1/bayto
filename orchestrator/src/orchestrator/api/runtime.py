@@ -47,6 +47,9 @@ from ..sandbox.provider import SandboxProvider
 
 log = logging.getLogger(__name__)
 
+# Why a session failed to start, kept in memory so the API/UI can show it (cleared on restart).
+session_failures: dict[uuid.UUID, str] = {}
+
 DEFAULT_FACTORY_ROOT = Path(__file__).resolve().parents[2] / ".sessions"
 
 
@@ -128,8 +131,9 @@ async def launch_runner(
         running_sessions[session_id] = runner_task
         session_runtimes[session_id] = SessionRuntime(conversation=conversation, pubsub=pubsub,
                                                         mirror_task=mirror_task, runner_task=runner_task)
-    except Exception:
+    except Exception as exc:
         log.exception("session %s failed to start", session_id)
+        session_failures[session_id] = f"{type(exc).__name__}: {exc}"[:600]
         async with sessionmaker() as db:
             row = await db.get(Session, session_id)
             if row is not None:
