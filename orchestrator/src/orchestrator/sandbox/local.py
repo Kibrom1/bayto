@@ -212,9 +212,14 @@ def _diff(live: dict[str, str], rows: list[SandboxRow]) -> list[SandboxDrift]:
     return drifts
 
 
+# The product's sandbox definition lives in the repo (envs/team.sbxenv.yaml). A bare relative path only
+# worked when the orchestrator happened to run from that folder, so resolve it from this file instead.
+DEFAULT_SBXENV = Path(os.environ.get("BAYTO_SBXENV") or Path(__file__).resolve().parents[4] / "envs" / "team.sbxenv.yaml")
+
+
 class LocalSbxSandboxProvider(SandboxProvider):
     def __init__(self, sessionmaker: async_sessionmaker, *, runner: SbxRunner | None = None,
-                 sbxenv_path: Path = Path("team.sbxenv.yaml"),
+                 sbxenv_path: Path = DEFAULT_SBXENV,
                  team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0) -> None:
         self._sessionmaker = sessionmaker
         self._runner = runner or SubprocessSbxRunner()
