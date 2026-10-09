@@ -38,6 +38,7 @@ export function Services() {
   const [synthesisModel, setSynthesisModel] = useState('')
   const [streaming, setStreaming] = useState(true)
   const [apiKey, setApiKey] = useState('')
+  const [backend, setBackend] = useState<'subscription' | 'api'>('subscription')
   const [seeded, setSeeded] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -49,6 +50,7 @@ export function Services() {
         setSummaryModel(s.config.summary_model)
         setSynthesisModel(s.config.synthesis_model)
         setStreaming(s.config.streaming)
+        setBackend(s.config.llm_backend)
         setSeeded(true)
       }
       setLog(await getLog(logName))
@@ -135,19 +137,27 @@ export function Services() {
 
           <section className="svc-card" aria-label="Orchestrator settings">
             <h2>Orchestrator settings</h2>
-            <p className="svc-note">Applied the next time the orchestrator starts. The API key stays in the control script's memory and is never written to disk.</p>
+            <p className="svc-note">Applied the next time the orchestrator starts. With the subscription option the moderator's summary and synthesis run through your Claude login (`claude` must be installed and signed in on this computer). An API key stays in the control script's memory and is never written to disk.</p>
             <div className="svc-form">
               <label>Summary model<input value={summaryModel} onChange={(e) => setSummaryModel(e.target.value)} /></label>
               <label>Synthesis model<input value={synthesisModel} onChange={(e) => setSynthesisModel(e.target.value)} /></label>
-              <label>Anthropic API key
-                <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={state.config.api_key ? 'Key is set. Type to replace.' : 'Not set'} />
+              <label>Moderator model access
+                <select value={backend} onChange={(e) => setBackend(e.target.value as 'subscription' | 'api')}>
+                  <option value="subscription">Claude subscription (no API key)</option>
+                  <option value="api">Anthropic API key</option>
+                </select>
               </label>
+              {backend === 'api' && (
+                <label>Anthropic API key
+                  <input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)}
+                    placeholder={state.config.api_key ? 'Key is set. Type to replace.' : 'Not set'} />
+                </label>
+              )}
               <label className="svc-check"><input type="checkbox" checked={streaming} onChange={(e) => setStreaming(e.target.checked)} />Stream turns live</label>
             </div>
             <div className="svc-actions">
               <button type="button" className="btn primary" disabled={busy === 'cfg'}
-                onClick={async () => { await act('cfg', { action: 'config', summary_model: summaryModel, synthesis_model: synthesisModel, streaming, api_key: apiKey }); setApiKey('') }}>
+                onClick={async () => { await act('cfg', { action: 'config', summary_model: summaryModel, synthesis_model: synthesisModel, streaming, llm_backend: backend, api_key: apiKey }); setApiKey('') }}>
                 Save settings
               </button>
               {result('cfg') && <span className="svc-result">{result('cfg').text}</span>}
