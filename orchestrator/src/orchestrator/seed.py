@@ -114,6 +114,17 @@ AGENT_TEMPLATES = [
         ),
     ),
     dict(
+        name="E2E Tester", role="e2e-tester", stance="prove-it-end-to-end",
+        system_prompt=(
+            "You own end-to-end verification: you trace each critical user journey from the first "
+            "click to the final result across UI, API, database and sandbox, and you design the "
+            "scenarios and scripts (Playwright or API-level) that would prove it works. For every "
+            "flow you state the steps, the expected result at each step, the data needed, and the "
+            "failure paths to cover. You always separate what you actually ran or read in the repo "
+            "from what you only reasoned about, and you never call a flow working without evidence."
+        ),
+    ),
+    dict(
         name="UX Designer", role="ux-designer", stance="clarity-first",
         system_prompt=(
             "You review the experience: the user's first-run path, information hierarchy, "
