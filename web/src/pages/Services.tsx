@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { controlAction, getControlState, getLog, type ControlState } from '../api/control'
+import { ConfirmDialog } from '../components/Dialog'
 import './Services.css'
 
 type ServiceName = 'postgres' | 'orchestrator' | 'web'
@@ -26,6 +27,7 @@ export function Services() {
   const [state, setState] = useState<ControlState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [confirmSbx, setConfirmSbx] = useState(false)
   const [results, setResults] = useState<Record<string, { text: string; bad: boolean }>>({})
   const [log, setLog] = useState('')
   const [logName, setLogName] = useState<'orchestrator' | 'web'>('orchestrator')
@@ -88,7 +90,7 @@ export function Services() {
           <p className="svc-kicker">Bayto</p>
           <h1>Services</h1>
         </div>
-        <Link className="svc-btn" to="/">← Tasks</Link>
+        <Link className="btn" to="/">← Tasks</Link>
       </header>
 
       {error && (
@@ -116,11 +118,11 @@ export function Services() {
                   </div>
                   <StatusPill status={status} />
                   <div className="svc-row-actions">
-                    <button type="button" className="svc-btn primary" disabled={running || working}
+                    <button type="button" className="btn primary" disabled={running || working}
                       onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'start' })}>
                       {working ? 'Working…' : 'Start'}
                     </button>
-                    <button type="button" className="svc-btn" disabled={!running || working || name === 'web'}
+                    <button type="button" className="btn" disabled={!running || working || name === 'web'}
                       title={name === 'web' ? 'Stop it with Ctrl+C in the terminal running bayto-control.py' : undefined}
                       onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'stop' })}>
                       Stop
@@ -144,7 +146,7 @@ export function Services() {
               <label className="svc-check"><input type="checkbox" checked={streaming} onChange={(e) => setStreaming(e.target.checked)} />Stream turns live</label>
             </div>
             <div className="svc-actions">
-              <button type="button" className="svc-btn primary" disabled={busy === 'cfg'}
+              <button type="button" className="btn primary" disabled={busy === 'cfg'}
                 onClick={async () => { await act('cfg', { action: 'config', summary_model: summaryModel, synthesis_model: synthesisModel, streaming, api_key: apiKey }); setApiKey('') }}>
                 Save settings
               </button>
@@ -170,7 +172,7 @@ export function Services() {
             <div className="svc-actions">
               <input className="svc-input" value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="Session id" aria-label="Session id" />
               {(['start', 'pause', 'resume', 'stop'] as const).map((op) => (
-                <button key={op} type="button" className="svc-btn" disabled={!sessionId.trim() || busy === `ses:${op}`}
+                <button key={op} type="button" className="btn" disabled={!sessionId.trim() || busy === `ses:${op}`}
                   onClick={() => act(`ses:${op}`, { action: 'session', id: sessionId.trim(), op })}>
                   {op[0].toUpperCase() + op.slice(1)}
                 </button>
@@ -184,14 +186,24 @@ export function Services() {
           <section className="svc-card" aria-label="Sandboxes">
             <h2>Sandboxes</h2>
             <div className="svc-actions">
-              <button type="button" className="svc-btn" disabled={busy === 'sbx:ls'}
+              <button type="button" className="btn" disabled={busy === 'sbx:ls'}
                 onClick={async () => setSandboxOut(await act('sbx:ls', { action: 'sbx', op: 'ls' }))}>List sandboxes</button>
               <input className="svc-input" value={sandboxName} onChange={(e) => setSandboxName(e.target.value)} placeholder="Sandbox name" aria-label="Sandbox name" />
-              <button type="button" className="svc-btn danger" disabled={!sandboxName.trim() || busy === 'sbx:stop'}
-                onClick={async () => { if (confirm(`Stop sandbox ${sandboxName.trim()}?`)) setSandboxOut(await act('sbx:stop', { action: 'sbx', op: 'stop', name: sandboxName.trim() })) }}>
+              <button type="button" className="btn danger" disabled={!sandboxName.trim() || busy === 'sbx:stop'}
+                onClick={() => setConfirmSbx(true)}>
                 Stop sandbox
               </button>
             </div>
+            {confirmSbx && (
+              <ConfirmDialog
+                title="Stop sandbox?"
+                message={`Sandbox ${sandboxName.trim()} will be stopped. Any running session using it will fail.`}
+                confirmLabel="Stop sandbox"
+                danger
+                onCancel={() => setConfirmSbx(false)}
+                onConfirm={async () => { setConfirmSbx(false); setSandboxOut(await act('sbx:stop', { action: 'sbx', op: 'stop', name: sandboxName.trim() })) }}
+              />
+            )}
             {sandboxOut && <pre className="svc-console">{sandboxOut}</pre>}
           </section>
 

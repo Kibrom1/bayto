@@ -53,27 +53,7 @@
 .pill-bad { background: var(--danger-soft); color: var(--danger); }
 .pill-busy { background: var(--warn-soft); color: var(--warn); }
 
-.svc-btn {
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.4rem 0.9rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-}
-
-.svc-btn:hover:not(:disabled) { background: var(--surface-2); }
-.svc-btn:disabled { opacity: 0.45; cursor: default; }
-.svc-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.svc-btn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
-.svc-btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
-.svc-btn:focus-visible, .svc-input:focus-visible, .svc-form input:focus-visible, .svc-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.svc-input:focus-visible, .svc-form input:focus-visible, .svc-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .svc-note { margin: 0 0 var(--space-3); font-size: 0.85rem; color: var(--ink-3); }
 
@@ -89,7 +69,7 @@
 .svc-actions .svc-input { flex: 1; min-width: 12rem; }
 
 .svc-link { border: none; background: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline; }
-.svc-page a:not(.svc-btn) { color: var(--accent); }
+.svc-page a:not(.btn) { color: var(--accent); }
 
 .svc-tabs { display: flex; gap: var(--space-1); }
 .svc-tab { font: inherit; font-size: 0.8rem; padding: 0.2rem 0.7rem; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--ink-2); cursor: pointer; }

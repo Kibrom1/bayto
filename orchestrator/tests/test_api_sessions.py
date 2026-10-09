@@ -637,3 +637,28 @@ async def test_get_session_round_and_usage_are_zero_before_any_turns(client, liv
     assert body["usage"] == {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}
     assert body["turn_counts"] == []
     assert body["budget"] is None
+
+
+# ---------------------------------------------------------------- GET /sessions/{id}/artifacts
+
+async def test_get_artifacts_404_for_unknown_session(client, live_sessionmaker):
+    resp = await client.get(f"/sessions/{uuid.uuid4()}/artifacts")
+    assert resp.status_code == 404
+
+
+async def test_get_artifacts_empty_then_returns_synthesis(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0])}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+
+    assert (await client.get(f"/sessions/{session_id}/artifacts")).json() == {"artifacts": []}
+
+    async with live_sessionmaker() as db:
+        db.add(Artifact(session_id=session_id, type="synthesis", content_json={"recommendation": "ship weekly"},
+                        source_turn_ids=[]))
+        await db.commit()
+    body = (await client.get(f"/sessions/{session_id}/artifacts")).json()
+    assert [a["type"] for a in body["artifacts"]] == ["synthesis"]
+    assert body["artifacts"][0]["content_json"] == {"recommendation": "ship weekly"}

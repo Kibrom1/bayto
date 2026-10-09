@@ -200,3 +200,19 @@ export async function resumeSession(sessionId: string) {
   }
   return res.json()
 }
+
+export interface ArtifactOut {
+  id: string
+  type: string // "synthesis" | "minority_report"
+  content_json: Record<string, unknown>
+  source_turn_ids: string[]
+}
+
+export async function getSessionArtifacts(sessionId: string): Promise<ArtifactOut[]> {
+  const res = await fetch(`/sessions/${sessionId}/artifacts`)
+  if (!res.ok) {
+    throw new Error(`GET /sessions/${sessionId}/artifacts failed: ${res.status} ${await parseError(res)}`)
+  }
+  const body = await res.json()
+  return Array.isArray(body?.artifacts) ? body.artifacts : []
+}
