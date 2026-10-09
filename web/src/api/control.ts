@@ -4,6 +4,7 @@ export interface ControlState {
   services: Record<'postgres' | 'orchestrator' | 'web', string>
   config: {
     streaming: boolean
+    llm_backend: 'subscription' | 'api'
     summary_model: string
     synthesis_model: string
     hand_raise_model: string

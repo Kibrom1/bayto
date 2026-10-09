@@ -32,6 +32,7 @@ from .api import agents_router, modes_router, sessions_router, tasks_router
 from .api.runtime import launch_runner
 from .db import get_sessionmaker
 from .floor.scorer import AnthropicHandRaiseScorer
+from .llm import make_client
 from .moderator.summarizer import AnthropicSummarizer
 from .moderator.synthesizer import AnthropicSynthesizer
 from .reconcile import reconcile_on_startup
@@ -85,9 +86,11 @@ def _local_sandbox_provider() -> LocalSbxSandboxProvider:
 
 
 app.state.sandbox_provider_factory = _local_sandbox_provider
-app.state.summarizer_factory = AnthropicSummarizer
-app.state.synthesizer_factory = AnthropicSynthesizer
-app.state.scorer_factory = AnthropicHandRaiseScorer
+# The moderator's side calls use the Anthropic API when ANTHROPIC_API_KEY is set, otherwise the Claude
+# subscription through `claude -p` (BAYTO_LLM_BACKEND=api|cli overrides). See orchestrator/llm.
+app.state.summarizer_factory = lambda: AnthropicSummarizer(client=make_client())
+app.state.synthesizer_factory = lambda: AnthropicSynthesizer(client=make_client())
+app.state.scorer_factory = lambda: AnthropicHandRaiseScorer(client=make_client())
 
 app.include_router(tasks_router)
 app.include_router(sessions_router)

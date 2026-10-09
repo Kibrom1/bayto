@@ -37,6 +37,8 @@ CONFIG = {
     "synthesis_model": os.environ.get("BAYTO_SYNTHESIS_MODEL", "claude-sonnet-4-5"),
     "hand_raise_model": os.environ.get("BAYTO_HAND_RAISE_MODEL", "claude-haiku-4-5"),
     "api_key": os.environ.get("ANTHROPIC_API_KEY", ""),
+    # "subscription": moderator calls run through `claude -p` with your login (no key needed); "api": use the key.
+    "llm_backend": "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription",
 }
 
 
@@ -126,8 +128,12 @@ def orch_env():
          "BAYTO_HAND_RAISE_MODEL": CONFIG["hand_raise_model"]}
     if CONFIG["streaming"]:
         e["BAYTO_STREAMING_TURNS"] = "1"
-    if CONFIG["api_key"]:
-        e["ANTHROPIC_API_KEY"] = CONFIG["api_key"]
+    if CONFIG["llm_backend"] == "api":
+        e["BAYTO_LLM_BACKEND"] = "api"
+        if CONFIG["api_key"]:
+            e["ANTHROPIC_API_KEY"] = CONFIG["api_key"]
+    else:
+        e["BAYTO_LLM_BACKEND"] = "cli"
     return e
 
 
@@ -232,6 +238,8 @@ def do_action(a):
                 CONFIG[k] = a[k]
         if isinstance(a.get("streaming"), bool):
             CONFIG["streaming"] = a["streaming"]
+        if a.get("llm_backend") in ("subscription", "api"):
+            CONFIG["llm_backend"] = a["llm_backend"]
         if isinstance(a.get("api_key"), str) and a["api_key"]:
             CONFIG["api_key"] = a["api_key"].strip()
         return "saved (restart the orchestrator to apply)"

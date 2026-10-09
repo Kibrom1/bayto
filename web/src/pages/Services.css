@@ -93,3 +93,6 @@
   .svc-row { flex-wrap: wrap; }
   .svc-card { padding: var(--space-4); }
 }
+
+.svc-form select { font: inherit; font-weight: 400; padding: 0.45rem 0.6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--ink); }
+.svc-form select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
