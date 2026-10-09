@@ -17,7 +17,7 @@ async def test_seed_agents_inserts_all_six_templates_with_the_expected_shape(liv
         rows = (await session.execute(select(Agent))).scalars().all()
 
     assert {r.name for r in rows} == {t["name"] for t in AGENT_TEMPLATES}
-    assert len(rows) == 6
+    assert len(rows) == 12
     by_name = {r.name: r for r in rows}
     architect = by_name["Architect"]
     assert architect.kind == "native"
@@ -38,7 +38,7 @@ async def test_seed_agents_is_idempotent(live_sessionmaker):
 
     async with live_sessionmaker() as session:
         rows = (await session.execute(select(Agent))).scalars().all()
-    assert len(rows) == 6  # not 12 -- re-running upserts, never duplicates
+    assert len(rows) == 12  # not 24 -- re-running upserts, never duplicates
 
 
 async def test_seed_agents_updates_existing_rows_in_place_on_a_content_tweak(live_sessionmaker, monkeypatch):
@@ -64,7 +64,7 @@ async def test_seed_agents_updates_existing_rows_in_place_on_a_content_tweak(liv
             select(Agent).where(Agent.name == "Architect")
         )).scalar_one()
 
-    assert len(rows) == 6  # the tweak updated the existing row, didn't add a seventh
+    assert len(rows) == 12  # the tweak updated the existing row, didn't add a thirteenth
     assert updated.id == original_id  # same row, not a new one under a fresh id
     assert updated.system_prompt == "A brand new prompt after a content tweak."
 
@@ -99,3 +99,10 @@ async def test_seed_modes_is_idempotent(live_sessionmaker):
     async with live_sessionmaker() as session:
         rows = (await session.execute(select(Mode))).scalars().all()
     assert len(rows) == 3
+
+
+def test_templates_cover_the_core_team_and_are_unique():
+    names = [t["name"] for t in AGENT_TEMPLATES]
+    assert len(names) == len(set(names)) == 12
+    assert {"Developer", "QA Tester", "UX Designer", "Researcher", "CFO", "Technical Writer"} <= set(names)
+    assert all(t["system_prompt"].strip() and t["stance"] and t["role"] for t in AGENT_TEMPLATES)
