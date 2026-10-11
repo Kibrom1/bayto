@@ -176,12 +176,30 @@ def _sandbox_info(row: Sandbox) -> SandboxInfo:
 
 
 def _parse_sbx_ls(stdout: str) -> dict[str, str]:
-    """Parses `sbx ls --json` output into {name: status}. UNVERIFIED shape (see module
-    docstring) -- assumed to be a JSON list of objects each with "name" and "status"."""
-    if not stdout.strip():
+    """Parses `sbx ls --json` output into {name: status}. The real shape is still UNVERIFIED, so
+    this accepts what the CLI is known or likely to print instead of crashing startup: a JSON list
+    of objects, or an object wrapping such a list (e.g. {"sandboxes": [...]}), with the name and
+    status under "name"/"status" (any capitalisation, or "state"). Empty output, plain text such as
+    "No sandboxes found." and an empty wrapper all mean no live sandboxes."""
+    text = stdout.strip()
+    if not text:
         return {}
-    entries = json.loads(stdout)
-    return {entry["name"]: entry["status"] for entry in entries}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        lists = [v for v in data.values() if isinstance(v, list)]
+        data = lists[0] if lists else []
+    live: dict[str, str] = {}
+    for entry in data if isinstance(data, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        fields = {str(k).lower(): v for k, v in entry.items()}
+        name = fields.get("name")
+        if name:
+            live[str(name)] = str(fields.get("status") or fields.get("state") or "")
+    return live
 
 
 def _diff(live: dict[str, str], rows: list[SandboxRow]) -> list[SandboxDrift]:
