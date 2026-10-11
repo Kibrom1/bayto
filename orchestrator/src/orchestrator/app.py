@@ -21,6 +21,7 @@ network until M5 (human seat/auth) lands.
 """
 import functools
 import logging
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 
@@ -49,13 +50,21 @@ async def lifespan(app: FastAPI):
     sessionmaker = get_sessionmaker()
     sandbox_provider = app.state.sandbox_provider_factory()
 
+    relaunch_tasks: set[asyncio.Task] = set()
+
     async def _relaunch(session_id: uuid.UUID) -> None:
-        await launch_runner(
+        """Start the relaunch in the background. Reconciliation runs before the API accepts
+        requests, and a relaunch can take minutes (sandbox create, team start): awaiting it here
+        kept the whole API returning 502 until it finished or timed out. launch_runner records its
+        own failure on the session, so nothing is lost by not waiting."""
+        task = asyncio.create_task(launch_runner(
             session_id, sessionmaker=sessionmaker, sandbox_provider=app.state.sandbox_provider_factory(),
             summarizer=app.state.summarizer_factory(), synthesizer=app.state.synthesizer_factory(),
             scorer_factory=app.state.scorer_factory,
             running_sessions=app.state.running_sessions, session_runtimes=app.state.session_runtimes,
-        )
+        ))
+        relaunch_tasks.add(task)  # strong reference: the loop only keeps weak ones
+        task.add_done_callback(relaunch_tasks.discard)
 
     try:
         report = await reconcile_on_startup(sandbox_provider, sessionmaker, _relaunch)
