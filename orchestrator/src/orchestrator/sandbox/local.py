@@ -220,7 +220,9 @@ DEFAULT_SBXENV = Path(os.environ.get("BAYTO_SBXENV") or Path(__file__).resolve()
 class LocalSbxSandboxProvider(SandboxProvider):
     def __init__(self, sessionmaker: async_sessionmaker, *, runner: SbxRunner | None = None,
                  sbxenv_path: Path = DEFAULT_SBXENV,
-                 team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0) -> None:
+                 team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0,
+                 create_timeout: float = float(os.environ.get("BAYTO_SBX_CREATE_TIMEOUT", "900"))) -> None:
+        self._create_timeout = create_timeout
         self._sessionmaker = sessionmaker
         self._runner = runner or SubprocessSbxRunner()
         self._sbxenv_path = sbxenv_path
@@ -252,8 +254,13 @@ class LocalSbxSandboxProvider(SandboxProvider):
         for name in list(self._held):
             self._drop_client(name)
 
-    async def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
-        result = await asyncio.to_thread(self._runner.run, argv)
+    async def _run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        try:
+            result = await asyncio.to_thread(self._runner.run, argv, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxProviderError(
+                f"`sbx {' '.join(argv[:2])}` did not finish within {timeout:.0f} s "
+                f"(still running or waiting for input); check `sbx` by hand") from exc
         if result.returncode != 0:
             raise SandboxCommandError(argv, result.returncode, result.stderr)
         return result
@@ -264,7 +271,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
             if row is None or row.status not in ("running", "creating"):
                 await self._run([
                     "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
-                ])
+                ], timeout=self._create_timeout)
                 if row is None:
                     row = Sandbox(
                         task_id=task_id, provider=PROVIDER_NAME, name=name,

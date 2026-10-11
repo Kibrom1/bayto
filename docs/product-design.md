@@ -256,7 +256,7 @@ flowchart LR
 - Parallel-blind: all agents answer independently (Delphi), then see each other.
 - Moderator-pick: the moderator names the next speaker (fallback / override).
 
-**Stop conditions:** max rounds, token/cost budget, consensus detected (no raised hands for K rounds), no new arguments for K turns, or user ends it.
+**Stop conditions:** max rounds, dollar cap (the token budget is only a suggestion and never stops a session), consensus detected (no raised hands for K rounds), no new arguments for K turns, or user ends it.
 
 **Context management:** keep a rolling moderator summary plus the last N turns, so long debates don't blow the context window. Each agent sees only what its role should see (e.g., blind voting in Delphi).
 

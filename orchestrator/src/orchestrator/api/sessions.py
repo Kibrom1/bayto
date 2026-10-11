@@ -25,11 +25,12 @@ from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
-from .runtime import launch_runner, session_failures
+from .runtime import launch_runner, session_failures, session_stages
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+_launch_tasks: set[asyncio.Task] = set()
 
 STATUS_CREATED = "created"
 STATUS_STARTING = "starting"
@@ -179,12 +180,15 @@ async def start_session(
     # Fire-and-forget: the real work (sandbox create/start_team, building the runner,
     # flipping status to "active") happens in the background; this endpoint returns 202
     # immediately, same "don't block" posture as /stop.
-    asyncio.create_task(launch_runner(
+    task = asyncio.create_task(launch_runner(
         session_id, sessionmaker=sessionmaker, sandbox_provider=sandbox_provider,
         summarizer=summarizer, synthesizer=synthesizer, scorer_factory=scorer_factory,
         running_sessions=request.app.state.running_sessions,
         session_runtimes=request.app.state.session_runtimes,
     ))
+    # Keep a strong reference: the event loop only holds weak refs to tasks.
+    _launch_tasks.add(task)
+    task.add_done_callback(_launch_tasks.discard)
     return {"session": {"id": str(session_id), "status": STATUS_STARTING}}
 
 
@@ -324,12 +328,15 @@ async def resume_session(
         row.status = STATUS_STARTING
         await db.commit()
 
-    asyncio.create_task(launch_runner(
+    task = asyncio.create_task(launch_runner(
         session_id, sessionmaker=sessionmaker, sandbox_provider=sandbox_provider,
         summarizer=summarizer, synthesizer=synthesizer, scorer_factory=scorer_factory,
         running_sessions=request.app.state.running_sessions,
         session_runtimes=request.app.state.session_runtimes,
     ))
+    # Keep a strong reference: the event loop only holds weak refs to tasks.
+    _launch_tasks.add(task)
+    task.add_done_callback(_launch_tasks.discard)
     return {"session": {"id": str(session_id), "status": STATUS_STARTING}}
 
 
@@ -489,6 +496,7 @@ class SessionDetailOut(BaseModel):
     usage: UsageOut
     turn_counts: list[TurnCountOut]
     failure_reason: str | None = None
+    stage: str | None = None
 
 
 class SessionDetailResponse(BaseModel):
@@ -525,6 +533,7 @@ async def get_session(
         turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
                      for role, agent_id, count in turn_counts_rows],
         failure_reason=session_failures.get(session_id) if row.status == "failed" else None,
+        stage=session_stages.get(session_id) if row.status == "starting" else None,
     ))
 
 
