@@ -207,6 +207,11 @@ export function BaytoRoom() {
           {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}
         </div>
       )}
+      {session.status === 'starting' && (
+        <div className="notice" role="status">
+          Starting: {session.stage ?? 'waiting to launch'}. Creating a sandbox can take a few minutes.
+        </div>
+      )}
       {notice && <div className={`notice${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</div>}
 
       <div className="room-body">

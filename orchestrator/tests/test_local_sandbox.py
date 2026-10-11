@@ -122,6 +122,21 @@ async def test_create_builds_expected_argv_and_inserts_a_row(live_sessionmaker):
     assert row is not None and row.status == "running"
 
 
+async def test_create_times_out_instead_of_hanging_forever(live_sessionmaker):
+    class HangingRunner(FakeSbxRunner):
+        def run(self, argv, *, timeout=None):
+            assert timeout == 5
+            raise subprocess.TimeoutExpired(["sbx", *argv], timeout)
+
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=HangingRunner(), create_timeout=5)
+    task_id = await _make_task(live_sessionmaker)
+
+    with pytest.raises(SandboxProviderError, match="did not finish within 5 s"):
+        await provider.create(task_id, name="sbx-hang")
+    async with live_sessionmaker() as db:
+        assert await db.scalar(select(Sandbox).where(Sandbox.task_id == task_id)) is None
+
+
 async def test_create_is_idempotent_when_already_running(live_sessionmaker):
     runner = FakeSbxRunner()
     provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner)

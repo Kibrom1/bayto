@@ -49,6 +49,8 @@ log = logging.getLogger(__name__)
 
 # Why a session failed to start, kept in memory so the API/UI can show it (cleared on restart).
 session_failures: dict[uuid.UUID, str] = {}
+# What a starting session is doing right now, so a slow start is visible instead of silent.
+session_stages: dict[uuid.UUID, str] = {}
 
 DEFAULT_FACTORY_ROOT = Path(__file__).resolve().parents[2] / ".sessions"
 
@@ -95,8 +97,13 @@ async def launch_runner(
         mode_config = resolve_mode(mode_row.name)  # re-validated here; the eager POST /sessions
                                                     # check doesn't guarantee the file is unchanged
 
+        session_stages[session_id] = "creating the sandbox (sbx env create)"
+        log.info("session %s: %s", session_id, session_stages[session_id])
         sandbox = await sandbox_provider.create(task_id, name=f"sbx-{task_id}")
+        session_stages[session_id] = "starting the agent team in the sandbox"
+        log.info("session %s: %s", session_id, session_stages[session_id])
         await sandbox_provider.start_team(sandbox)
+        session_stages.pop(session_id, None)
 
         session_dir = (root or factory_root()) / str(session_id)
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -133,7 +140,8 @@ async def launch_runner(
                                                         mirror_task=mirror_task, runner_task=runner_task)
     except Exception as exc:
         log.exception("session %s failed to start", session_id)
-        session_failures[session_id] = f"{type(exc).__name__}: {exc}"[:600]
+        stage = session_stages.pop(session_id, "setup")
+        session_failures[session_id] = f"while {stage}: {type(exc).__name__}: {exc}"[:600]
         async with sessionmaker() as db:
             row = await db.get(Session, session_id)
             if row is not None:

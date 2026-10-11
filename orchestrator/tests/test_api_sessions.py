@@ -660,6 +660,26 @@ async def test_get_session_reports_why_a_failed_session_failed(client, live_sess
     assert body["failure_reason"] == "RuntimeError: sbx env create failed"
 
 
+async def test_get_session_reports_the_start_stage_while_starting(client, live_sessionmaker):
+    from orchestrator.api.runtime import session_stages
+    from orchestrator.models import Session
+
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0])}],
+    })
+    session_id = resp.json()["session"]["id"]
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, uuid.UUID(session_id))
+        row.status = "starting"
+        await db.commit()
+    session_stages[uuid.UUID(session_id)] = "creating the sandbox (sbx env create)"
+
+    body = (await client.get(f"/sessions/{session_id}")).json()["session"]
+    assert body["stage"] == "creating the sandbox (sbx env create)"
+
+
 # ---------------------------------------------------------------- GET /sessions/{id}/artifacts
 
 async def test_get_artifacts_404_for_unknown_session(client, live_sessionmaker):
