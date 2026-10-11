@@ -469,3 +469,15 @@ async def test_run_turn_without_result_raises(live_sessionmaker):
     provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner)
     with pytest.raises(SandboxProviderError):
         await _collect(provider)
+
+
+def test_parse_sbx_ls_tolerates_the_shapes_the_cli_may_print():
+    from orchestrator.sandbox.local import _parse_sbx_ls
+
+    assert _parse_sbx_ls("") == {}
+    assert _parse_sbx_ls("No sandboxes found.") == {}
+    assert _parse_sbx_ls("[]") == {}
+    assert _parse_sbx_ls('{"sandboxes": []}') == {}
+    assert _parse_sbx_ls('[{"name": "a", "status": "running"}]') == {"a": "running"}
+    assert _parse_sbx_ls('{"sandboxes": [{"Name": "b", "State": "stopped"}]}') == {"b": "stopped"}
+    assert _parse_sbx_ls('{"count": 0}') == {}
