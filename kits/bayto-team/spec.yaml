@@ -2,8 +2,8 @@
 # Herdr session control (chapters/kits/pi, chapters/kits/herdr) with our own
 # acp CLI (agent-comms/, installed editable from the mounted workspace instead
 # of a registry, since it isn't published). Single-provider (Claude/Anthropic
-# only) version of chapters/kits/multi-provider's credential/network pattern:
-# proxy-managed API key, no OAuth dance, no other providers' domains.
+# only) version of chapters/kits/multi-provider's network pattern: no other
+# providers' domains. The API credential comes from the claude agent, not this kit.
 schemaVersion: "2"
 kind: mixin
 name: bayto-team
@@ -13,15 +13,9 @@ args:
     default: "2.1.282" # versions.env: CLAUDE_CLI_VERSION
   herdr_version:
     default: "0.9.0" # chapters/kits/herdr default
-credentials:
-  - service: anthropic
-    apiKey:
-      name: ANTHROPIC_API_KEY
-      proxyManaged: true
-      inject:
-        - domain: api.anthropic.com
-          header: x-api-key
-          format: "%s"
+# No `credentials:` block: the `claude` agent in envs/team.sbxenv.yaml already provides the
+# "anthropic" credential, and defining it again here makes `sbx env create` fail with
+# 'credential for service "anthropic" defined in both "claude" and "bayto-team"'.
 permissions:
   network:
     allow:
