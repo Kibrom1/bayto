@@ -8,7 +8,7 @@ from orchestrator.sandbox.local import LocalSbxSandboxProvider
 
 def test_incomplete_implementation_cannot_be_instantiated():
     class Incomplete(SandboxProvider):
-        async def create(self, task_id, *, name):
+        async def create(self, task_id, *, name, seats=None):
             raise NotImplementedError
 
     with pytest.raises(TypeError):

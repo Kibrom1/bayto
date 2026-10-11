@@ -33,17 +33,18 @@ from pathlib import Path
 from typing import Callable
 
 from acp.transport import FileTransport
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
 from ..floor import RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
 from ..floor.scorer import HandRaiseScorer
 from ..mirror import MessageMirror
-from ..models import Mode, Session
+from ..models import Agent, Mode, Session, SessionAgent
 from ..moderator import ModeratorRunner, Summarizer, Synthesizer
 from ..modes_registry import resolve_mode
 from ..pubsub import PubSub
-from ..sandbox.provider import SandboxProvider
+from ..sandbox.provider import SandboxProvider, SeatSpec
 
 log = logging.getLogger(__name__)
 
@@ -93,13 +94,22 @@ async def launch_runner(
             session_row = await db.get(Session, session_id)
             mode_row = await db.get(Mode, session_row.mode_id)
             task_id = session_row.task_id
+            rows = (await db.execute(
+                select(SessionAgent, Agent).join(Agent, Agent.id == SessionAgent.agent_id)
+                .where(SessionAgent.session_id == session_id, SessionAgent.removed_at.is_(None))
+                .order_by(SessionAgent.seat_order)
+            )).all()
+            seats = [SeatSpec(role=a.role or a.name, name=a.name,
+                              brief="\n\n".join(x for x in (a.system_prompt, f"Stance: {a.stance}" if a.stance else "") if x),
+                              model=sa.model or a.model, tools=tuple(a.tools or ()))
+                     for sa, a in rows]
 
         mode_config = resolve_mode(mode_row.name)  # re-validated here; the eager POST /sessions
                                                     # check doesn't guarantee the file is unchanged
 
         session_stages[session_id] = "creating the sandbox (sbx env create)"
         log.info("session %s: %s", session_id, session_stages[session_id])
-        sandbox = await sandbox_provider.create(task_id, name=f"sbx-{task_id}")
+        sandbox = await sandbox_provider.create(task_id, name=f"sbx-{task_id}", seats=seats)
         session_stages[session_id] = "starting the agent team in the sandbox"
         log.info("session %s: %s", session_id, session_stages[session_id])
         await sandbox_provider.start_team(sandbox)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """HOST: turn dev-team/roster.txt + the roles/ catalog into team.tsv, per-seat briefs, tools.json and roster.json.
 Usage: build-roster.py OUT_DIR [ROSTER_FILE]   (needs PyYAML)"""
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,6 @@ for line in roster_file.read_text().splitlines():
     parts = line.split("#", 1)[0].split()
     if parts:
         entries.append({"role": parts[0], **({"model": parts[1]} if len(parts) > 1 else {})})
-res = build_team(entries, load_catalog(repo / "roles"), out, default_model="claude-sonnet-5", comms="crew",
+res = build_team(entries, load_catalog(Path(os.environ.get("BAYTO_ROLES_DIR") or repo / "roles")), out, default_model="claude-sonnet-5", comms="crew",
                  extra=(repo / "dev-team" / "team-rules.md").read_text())
 print("Team:", ", ".join(res["seats"]), file=sys.stderr)

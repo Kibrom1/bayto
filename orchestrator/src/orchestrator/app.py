@@ -21,6 +21,7 @@ network until M5 (human seat/auth) lands.
 """
 import functools
 import logging
+import os
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
@@ -91,7 +92,10 @@ app.state.session_runtimes = {}  # session_id -> api.runtime.SessionRuntime
 # exec is released), so a fresh provider per request would lose track of every running team.
 @functools.cache
 def _local_sandbox_provider() -> LocalSbxSandboxProvider:
-    return LocalSbxSandboxProvider(get_sessionmaker())
+    from .sandbox.provision import provision_team_sandbox
+    # BAYTO_PROVISION=0 falls back to a bare `sbx env create` (no team tools; for debugging only).
+    provisioner = provision_team_sandbox if os.environ.get("BAYTO_PROVISION", "1") != "0" else None
+    return LocalSbxSandboxProvider(get_sessionmaker(), provisioner=provisioner)
 
 
 app.state.sandbox_provider_factory = _local_sandbox_provider

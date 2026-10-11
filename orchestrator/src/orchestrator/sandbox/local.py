@@ -239,7 +239,11 @@ class LocalSbxSandboxProvider(SandboxProvider):
     def __init__(self, sessionmaker: async_sessionmaker, *, runner: SbxRunner | None = None,
                  sbxenv_path: Path = DEFAULT_SBXENV,
                  team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0,
-                 create_timeout: float = float(os.environ.get("BAYTO_SBX_CREATE_TIMEOUT", "900"))) -> None:
+                 create_timeout: float = float(os.environ.get("BAYTO_SBX_CREATE_TIMEOUT", "900")),
+                 provisioner=None) -> None:
+        # provisioner: async (name, seats) -> None that builds the whole team sandbox (see provision.py).
+        # Without one, create() only runs `sbx env create`, which gives an empty sandbox with no team tools.
+        self._provisioner = provisioner
         self._create_timeout = create_timeout
         self._sessionmaker = sessionmaker
         self._runner = runner or SubprocessSbxRunner()
@@ -283,13 +287,16 @@ class LocalSbxSandboxProvider(SandboxProvider):
             raise SandboxCommandError(argv, result.returncode, result.stderr)
         return result
 
-    async def create(self, task_id: uuid.UUID, *, name: str) -> SandboxInfo:
+    async def create(self, task_id: uuid.UUID, *, name: str, seats=None) -> SandboxInfo:
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
             if row is None or row.status not in ("running", "creating"):
-                await self._run([
-                    "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
-                ], timeout=self._create_timeout)
+                if self._provisioner is not None and seats:
+                    await self._provisioner(name, seats)
+                else:
+                    await self._run([
+                        "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
+                    ], timeout=self._create_timeout)
                 if row is None:
                     row = Sandbox(
                         task_id=task_id, provider=PROVIDER_NAME, name=name,
