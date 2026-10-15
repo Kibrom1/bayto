@@ -68,8 +68,21 @@ def scrub_failure(text: str) -> str:
     return re.sub(r"/(?:Users|home)/[^/\s:]+", "/<user>", text)
 
 
-async def _retire_runtime(runtime: "SessionRuntime") -> None:
-    """Stop a session's previous runner (if still running) and its mirror, and wait until both are gone."""
+RETIRE_GRACE_SECONDS = 180.0
+
+
+async def _retire_runtime(runtime: "SessionRuntime", grace: float = RETIRE_GRACE_SECONDS) -> None:
+    """Stop a session's previous runner (if still running) and its mirror, and wait until both are gone.
+
+    A paused runner winds down after the turn it is in the middle of. Cancelling it mid-turn threw that
+    turn away and left a half-delivered assignment for the new runner to trip over, so give it `grace`
+    seconds to finish by itself (its mirror must keep running meanwhile, to record the reply) and only
+    then cancel what is left."""
+    if not runtime.runner_task.done():
+        try:
+            await asyncio.wait_for(asyncio.shield(runtime.runner_task), timeout=grace)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001 - a crashed old runner is already handled elsewhere
+            pass
     tasks = [runtime.mirror_task]
     if not runtime.runner_task.done():
         tasks.append(runtime.runner_task)

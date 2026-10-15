@@ -121,6 +121,59 @@ class _PopenHeldExec:
             return ""
 
 
+class _LineStream:
+    """stdout lines of a subprocess. A generator cannot be closed while another thread is inside its
+    `next()` ("generator already executing"), and cancelling a turn is exactly that situation, so this is a
+    plain iterator with a thread-safe `kill()`."""
+
+    def __init__(self, cmd: list[str], argv: list[str], stdin: str) -> None:
+        self._argv = argv
+        self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True, bufsize=1)
+        assert self._proc.stdin is not None and self._proc.stdout is not None
+        try:
+            self._proc.stdin.write(stdin)
+            self._proc.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass  # the process already exited; its exit code is reported by __next__
+        self._done = False
+
+    def __iter__(self) -> "_LineStream":
+        return self
+
+    def __next__(self) -> str:
+        if self._done:
+            raise StopIteration
+        line = self._proc.stdout.readline()  # type: ignore[union-attr]
+        if line:
+            return line
+        self._done = True
+        err = self._proc.stderr.read() if self._proc.stderr else ""
+        code = self._proc.wait()
+        if code != 0:
+            raise SandboxCommandError(self._argv, code, err)
+        raise StopIteration
+
+    def kill(self) -> None:
+        try:
+            if self._proc.poll() is None:
+                self._proc.kill()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        self.kill()
+        try:
+            self._proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
+        for f in (self._proc.stdout, self._proc.stderr):
+            try:
+                f and f.close()
+            except OSError:
+                pass
+
+
 class SubprocessSbxRunner:
     """Real `sbx` CLI invocation. Unverified: see module docstring."""
 
@@ -129,22 +182,9 @@ class SubprocessSbxRunner:
 
     def stream(self, argv: list[str], *, stdin: str) -> Iterator[str]:
         """Run `sbx <argv>` with `stdin` as input and yield stdout lines as they arrive. Raises
-        SandboxCommandError if the process exits non-zero. Closing the generator early kills it."""
-        proc = subprocess.Popen(["sbx", *argv], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, bufsize=1)
-        try:
-            assert proc.stdin is not None and proc.stdout is not None
-            proc.stdin.write(stdin)
-            proc.stdin.close()
-            yield from proc.stdout
-            err = proc.stderr.read() if proc.stderr else ""
-            code = proc.wait()
-            if code != 0:
-                raise SandboxCommandError(argv, code, err)
-        finally:
-            if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+        SandboxCommandError if the process exits non-zero. The returned stream can be `kill()`ed from any
+        thread (which makes a blocked `next()` return) and `close()`d once no thread is inside `next()`."""
+        return _LineStream(["sbx", *argv], argv, stdin)
 
     def start(self, argv: list[str]) -> HeldExec:
         log = tempfile.NamedTemporaryFile(prefix="sbx-held-", suffix=".log", delete=False)
@@ -357,10 +397,15 @@ class LocalSbxSandboxProvider(SandboxProvider):
     async def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str) -> AsyncIterator[TurnEvent]:
         argv = ["exec", "-i", sandbox.name, "bash", "-lc", TURN_SCRIPT, "_", role]
         lines = iter(self._runner.stream(argv, stdin=prompt))
+        loop = asyncio.get_running_loop()
+        pending: asyncio.Future | None = None
         saw_result = False
         try:
             while True:
-                line = await asyncio.to_thread(next, lines, None)
+                pending = loop.run_in_executor(None, next, lines, None)
+                # shield: cancelling this coroutine must not abandon the worker thread mid-read
+                line = await asyncio.shield(pending)
+                pending = None
                 if line is None:
                     break
                 event = parse_stream_line(line)
@@ -370,15 +415,33 @@ class LocalSbxSandboxProvider(SandboxProvider):
                     saw_result = True
                 yield event
         finally:
+            # Cancelled (Pause/Resume/Stop) or finished: end the subprocess FIRST so a thread blocked in
+            # next() returns, wait for it, and only then close. Closing a generator that another thread is
+            # running raised "generator already executing", which replaced the cancellation and let a
+            # cancelled runner carry on as a second runner.
+            kill = getattr(lines, "kill", None)
+            if kill is not None:
+                kill()
+            if pending is not None:
+                await asyncio.gather(pending, return_exceptions=True)
             close = getattr(lines, "close", None)
             if close is not None:
-                await asyncio.to_thread(close)
+                try:
+                    await asyncio.to_thread(close)
+                except ValueError:
+                    pass  # a plain generator still mid-next(); nothing more to release
         if not saw_result:
             raise SandboxProviderError(f"turn for {role} in {sandbox.name} ended without a result event")
 
     async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
         cmd = "crew-notify-fallback" if fallback else "crew-notify"
-        await self._run(["exec", sandbox.name, cmd, role])
+        try:
+            await self._run(["exec", sandbox.name, cmd, role])
+        except SandboxCommandError as exc:
+            # A second poke for an assignment the seat was already notified about (a resumed or retried
+            # grant) is harmless -- the reply is on its way -- not a failure that should end the session.
+            if "already notified" not in (exc.stderr or ""):
+                raise
 
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:
         self._drop_client(sandbox.name)
