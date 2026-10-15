@@ -65,6 +65,37 @@ def extract_json_object(text: str) -> dict:
     return obj
 
 
+_JSON_TYPES = {"string": str, "boolean": bool, "object": dict, "array": list, "null": type(None),
+               "integer": int, "number": (int, float)}
+
+
+def schema_errors(value: Any, schema: dict, path: str = "$") -> list[str]:
+    """Check `value` against the subset of JSON Schema the tool schemas use (type, required, properties,
+    items, enum). A reply that is valid JSON but the wrong shape used to flow on into the runner and fail
+    far from its cause (a KeyError, or a number where text was expected); catch it here instead, where it
+    can be retried with the problem spelled out."""
+    errors: list[str] = []
+    want = schema.get("type")
+    if want is not None:
+        py = _JSON_TYPES.get(want)
+        bad_bool = isinstance(value, bool) and want in ("integer", "number")
+        if py is not None and (not isinstance(value, py) or bad_bool):
+            return [f"{path}: expected {want}, got {type(value).__name__}"]
+    if "enum" in schema and value not in schema["enum"]:
+        errors.append(f"{path}: must be one of {schema['enum']}")
+    if isinstance(value, dict):
+        for key in schema.get("required", []):
+            if key not in value:
+                errors.append(f"{path}: missing required field '{key}'")
+        for key, sub in (schema.get("properties") or {}).items():
+            if key in value:
+                errors += schema_errors(value[key], sub, f"{path}.{key}")
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        for i, item in enumerate(value):
+            errors += schema_errors(item, schema["items"], f"{path}[{i}]")
+    return errors
+
+
 def _text_of(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -85,13 +116,19 @@ class _Messages:
             f"that satisfies this JSON Schema (it is the input of the `{tool['name']}` tool):\n{schema}"
         )
         last: Exception | None = None
+        attempt_prompt = prompt
         for _attempt in range(2):
-            out = await self._c.run(model=model, system=system, prompt=prompt)
+            out = await self._c.run(model=model, system=system, prompt=attempt_prompt)
             try:
                 obj = extract_json_object(out["result"])
+                problems = schema_errors(obj, tool["input_schema"])
+                if problems:
+                    raise ClaudeCliError("reply does not match the schema: " + "; ".join(problems[:5]))
                 return _Response([_ToolUse(tool["name"], obj)], _Usage(out["in"], out["out"]))
             except ClaudeCliError as exc:
                 last = exc
+                # Say what was wrong, so the retry is not just the same request again.
+                attempt_prompt = f"{prompt}\n\nYour previous reply was rejected: {exc}\nReply again with a corrected JSON object."
         raise ClaudeCliError(f"{last} (after retry)")
 
 
