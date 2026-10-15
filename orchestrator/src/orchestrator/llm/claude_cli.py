@@ -132,6 +132,26 @@ class _Messages:
         raise ClaudeCliError(f"{last} (after retry)")
 
 
+def failure_detail(stdout: str, stderr: str) -> str:
+    """Why `claude -p` failed, in words. With --output-format json the reason (not logged in, unknown
+    model, rate limit...) is in the JSON `result`, while the first 300 characters of that JSON are only
+    bookkeeping (cost, usage), so a plain slice of stdout hid it."""
+    err = stderr.strip()
+    if err:
+        return err[:400]
+    try:
+        env = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        return stdout.strip()[:400]
+    if isinstance(env, dict):
+        for key in ("result", "error", "message"):
+            if env.get(key):
+                return str(env[key])[:400]
+        if env.get("subtype"):
+            return f"subtype={env['subtype']}"
+    return stdout.strip()[:400]
+
+
 class ClaudeCliClient:
     def __init__(self, *, binary: str | None = None, timeout: float = 240.0) -> None:
         self._binary = binary or os.environ.get("BAYTO_CLAUDE_BIN") or "claude"
@@ -157,7 +177,7 @@ class ClaudeCliClient:
                 await proc.wait()
                 raise ClaudeCliError(f"claude -p timed out after {self._timeout:.0f}s") from exc
         if proc.returncode != 0:
-            raise ClaudeCliError(f"claude -p exited {proc.returncode}: {stderr.decode()[:300] or stdout.decode()[:300]}")
+            raise ClaudeCliError(f"claude -p exited {proc.returncode}: {failure_detail(stdout.decode(), stderr.decode())}")
         try:
             env_json = json.loads(stdout.decode())
         except json.JSONDecodeError as exc:
