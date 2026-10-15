@@ -12,6 +12,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 API_PORT=8000; WEB_PORT="${WEB_PORT:-5173}"
 LOGS="$REPO/.bayto-run"; mkdir -p "$LOGS"
+export PYTHONPATH="$REPO/orchestrator/src:$REPO/agent-comms/src${PYTHONPATH:+:$PYTHONPATH}"
 export DATABASE_URL="${DATABASE_URL:-postgresql+psycopg://bayto:bayto@localhost:5432/bayto}"
 
 missing=0
