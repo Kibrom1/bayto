@@ -139,3 +139,26 @@ async def test_a_reply_that_stays_the_wrong_shape_fails_clearly(tmp_path):
     with pytest.raises(ClaudeCliError, match="does not match the schema.*after retry"):
         await client.messages.create(model="m", max_tokens=1, system="s",
                                      messages=[{"role": "user", "content": "q"}], tools=[SUMMARY_TOOL])
+
+
+# ---------------------------------------------------------------- failure detail
+
+from orchestrator.llm.claude_cli import failure_detail
+
+
+def test_failure_detail_surfaces_the_reason_buried_in_the_json_envelope():
+    out = '{"duration_api_ms":0,"stop_reason":"stop_sequence","total_cost_usd":0,"usage":{"input_tokens":0},"is_error":true,"result":"Invalid API key \u00b7 Please run /login"}'
+    assert failure_detail(out, "") == "Invalid API key \u00b7 Please run /login"
+
+
+def test_failure_detail_prefers_stderr_and_falls_back_to_raw_text():
+    assert failure_detail("{}", "not logged in\n") == "not logged in"
+    assert failure_detail("plain text failure", "") == "plain text failure"
+
+
+async def test_a_failing_claude_reports_the_reason_not_the_usage_block(tmp_path):
+    out = tmp_path / "o.json"
+    out.write_text('{"usage":{"input_tokens":0},"is_error":true,"result":"model not found: bogus"}')
+    client = ClaudeCliClient(binary=_fake_claude(tmp_path, f"cat {out}\nexit 1\n"))
+    with pytest.raises(ClaudeCliError, match="model not found: bogus"):
+        await client.run(model="bogus", system="s", prompt="p")
