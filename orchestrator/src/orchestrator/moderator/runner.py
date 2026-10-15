@@ -563,7 +563,7 @@ class ModeratorRunner:
             # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only
             # for subscribers that already exist -- subscribing after wake_role() would race and
             # could miss it.
-            queue = self._pubsub.subscribe()
+            queue = self._pubsub.subscribe(bounded=False)  # never drop the reply being awaited
             try:
                 streamed = False
                 if getattr(self._sandbox_provider, "supports_streaming", False):

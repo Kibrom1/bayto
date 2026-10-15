@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
@@ -26,6 +26,7 @@ from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HU
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import launch_runner, session_failures, session_stages
+from .types import LABEL_MAX, MESSAGE_MAX, REASON_MAX, text
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ _launch_tasks: set[asyncio.Task] = set()
 
 STATUS_CREATED = "created"
 STATUS_STARTING = "starting"
+MAX_ROSTER = 12  # a panel, not a crowd: every seat costs a turn and a share of the budget
 
 
 def _error(code: str, detail: str, field: str | None = None) -> dict:
@@ -59,16 +61,28 @@ class RosterEntry(BaseModel):
     agent_id: uuid.UUID
     seat_order: int | None = None
     muted: bool = False
-    harness: str | None = None
-    model: str | None = None
+    harness: text(LABEL_MAX) | None = None
+    model: text(LABEL_MAX) | None = None
     isolation: Literal["shared", "own"] = "shared"
 
 
 class SessionCreateRequest(BaseModel):
     task_id: uuid.UUID
     mode_id: uuid.UUID
-    roster: list[RosterEntry]
+    roster: list[RosterEntry] = Field(min_length=1, max_length=MAX_ROSTER)
     budget: BudgetIn | None = None
+
+    @model_validator(mode="after")
+    def _roster_is_unique(self) -> "SessionCreateRequest":
+        # A repeated agent hit the session_agent primary key (a 500); a repeated seat made
+        # the speaking order ambiguous. Both are caller mistakes, so reject them up front.
+        agent_ids = [e.agent_id for e in self.roster]
+        if len(set(agent_ids)) != len(agent_ids):
+            raise ValueError("roster lists the same agent more than once")
+        seats = [e.seat_order for e in self.roster if e.seat_order is not None]
+        if len(set(seats)) != len(seats):
+            raise ValueError("roster has two agents with the same seat_order")
+        return self
 
 
 class SessionOut(BaseModel):
@@ -195,8 +209,8 @@ async def start_session(
 # ---------------------------------------------------------------- POST /sessions/{id}/interject
 
 class InterjectRequest(BaseModel):
-    body: str
-    to: list[str] | None = None
+    body: text(MESSAGE_MAX)
+    to: list[text(LABEL_MAX)] | None = Field(default=None, max_length=MAX_ROSTER)
 
 
 class InterjectResponse(BaseModel):
@@ -224,7 +238,7 @@ async def interject_session(session_id: uuid.UUID, req: InterjectRequest, reques
 
 class StopRequest(BaseModel):
     synthesize: bool = True
-    reason: str | None = None
+    reason: text(REASON_MAX) | None = None
 
 
 @router.post("/sessions/{session_id}/stop", status_code=202)
@@ -584,6 +598,39 @@ def _message_row_to_envelope_dict(row: Message) -> dict:
     }
 
 
+# How long a client that connects right after /start may wait for the runner to come up.
+SSE_RUNTIME_WAIT_SECONDS = 60.0
+SSE_POLL_SECONDS = 0.25
+
+
+async def _wait_for_runtime(request: Request, sessionmaker, session_id: uuid.UUID):
+    """The runtime is registered a few seconds after POST /start returns (sandbox create, team
+    start), so a client that connects straight away used to find nothing and get an empty
+    stream. While the session is still `starting` (or `active` but not yet re-attached after a
+    restart), wait for it; any other status means there is nothing live to tail."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SSE_RUNTIME_WAIT_SECONDS
+    while True:
+        runtime = request.app.state.session_runtimes.get(session_id)
+        if runtime is not None:
+            return runtime
+        async with sessionmaker() as db:
+            row = await db.get(Session, session_id)
+        if row is None or row.status not in (STATUS_STARTING, STATUS_ACTIVE) or loop.time() >= deadline:
+            return None
+        if await request.is_disconnected():
+            return None
+        await asyncio.sleep(SSE_POLL_SECONDS)
+
+
+def _last_event_id(request: Request) -> int | None:
+    raw = request.headers.get("last-event-id")
+    try:
+        return int(raw) if raw is not None else None
+    except ValueError:
+        return None
+
+
 @router.get("/sessions/{session_id}/events")
 async def session_events(
     session_id: uuid.UUID,
@@ -591,42 +638,82 @@ async def session_events(
     since_seq: int | None = None,
     sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
 ) -> EventSourceResponse:
-    """Message events only, per the work-plan line -- floor-decision/status-change events
-    are NOT added to this channel, even though they'd be easy to add later."""
+    """Message events (unnamed, with `id: <seq>`) plus the named live events `rolling_summary`,
+    `turn_delta`, `turn_tool`, `turn_done` and `turn_error`.
+
+    Replay: `since_seq` (or, on an automatic browser reconnect, the `Last-Event-ID` header, which
+    takes precedence) replays every stored message after that seq first; `since_seq=0` replays the whole
+    transcript. Without either, only live events are sent. The queue is subscribed BEFORE the
+    backlog is read and live messages at or below the last replayed seq are skipped, so a
+    message published while the backlog is being read is neither lost nor sent twice.
+
+    Ending: when there is nothing live to tail (finished, failed, never started), or the runner
+    finishes while connected, the stream drains and sends a final `end` event and closes; the client must close its EventSource on `end`, or
+    the browser would reconnect forever. If a slow client's queue overflows the stream also
+    closes (no `end`), and the reconnect replays what it missed from the database."""
+    # An automatic browser reconnect re-sends the original URL (with its since_seq) plus the id of
+    # the last event it received; the header is the more recent of the two, so it wins.
+    last_id = _last_event_id(request)
+    if last_id is not None:
+        since_seq = last_id
 
     async def event_stream():
-        if since_seq is not None:
-            async with sessionmaker() as db:
-                rows = (await db.execute(
-                    select(Message).where(Message.session_id == session_id, Message.seq > since_seq)
-                    .order_by(Message.seq)
-                )).scalars().all()
-            for row in rows:
-                if await request.is_disconnected():
-                    return
-                yield json.dumps(_message_row_to_envelope_dict(row))
-
-        runtime = request.app.state.session_runtimes.get(session_id)
-        if runtime is None or runtime.runner_task.done():
-            return  # nothing live to tail: never started, or already finished/failed
-
-        queue = runtime.pubsub.subscribe()
+        runtime = await _wait_for_runtime(request, sessionmaker, session_id)
+        # Subscribe first: anything published from here on is queued while we replay.
+        queue = runtime.pubsub.subscribe() if runtime is not None and not runtime.runner_task.done() else None
         try:
+            last_seq = since_seq if since_seq is not None else -1
+            if since_seq is not None:
+                async with sessionmaker() as db:
+                    rows = (await db.execute(
+                        select(Message).where(Message.session_id == session_id, Message.seq > since_seq)
+                        .order_by(Message.seq)
+                    )).scalars().all()
+                for row in rows:
+                    if await request.is_disconnected():
+                        return
+                    last_seq = max(last_seq, row.seq)
+                    yield {"id": str(row.seq), "data": json.dumps(_message_row_to_envelope_dict(row))}
+
+            # The rolling summary is persisted on the session, so a client that connects late (or
+            # reloads the page) still gets the latest one instead of waiting for the next update.
+            async with sessionmaker() as db:
+                summary = (await db.get(Session, session_id))
+            if summary is not None and summary.rolling_summary:
+                yield {"event": "rolling_summary", "data": json.dumps({"summary": summary.rolling_summary})}
+
+            if queue is None:
+                yield {"event": "end", "data": "{}"}  # nothing live to tail
+                return
+
             while True:
                 if await request.is_disconnected():
                     return
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except asyncio.TimeoutError:
+                    if runtime.runner_task.done():
+                        yield {"event": "end", "data": "{}"}  # queue drained and the runner is over
+                        return
                     continue
-                if event.get("type") == "message":
-                    yield json.dumps(event["data"])
-                elif event.get("type") in ("rolling_summary", "turn_delta", "turn_tool", "turn_done", "turn_error"):
-                    yield {
-                        "event": event["type"],
-                        "data": json.dumps(event["data"])
-                    }
+                kind = event.get("type")
+                if kind == "overflow":
+                    return  # too slow: close so the client reconnects and replays from the DB
+                if kind == "message":
+                    data = event["data"]
+                    seq = data.get("seq")
+                    if seq is not None and since_seq is not None and seq <= last_seq:
+                        continue  # already sent as part of the backlog
+                    if seq is not None:
+                        last_seq = max(last_seq, seq)
+                    out = {"data": json.dumps(data)}
+                    if seq is not None:
+                        out["id"] = str(seq)
+                    yield out
+                elif kind in ("rolling_summary", "turn_delta", "turn_tool", "turn_done", "turn_error"):
+                    yield {"event": kind, "data": json.dumps(event["data"])}
         finally:
-            runtime.pubsub.unsubscribe(queue)
+            if queue is not None:
+                runtime.pubsub.unsubscribe(queue)
 
     return EventSourceResponse(event_stream())

@@ -51,6 +51,11 @@ async def lifespan(app: FastAPI):
     sessionmaker = get_sessionmaker()
     sandbox_provider = app.state.sandbox_provider_factory()
 
+    missing = [v for v in ("BAYTO_SUMMARY_MODEL", "BAYTO_SYNTHESIS_MODEL") if not os.environ.get(v)]
+    if missing:
+        log.warning("not configured: %s unset -- starting a session will answer 503 until it is set "
+                    "(see orchestrator/README.md, Configuration)", ", ".join(missing))
+
     relaunch_tasks: set[asyncio.Task] = set()
 
     async def _relaunch(session_id: uuid.UUID) -> None:

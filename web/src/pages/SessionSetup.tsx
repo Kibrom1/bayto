@@ -4,6 +4,7 @@ import {
   createSession,
   getAgentTemplates,
   getModes,
+  listTasks,
   startSession,
   type SessionCreateRequest,
 } from '../api/sessions'
@@ -65,6 +66,15 @@ export function SessionSetup() {
   const [tokens, setTokens] = useState('200000')
   const [touched, setTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+
+  // The route takes any id, so check the task exists. If the lookup itself fails we carry on: the
+  // setup options below report their own load errors, and starting a session re-validates the task.
+  const [taskMissing, setTaskMissing] = useState(false)
+  useEffect(() => {
+    listTasks()
+      .then((ts) => { if (Array.isArray(ts) && !ts.some((t) => t.id === taskId)) setTaskMissing(true) })
+      .catch(() => {})
+  }, [taskId])
 
   useEffect(() => {
     Promise.all([getModes(), getAgentTemplates()])
@@ -134,6 +144,15 @@ export function SessionSetup() {
     }
   }
 
+  if (taskMissing) {
+    return (
+      <div className="page">
+        <div className="alert bad" role="alert">
+          That task doesn't exist, or the link is wrong. <Link to="/">Back to tasks</Link>
+        </div>
+      </div>
+    )
+  }
   if (loadError) {
     return (
       <div className="page">

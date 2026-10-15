@@ -10,7 +10,17 @@
 }
 
 .task-main { flex: 1 1 22rem; min-width: 0; }
-.task-title { margin: 0 0 var(--space-1); font-size: 1.05rem; }
+.task-title {
+  margin: 0 0 var(--space-1);
+  font-size: 1.05rem;
+  /* A long unbroken title must wrap inside the card, not push the page (and the buttons) off-screen. */
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .task-brief {
   margin: 0 0 var(--space-2);
   color: var(--ink-3);
@@ -19,6 +29,7 @@
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
   max-width: 70ch;
 }
 .task-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); }

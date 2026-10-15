@@ -30,7 +30,7 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }) {
   )
 }
 
-export function toMarkdown(value: unknown, depth = 0): string {
+function toMarkdown(value: unknown, depth = 0): string {
   if (value === null || value === undefined || value === '') return ''
   if (typeof value !== 'object') return `${String(value)}\n\n`
   if (Array.isArray(value)) {

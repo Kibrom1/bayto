@@ -103,7 +103,7 @@ export function TaskBoard() {
           {tasks.map((task) => (
             <li key={task.id} className="task-card card">
               <div className="task-main">
-                <h2 className="task-title">{task.title}</h2>
+                <h2 className="task-title">{task.title.trim() || '(untitled task)'}</h2>
                 {task.brief && <p className="task-brief">{task.brief}</p>}
                 <div className="task-meta">
                   {statusChip(task.status)}

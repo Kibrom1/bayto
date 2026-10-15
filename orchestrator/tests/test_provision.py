@@ -69,7 +69,7 @@ def test_script_receives_roster_and_roles_dir(tmp_path):
 
 async def test_create_uses_the_provisioner_instead_of_env_create(live_sessionmaker):
     from orchestrator.models import Task
-    from tests.test_local_sandbox import FakeSbxRunner
+    from test_local_sandbox import FakeSbxRunner
 
     calls = []
 
