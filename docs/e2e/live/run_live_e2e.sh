@@ -60,9 +60,13 @@ fi
 PY="$VENV/bin/python"
 
 if [ -z "${USE_RUNNING:-}" ]; then
-  say "Database: migrate and seed"
+  # The orchestrator's venv may not have the project itself installed (alembic gets src/ from alembic.ini, the
+# others do not). Put src/ and acp on the path, the same way spikes/m1-checks/moderator-cli-live.sh does.
+export PYTHONPATH="$REPO/orchestrator/src:$REPO/agent-comms/src${PYTHONPATH:+:$PYTHONPATH}"
+
+say "Database: migrate and seed"
   (cd "$REPO/orchestrator" && uv run alembic upgrade head && uv run python -m orchestrator.seed) > "$RUN/db.log" 2>&1 \
-    || { echo "migrate/seed failed (is Postgres running at $DATABASE_URL?). See $RUN/db.log"; tail -15 "$RUN/db.log"; exit 2; }
+    || { echo "migrate/seed failed (DATABASE_URL=$DATABASE_URL). See $RUN/db.log"; tail -15 "$RUN/db.log"; exit 2; }
 
   say "Starting the API on :$API_PORT"
   export BAYTO_SUMMARY_MODEL="${BAYTO_SUMMARY_MODEL:-claude-sonnet-5-5}" BAYTO_SYNTHESIS_MODEL="${BAYTO_SYNTHESIS_MODEL:-claude-sonnet-5-5}" \
