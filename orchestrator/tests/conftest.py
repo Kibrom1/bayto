@@ -92,3 +92,21 @@ async def live_sessionmaker(live_schema):
     sm = async_sessionmaker(engine, expire_on_commit=False)
     yield sm
     await engine.dispose()
+
+
+async def _no_login_check() -> None:
+    return None
+
+
+@pytest.fixture(autouse=True)
+def _skip_moderator_login_check():
+    """Start/Resume probe the `claude` login in real use; tests never spawn the CLI."""
+    from orchestrator.app import app
+    had = hasattr(app.state, "login_check")
+    old = getattr(app.state, "login_check", None)
+    app.state.login_check = _no_login_check
+    yield
+    if had:
+        app.state.login_check = old
+    else:
+        del app.state.login_check

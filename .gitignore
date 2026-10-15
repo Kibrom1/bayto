@@ -25,3 +25,5 @@ orchestrator/.venv/
 .idea/
 .vscode-server/
 spikes/m1-checks/results/
+.bayto-run/
+orchestrator/src/.sessions/

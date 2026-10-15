@@ -56,3 +56,23 @@ def get_synthesizer(request: Request) -> Synthesizer:
 
 def get_hand_raise_scorer_factory(request: Request) -> Callable[[], HandRaiseScorer]:
     return request.app.state.scorer_factory
+
+
+async def default_login_check() -> None:
+    """Before a session starts or resumes: with the subscription CLI as the moderator backend, make
+    sure the `claude` login still works, so an expired login fails here with a clear message instead
+    of minutes later inside a turn. A no-op for the API backend."""
+    from ..llm.backend import backend_name
+    from ..llm.claude_cli import ClaudeCliError, check_login
+    if backend_name() != "cli":
+        return
+    try:
+        await check_login()
+    except ClaudeCliError as exc:
+        raise HTTPException(503, detail={"error": {
+            "code": "moderator_login",
+            "detail": f"The moderator cannot reach Claude: {exc}. Run `claude` in a terminal and use /login, then try again."}}) from exc
+
+
+async def get_login_check(request: Request):
+    return getattr(request.app.state, "login_check", default_login_check)

@@ -27,6 +27,14 @@ interface AgentInfo {
 
 const fmt = (n: number) => n.toLocaleString('en-US')
 const initials = (name: string) => name.split(/[\s_-]+/).map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('')
+const STOP_REASONS: Record<string, string> = {
+  max_rounds: 'it reached its round limit',
+  staleness: 'the agents stopped adding new arguments',
+  converged: 'the agents converged on an answer',
+  user_stop: 'it was stopped from the room',
+  budget_exceeded: 'it reached its budget',
+}
+export const stopReasonText = (r?: string | null) => (r ? STOP_REASONS[r] ?? r.replace(/[-_]+/g, ' ') : null)
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 function hueFor(key: string): number {
@@ -216,6 +224,9 @@ export function BaytoRoom() {
           This session failed{session.failure_reason ? `: ${session.failure_reason}` : ' before it could start.'}
           {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}
         </div>
+      )}
+      {session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
+        <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.</div>
       )}
       {session.status === 'starting' && (
         <div className="notice" role="status">

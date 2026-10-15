@@ -24,7 +24,7 @@ from ..models import Agent, Artifact, Message, Mode, Session, SessionAgent, Task
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
-from .deps import get_db_sessionmaker, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
+from .deps import get_db_sessionmaker, get_login_check, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import launch_runner, session_failures, session_stages
 from .types import LABEL_MAX, MESSAGE_MAX, REASON_MAX, text
 
@@ -180,7 +180,9 @@ async def start_session(
     summarizer=Depends(get_summarizer),
     synthesizer=Depends(get_synthesizer),
     scorer_factory=Depends(get_hand_raise_scorer_factory),
+    login_check=Depends(get_login_check),
 ) -> dict:
+    await login_check()
     async with sessionmaker() as db:
         row = await db.get(Session, session_id)
         if row is None:
@@ -314,6 +316,7 @@ async def resume_session(
     summarizer=Depends(get_summarizer),
     synthesizer=Depends(get_synthesizer),
     scorer_factory=Depends(get_hand_raise_scorer_factory),
+    login_check=Depends(get_login_check),
 ) -> dict:
     """Resume a paused (`needs_human`) session by relaunching the ModeratorRunner via
     the same `launch_runner()` path M2.9's restart-reconcile already uses (reconcile.py's
@@ -327,6 +330,7 @@ async def resume_session(
     Guard: only `needs_human` sessions can be resumed. A fresh `launch_runner()` for an
     already-active session (e.g. a double-tap of /resume) would create a second parallel
     runner, which is wrong -- the 409 prevents that."""
+    await login_check()
     async with sessionmaker() as db:
         row = await db.get(Session, session_id)
         if row is None:

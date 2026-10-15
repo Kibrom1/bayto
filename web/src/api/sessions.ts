@@ -81,6 +81,7 @@ export interface SessionDetailOut {
   usage: UsageOut
   turn_counts: TurnCountOut[]
   failure_reason?: string | null
+  stop_reason?: string | null
   stage?: string | null
 }
 
