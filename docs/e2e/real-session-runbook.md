@@ -6,6 +6,20 @@ Everything below is a check with an expected result; write down anything that di
 are taken from `orchestrator/README.md` and `spikes/m1-checks/README.md`; none of this runbook has been run yet,
 so fix small things on the first pass.
 
+## Scripted version
+
+Steps 2 to 4 are automated in [`live/`](live/): `live_e2e.py` (Playwright, API as ground truth) and
+`run_live_e2e.sh` (starts the stack, runs both modes, collects logs).
+
+```sh
+BAYTO_REPO=$PWD docs/e2e/live/run_live_e2e.sh                 # debate, then open-chat
+BAYTO_REPO=$PWD docs/e2e/live/run_live_e2e.sh debate --headed
+```
+
+The scripts only talk to the running app over HTTP and import nothing from the repo, so they remain an
+independent tester even though they live here. Results go to `docs/e2e/live/runs/` (git-ignored). Verified only
+against the fake-model harness; the sandbox, `claude -p` and startup parts are untested.
+
 ## 0. Setup
 
 ```sh
