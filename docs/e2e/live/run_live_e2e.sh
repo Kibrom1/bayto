@@ -68,6 +68,16 @@ say "Database: migrate and seed"
   (cd "$REPO/orchestrator" && uv run alembic upgrade head && uv run python -m orchestrator.seed) > "$RUN/db.log" 2>&1 \
     || { echo "migrate/seed failed (DATABASE_URL=$DATABASE_URL). See $RUN/db.log"; tail -15 "$RUN/db.log"; exit 2; }
 
+  # A server already on these ports would answer the health check and the test would silently run against
+  # it (an older build, other settings) while our own copy fails to bind. Refuse instead.
+  for port in "$API_PORT" "$WEB_PORT"; do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "port $port is already in use:"; lsof -nP -iTCP:"$port" -sTCP:LISTEN | tail -n +2 | head -3
+      echo "Stop that process, pick other ports (API_PORT=... WEB_PORT=...), or use USE_RUNNING=1 to test the stack that is already up."
+      exit 2
+    fi
+  done
+
   say "Starting the API on :$API_PORT"
   export BAYTO_SUMMARY_MODEL="${BAYTO_SUMMARY_MODEL:-claude-sonnet-5-5}" BAYTO_SYNTHESIS_MODEL="${BAYTO_SYNTHESIS_MODEL:-claude-sonnet-5-5}" \
          BAYTO_HAND_RAISE_MODEL="${BAYTO_HAND_RAISE_MODEL:-claude-sonnet-5-5}" BAYTO_LLM_BACKEND=cli BAYTO_STREAMING_TURNS=1
@@ -76,7 +86,7 @@ say "Database: migrate and seed"
 
   say "Starting the web app on :$WEB_PORT"
   [ -d "$REPO/web/node_modules" ] || (cd "$REPO/web" && npm install) > "$RUN/npm.log" 2>&1
-  (cd "$REPO/web" && exec npx vite --port "$WEB_PORT" --host 127.0.0.1) > "$RUN/web.log" 2>&1 &
+  (cd "$REPO/web" && exec npx vite --port "$WEB_PORT" --strictPort --host 127.0.0.1) > "$RUN/web.log" 2>&1 &
   PIDS+=($!)
 
   for i in $(seq 1 60); do

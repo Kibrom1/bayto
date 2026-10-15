@@ -103,7 +103,7 @@ def main():
             return s if s["status"] in ("active", "failed", "finished", "cancelled") else None
         s = wait(active_or_failed, args.start_timeout, 3)
         check("session becomes active", s and s["status"] == "active",
-              json.dumps({k: s.get(k) for k in ("status", "failure", "start_stage")}) if s else f"still starting after {args.start_timeout}s")
+              json.dumps({k: s.get(k) for k in ("status", "failure_reason", "stage")}) if s else f"still starting after {args.start_timeout}s")
         if not s or s["status"] != "active":
             shot("fail-start"); return sid
 
