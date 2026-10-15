@@ -151,7 +151,7 @@ def main():
             ok = wait(lambda: turns(sid) > t2 or session(sid)["status"] in ("failed", "finished"), args.resume_timeout)
             dt = time.time() - t0
             check("resume: the discussion continues", turns(sid) > t2,
-                  f"turns {t2} -> {turns(sid)} in {dt:.0f}s; status={session(sid)['status']}"
+                  f"turns {t2} -> {turns(sid)} in {dt:.0f}s; status={session(sid)['status']}; stop_reason={session(sid).get('stop_reason')}"
                   + ("  (slow: check for the grant-timeout bug)" if dt > 120 else ""))
             shot("4-resumed")
 
