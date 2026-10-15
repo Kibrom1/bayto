@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -202,3 +203,26 @@ class ClaudeCliClient:
         tokens_in = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) \
             + int(u.get("cache_creation_input_tokens", 0))
         return {"result": str(env_json.get("result", "")), "in": tokens_in, "out": int(u.get("output_tokens", 0))}
+
+
+_LOGIN_OK_UNTIL = 0.0
+
+
+async def check_login(model: str | None = None, *, client: "ClaudeCliClient | None" = None,
+                      cache_seconds: float = 120.0) -> None:
+    """Fail fast when the `claude` login the moderator runs on is missing or expired: one tiny call,
+    cached for a couple of minutes so Start/Resume do not pay for it every time. Raises ClaudeCliError
+    with the CLI's own reason (for example "OAuth session expired")."""
+    global _LOGIN_OK_UNTIL
+    now = time.monotonic()
+    if now < _LOGIN_OK_UNTIL:
+        return
+    cli = client or ClaudeCliClient(timeout=60.0)
+    await cli.run(model=model or os.environ.get("BAYTO_SUMMARY_MODEL") or "claude-sonnet-5-5",
+                  system="Reply with the single word: ok", prompt="ping")
+    _LOGIN_OK_UNTIL = now + cache_seconds
+
+
+def reset_login_cache() -> None:
+    global _LOGIN_OK_UNTIL
+    _LOGIN_OK_UNTIL = 0.0
