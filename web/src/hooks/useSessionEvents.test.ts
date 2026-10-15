@@ -49,3 +49,28 @@ describe('useSessionEvents', () => {
     expect(result.current.connected).toBe(false)
   })
 })
+
+describe('useSessionEvents reconnecting', () => {
+  it('reopens the stream when the status changes (Pause then Resume), resuming after the last seq', () => {
+    const { result, rerender } = renderHook(({ status }) => useSessionEvents('s1', status), { initialProps: { status: 'active' } })
+    const first = FakeEventSource.last
+    act(() => {
+      first.onmessage?.({ data: JSON.stringify({ message_id: 'm1', seq: 4, from: 'a', body: 'hi' }) } as MessageEvent)
+      first.listeners['end']?.({} as MessageEvent) // paused: the runner ended, so the stream ended
+    })
+    expect(first.close).toHaveBeenCalled()
+    rerender({ status: 'needs_human' })
+    rerender({ status: 'active' }) // resumed
+    expect(FakeEventSource.last).not.toBe(first)
+    expect(FakeEventSource.last.url).toBe('/sessions/s1/events?since_seq=4')
+    expect(result.current.messages).toHaveLength(1) // what we had is kept
+  })
+
+  it('does not reconnect when the stream ends but the status has not changed', () => {
+    const { rerender } = renderHook(({ status }) => useSessionEvents('s1', status), { initialProps: { status: 'active' } })
+    const first = FakeEventSource.last
+    act(() => first.listeners['end']?.({} as MessageEvent))
+    rerender({ status: 'active' }) // a stale poll says the same thing again
+    expect(FakeEventSource.last).toBe(first)
+  })
+})

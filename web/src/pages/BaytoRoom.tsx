@@ -16,6 +16,7 @@ import {
 } from '../api/sessions'
 import { isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
+import { isConversational } from './messageKinds'
 import { Synthesis } from './Synthesis'
 import './BaytoRoom.css'
 
@@ -39,8 +40,9 @@ const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'en
 
 export function BaytoRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
-  const { messages, rollingSummary, live, connected } = useSessionEvents(sessionId || '')
   const [session, setSession] = useState<SessionDetailOut | null>(null)
+  const { messages: allMessages, rollingSummary, live, connected } = useSessionEvents(sessionId || '', session?.status)
+  const messages = useMemo(() => allMessages.filter(isConversational), [allMessages])
   const [error, setError] = useState<string | null>(null)
   const [notFound, setNotFound] = useState(false)
   const [taskTitle, setTaskTitle] = useState<string | null>(null)

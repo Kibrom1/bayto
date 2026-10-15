@@ -68,6 +68,59 @@ def scrub_failure(text: str) -> str:
     return re.sub(r"/(?:Users|home)/[^/\s:]+", "/<user>", text)
 
 
+async def _retire_runtime(runtime: "SessionRuntime") -> None:
+    """Stop a session's previous runner (if still running) and its mirror, and wait until both are gone."""
+    tasks = [runtime.mirror_task]
+    if not runtime.runner_task.done():
+        tasks.append(runtime.runner_task)
+    for t in tasks:
+        t.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# Statuses a crashed runner may be moved out of; anything else (finished, cancelled, failed...) is
+# already a final answer and must not be overwritten.
+_CRASHABLE = ("starting", "active", "stopping", "cancelling")
+_failure_tasks: set[asyncio.Task] = set()  # strong refs: the loop only keeps weak ones
+
+
+_cleanup_tasks: set[asyncio.Task] = set()  # strong refs to mirror-release tasks
+
+
+async def _stop_mirror_after_run(mirror, mirror_task: asyncio.Task) -> None:
+    """Once a runner has ended (finished, stopped, paused, crashed) its mirror has nothing left to
+    watch. Stop the poll loop, then do one last poll so replies written just before the end are still
+    recorded and published. Without this every finished session leaked a polling task until restart."""
+    mirror_task.cancel()
+    await asyncio.gather(mirror_task, return_exceptions=True)
+    try:
+        await mirror.poll_once()
+    except Exception:
+        log.exception("final mirror poll failed")
+
+
+def _on_runner_done(task: asyncio.Task, session_id: uuid.UUID, sessionmaker: async_sessionmaker) -> None:
+    """A ModeratorRunner that dies with an exception used to vanish: the exception was only logged when
+    the task was garbage-collected, and the session stayed `active` forever with no turns. Record it
+    on the session instead, so the room and the API show a failed session and why."""
+    if task.cancelled() or task.exception() is None:
+        return
+    exc = task.exception()
+    log.error("session %s: moderator runner crashed", session_id, exc_info=exc)
+    session_failures[session_id] = scrub_failure(f"while running: {type(exc).__name__}: {exc}")[:600]
+
+    async def mark_failed() -> None:
+        async with sessionmaker() as db:
+            row = await db.get(Session, session_id)
+            if row is not None and row.status in _CRASHABLE:
+                row.status = "failed"
+                await db.commit()
+
+    t = asyncio.get_running_loop().create_task(mark_failed())
+    _failure_tasks.add(t)
+    t.add_done_callback(_failure_tasks.discard)
+
+
 DEFAULT_FACTORY_ROOT = Path(__file__).resolve().parents[2] / ".sessions"
 
 
@@ -158,8 +211,24 @@ async def launch_runner(
             row.started_at = datetime.now(timezone.utc)
             await db.commit()
 
+        # A relaunch (Resume, or restart reconciliation) must retire the previous runtime first. Its
+        # mirror polls the same message files and kept running after its runner ended; two mirrors race
+        # to record each reply, and only the one that wins publishes it -- so the NEW runner could wait
+        # out its whole grant timeout for an answer the old mirror had already swallowed.
+        previous = session_runtimes.get(session_id)
+        if previous is not None:
+            await _retire_runtime(previous)
+
         mirror_task = asyncio.create_task(mirror.run_forever())
         runner_task = asyncio.create_task(runner.run())
+        runner_task.add_done_callback(lambda t: _on_runner_done(t, session_id, sessionmaker))
+
+        def _release_mirror(_t: asyncio.Task) -> None:
+            t = asyncio.get_running_loop().create_task(_stop_mirror_after_run(mirror, mirror_task))
+            _cleanup_tasks.add(t)
+            t.add_done_callback(_cleanup_tasks.discard)
+
+        runner_task.add_done_callback(_release_mirror)
         running_sessions[session_id] = runner_task
         session_runtimes[session_id] = SessionRuntime(conversation=conversation, pubsub=pubsub,
                                                         mirror_task=mirror_task, runner_task=runner_task)

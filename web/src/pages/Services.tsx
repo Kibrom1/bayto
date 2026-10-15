@@ -80,9 +80,13 @@ export function Services() {
   }
 
   useEffect(() => {
-    refresh()
+    // First load on the next tick (not synchronously in the effect), then poll.
+    const first = setTimeout(refresh, 0)
     const t = setInterval(refresh, 3000)
-    return () => clearInterval(t)
+    return () => {
+      clearTimeout(first)
+      clearInterval(t)
+    }
   }, [refresh])
 
   async function act(key: string, body: Record<string, unknown>): Promise<string> {
