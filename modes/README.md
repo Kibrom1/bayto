@@ -16,3 +16,9 @@ after editing any of these files so the DB row stays in sync; these YAML files t
 never round-tripped into the DB at session-run time (`modes_registry.resolve_mode` always
 re-reads the file directly, per M2.5/M2.8's design -- see docs/decisions.md).
 
+
+`build.yaml` (Build mode, docs/build-mode-design.md) is different: `floor_policy: pipeline`, a fixed set of
+`build-*` roles, and a `route` table keyed `"<role>.report.<verdict>"`. Each Build turn ends with a
+`VERDICT: <word>` line and the orchestrator's `PipelineFloorPolicy` routes on it; `done` ends the session
+successfully (`stop_reason: build_complete`), and any verdict the table does not route pauses the session
+for a person. `tests/test_shipped_modes.py` checks the table against the seeded roles.
