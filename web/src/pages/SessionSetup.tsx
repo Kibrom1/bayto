@@ -8,6 +8,8 @@ import {
   startSession,
   type SessionCreateRequest,
 } from '../api/sessions'
+import { agentHue } from '../agentColor'
+import { TableRing } from '../components/TableRing'
 import './SessionSetup.css'
 
 interface AgentTemplate {
@@ -204,7 +206,7 @@ export function SessionSetup() {
               {templates.map((t) => {
                 const on = agentIds.includes(t.id)
                 return (
-                  <li key={t.id} className={`agent-card${on ? ' on' : ''}`}>
+                  <li key={t.id} className={`agent-card${on ? ' on' : ''}`} style={{ ['--agent-h' as string]: agentHue(t.role ?? t.name) }}>
                     <span className="avatar" aria-hidden="true">{initials(t.name)}</span>
                     <div className="agent-meta">
                       <strong>{t.name}</strong>
@@ -227,6 +229,11 @@ export function SessionSetup() {
         <aside className="setup-side">
           <section className="card card-pad" aria-labelledby="roster-h">
             <h2 id="roster-h">Selected roster</h2>
+            {roster.length > 0 && (
+              <TableRing size={200} seats={roster.map((t) => ({ key: t.id, initials: initials(t.name), hue: agentHue(t.role ?? t.name), label: t.name }))}>
+                {titleCase(modes.find((m) => m.id === modeId)?.name ?? 'Choose a mode')}
+              </TableRing>
+            )}
             {roster.length === 0 ? (
               <p className="muted">No agents yet. Add at least two from the explorer.</p>
             ) : (

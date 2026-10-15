@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BaytoRoom, stopReasonText } from './BaytoRoom'
@@ -48,6 +48,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  cleanup() // unmount first: a mounted room would reopen its EventSource after the stub is gone
   vi.unstubAllGlobals()
 })
 

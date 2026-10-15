@@ -44,7 +44,9 @@ export BAYTO_SUMMARY_MODEL="${BAYTO_SUMMARY_MODEL:-claude-sonnet-5-5}" BAYTO_SYN
 
 (cd "$REPO/orchestrator" && exec uv run uvicorn orchestrator.app:app --port "$API_PORT") > "$LOGS/api.log" 2>&1 &
 PIDS+=($!)
-[ -d "$REPO/web/node_modules" ] || (cd "$REPO/web" && npm install) > "$LOGS/npm.log" 2>&1
+if [ ! -d "$REPO/web/node_modules" ] || [ "$REPO/web/package-lock.json" -nt "$REPO/web/node_modules" ]; then
+  (cd "$REPO/web" && npm install) > "$LOGS/npm.log" 2>&1
+fi
 (cd "$REPO/web" && exec npx vite --port "$WEB_PORT" --strictPort --host 127.0.0.1) > "$LOGS/web.log" 2>&1 &
 PIDS+=($!)
 

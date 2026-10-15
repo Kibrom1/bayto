@@ -21,7 +21,7 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }) {
   return (
     <div className="syn-group">
       {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
-        <section key={k}>
+        <section key={k} className={depth === 0 ? `syn-sec syn-sec-${k.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : undefined}>
           {depth === 0 ? <h3 className="syn-h">{label(k)}</h3> : <h4 className="syn-h2">{label(k)}</h4>}
           <Value value={v} depth={depth + 1} />
         </section>

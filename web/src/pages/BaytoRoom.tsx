@@ -18,6 +18,8 @@ import { isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
 import { Synthesis } from './Synthesis'
+import { agentHue } from '../agentColor'
+import { TableRing } from '../components/TableRing'
 import './BaytoRoom.css'
 
 interface AgentInfo {
@@ -36,12 +38,6 @@ const STOP_REASONS: Record<string, string> = {
 }
 export const stopReasonText = (r?: string | null) => (r ? STOP_REASONS[r] ?? r.replace(/[-_]+/g, ' ') : null)
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-
-function hueFor(key: string): number {
-  let h = 0
-  for (const c of key) h = (h * 31 + c.charCodeAt(0)) % 360
-  return h
-}
 
 const PAUSED = ['needs_human', 'paused']
 const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'ended']
@@ -161,7 +157,7 @@ export function BaytoRoom() {
   }
 
   const roster = session?.turn_counts ?? []
-  const hue = useMemo(() => (role: string) => hueFor(role), [])
+  const hue = useMemo(() => (role: string) => agentHue(role), [])
 
   if (error && !session) {
     return (
@@ -181,6 +177,8 @@ export function BaytoRoom() {
   const tokens = session.usage.tokens_in + session.usage.tokens_out
   const budgetTokens: number | null = session.budget?.tokens ?? session.budget?.max_tokens ?? null
   const pct = budgetTokens ? Math.min(100, Math.round((tokens / budgetTokens) * 100)) : null
+  const costCap: number | null = session.budget?.dollars ?? session.budget?.max_cost ?? null
+  const costPct = costCap ? Math.min(100, Math.round((session.usage.cost / costCap) * 100)) : null
   const liveEntries = Object.entries(live)
 
   return (
@@ -238,6 +236,17 @@ export function BaytoRoom() {
       <div className="room-body">
         <aside className="panel side-left" aria-label="Roster panel">
           <h2>Roster</h2>
+          {roster.length > 0 && (
+            <TableRing
+              size={200}
+              seats={roster.map((tc) => {
+                const role = tc.participant ?? 'unknown'
+                return { key: tc.agent_id, initials: initials(display(role).name), hue: hue(role), active: role in live, label: display(role).name }
+              })}
+            >
+              {liveEntries.length > 0 ? `${display(liveEntries[0][0]).name} has the floor` : `Round ${session.round}`}
+            </TableRing>
+          )}
           {roster.map((tc) => {
             const role = tc.participant ?? 'unknown'
             const info = display(role)
@@ -321,8 +330,10 @@ export function BaytoRoom() {
         </main>
 
         <aside className="panel side-right" aria-label="Moderator panel">
-          <h2>Moderator summary</h2>
-          <p className="summary">{rollingSummary || 'The summary appears after the first turns.'}</p>
+          <div className="mod-card">
+            <h2>Moderator summary</h2>
+            <p className="summary">{rollingSummary || 'The summary appears after the first turns.'}</p>
+          </div>
           <h2>Usage vs budget</h2>
           {pct !== null && (
             <div className="meter" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Token budget used">
@@ -331,7 +342,12 @@ export function BaytoRoom() {
           )}
           {budgetTokens !== null && tokens > budgetTokens && <p className="hint">Past the suggested token budget. The session continues; only the dollar cap stops it.</p>}
           <div className="usage-line"><span>Tokens</span><strong>{fmt(tokens)}{budgetTokens ? ` / ${fmt(budgetTokens)} suggested` : ''}</strong></div>
-          <div className="usage-line"><span>Cost</span><strong>${session.usage.cost.toFixed(4)}</strong></div>
+          <div className="usage-line"><span>Cost</span><strong>${session.usage.cost.toFixed(4)}{costCap ? ` / $${costCap.toFixed(2)} cap` : ''}</strong></div>
+          {costPct !== null && (
+            <div className="meter" role="progressbar" aria-valuenow={costPct} aria-valuemin={0} aria-valuemax={100} aria-label="Dollar cap used">
+              <div className={`meter-fill cost${costPct >= 100 ? ' over' : costPct >= 80 ? ' warn' : ''}`} style={{ width: `${costPct}%` }} />
+            </div>
+          )}
         </aside>
       </div>
     </section>
