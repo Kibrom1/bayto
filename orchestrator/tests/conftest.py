@@ -57,13 +57,28 @@ def _live_postgres_reachable() -> bool:
         return False
 
 
+_db_tests_skipped: list[str] = []
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Most of the suite needs Postgres and skips silently without it; say so loudly."""
+    if _db_tests_skipped:
+        terminalreporter.write_sep(
+            "!", f"{len(_db_tests_skipped)} database tests were SKIPPED: {_db_tests_skipped[0]} "
+                 "(set BAYTO_REQUIRE_DB=1 to fail instead of skip)", yellow=True)
+
+
 @pytest.fixture
 def live_schema():
     """Skips if unreachable; otherwise yields an Alembic Config already migrated to head,
     and downgrades back to base on teardown so the database is left clean."""
     if not _live_postgres_reachable():
-        pytest.skip(f"no live Postgres reachable at DATABASE_URL ({database_url()!r}); "
-                    "set DATABASE_URL to test against one")
+        reason = (f"no live Postgres reachable at DATABASE_URL ({database_url()!r}); "
+                  "set DATABASE_URL to test against one")
+        if os.environ.get("BAYTO_REQUIRE_DB") == "1":
+            pytest.fail(reason)  # CI: a skipped database suite must not look like a pass
+        _db_tests_skipped.append(reason)
+        pytest.skip(reason)
     cfg = Config(ALEMBIC_INI)
     command.upgrade(cfg, "head")
     yield cfg

@@ -27,7 +27,7 @@ class FakeSandboxProvider(SandboxProvider):
         self._reconcile_result = reconcile_result or []
         self._reconcile_raises = reconcile_raises
 
-    async def create(self, task_id: uuid.UUID, *, name: str) -> SandboxInfo:
+    async def create(self, task_id: uuid.UUID, *, name: str, seats=None) -> SandboxInfo:
         if task_id in self._sandboxes:
             return self._sandboxes[task_id]
         self.created_for.append(task_id)

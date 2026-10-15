@@ -105,9 +105,13 @@ async def test_create_builds_expected_argv_and_inserts_a_row(live_sessionmaker):
 
     info = await provider.create(task_id, name="sbx-wad-102")
 
+    from orchestrator.sandbox.local import DEFAULT_SBXENV
+
     assert runner.calls == [
-        ["env", "create", "team.sbxenv.yaml", "--env-arg", "name=sbx-wad-102", "--auto-approve"],
+        ["env", "create", str(DEFAULT_SBXENV), "--env-arg", "name=sbx-wad-102", "--auto-approve"],
     ]
+    assert DEFAULT_SBXENV.is_absolute() and DEFAULT_SBXENV.name == "team.sbxenv.yaml"
+    assert DEFAULT_SBXENV.exists(), "the default sandbox definition must exist in the repo"
     assert info.task_id == task_id
     assert info.name == "sbx-wad-102"
     assert info.status == "running"
@@ -116,6 +120,21 @@ async def test_create_builds_expected_argv_and_inserts_a_row(live_sessionmaker):
     async with live_sessionmaker() as db:
         row = await db.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
     assert row is not None and row.status == "running"
+
+
+async def test_create_times_out_instead_of_hanging_forever(live_sessionmaker):
+    class HangingRunner(FakeSbxRunner):
+        def run(self, argv, *, timeout=None):
+            assert timeout == 5
+            raise subprocess.TimeoutExpired(["sbx", *argv], timeout)
+
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=HangingRunner(), create_timeout=5)
+    task_id = await _make_task(live_sessionmaker)
+
+    with pytest.raises(SandboxProviderError, match="did not finish within 5 s"):
+        await provider.create(task_id, name="sbx-hang")
+    async with live_sessionmaker() as db:
+        assert await db.scalar(select(Sandbox).where(Sandbox.task_id == task_id)) is None
 
 
 async def test_create_is_idempotent_when_already_running(live_sessionmaker):
@@ -450,3 +469,15 @@ async def test_run_turn_without_result_raises(live_sessionmaker):
     provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner)
     with pytest.raises(SandboxProviderError):
         await _collect(provider)
+
+
+def test_parse_sbx_ls_tolerates_the_shapes_the_cli_may_print():
+    from orchestrator.sandbox.local import _parse_sbx_ls
+
+    assert _parse_sbx_ls("") == {}
+    assert _parse_sbx_ls("No sandboxes found.") == {}
+    assert _parse_sbx_ls("[]") == {}
+    assert _parse_sbx_ls('{"sandboxes": []}') == {}
+    assert _parse_sbx_ls('[{"name": "a", "status": "running"}]') == {"a": "running"}
+    assert _parse_sbx_ls('{"sandboxes": [{"Name": "b", "State": "stopped"}]}') == {"b": "stopped"}
+    assert _parse_sbx_ls('{"count": 0}') == {}

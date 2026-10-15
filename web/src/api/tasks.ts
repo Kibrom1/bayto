@@ -1,5 +1,7 @@
 // Mirrors orchestrator/src/orchestrator/api/tasks.py (POST /tasks, GET /tasks).
 
+import { ApiError, parseError } from './errors'
+
 export interface Task {
   id: string
   title: string
@@ -18,19 +20,10 @@ export interface TaskCreateRequest {
   success_criteria?: string | null
 }
 
-async function parseError(res: Response): Promise<string> {
-  try {
-    const body = await res.json()
-    return typeof body?.detail === 'string' ? body.detail : JSON.stringify(body)
-  } catch {
-    return res.statusText
-  }
-}
-
 export async function listTasks(): Promise<Task[]> {
   const res = await fetch('/tasks')
   if (!res.ok) {
-    throw new Error(`GET /tasks failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `GET /tasks failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -42,7 +35,7 @@ export async function createTask(req: TaskCreateRequest): Promise<Task> {
     body: JSON.stringify(req),
   })
   if (!res.ok) {
-    throw new Error(`POST /tasks failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /tasks failed: ${res.status} ${await parseError(res)}`)
   }
   const data = await res.json()
   return data.task

@@ -16,15 +16,16 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..models import Artifact, Session, Task
 from .deps import get_db_sessionmaker
+from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
 
 router = APIRouter()
 
 
 class TaskCreateRequest(BaseModel):
-    title: str
-    brief: str
-    output_type: str
-    success_criteria: str | None = None
+    title: text(TITLE_MAX)
+    brief: text(BRIEF_MAX)
+    output_type: text(OUTPUT_TYPE_MAX)
+    success_criteria: text(CRITERIA_MAX) | None = None
     owner_id: uuid.UUID | None = None
 
 

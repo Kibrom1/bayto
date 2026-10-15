@@ -176,12 +176,30 @@ def _sandbox_info(row: Sandbox) -> SandboxInfo:
 
 
 def _parse_sbx_ls(stdout: str) -> dict[str, str]:
-    """Parses `sbx ls --json` output into {name: status}. UNVERIFIED shape (see module
-    docstring) -- assumed to be a JSON list of objects each with "name" and "status"."""
-    if not stdout.strip():
+    """Parses `sbx ls --json` output into {name: status}. The real shape is still UNVERIFIED, so
+    this accepts what the CLI is known or likely to print instead of crashing startup: a JSON list
+    of objects, or an object wrapping such a list (e.g. {"sandboxes": [...]}), with the name and
+    status under "name"/"status" (any capitalisation, or "state"). Empty output, plain text such as
+    "No sandboxes found." and an empty wrapper all mean no live sandboxes."""
+    text = stdout.strip()
+    if not text:
         return {}
-    entries = json.loads(stdout)
-    return {entry["name"]: entry["status"] for entry in entries}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        lists = [v for v in data.values() if isinstance(v, list)]
+        data = lists[0] if lists else []
+    live: dict[str, str] = {}
+    for entry in data if isinstance(data, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        fields = {str(k).lower(): v for k, v in entry.items()}
+        name = fields.get("name")
+        if name:
+            live[str(name)] = str(fields.get("status") or fields.get("state") or "")
+    return live
 
 
 def _diff(live: dict[str, str], rows: list[SandboxRow]) -> list[SandboxDrift]:
@@ -212,10 +230,21 @@ def _diff(live: dict[str, str], rows: list[SandboxRow]) -> list[SandboxDrift]:
     return drifts
 
 
+# The product's sandbox definition lives in the repo (envs/team.sbxenv.yaml). A bare relative path only
+# worked when the orchestrator happened to run from that folder, so resolve it from this file instead.
+DEFAULT_SBXENV = Path(os.environ.get("BAYTO_SBXENV") or Path(__file__).resolve().parents[4] / "envs" / "team.sbxenv.yaml")
+
+
 class LocalSbxSandboxProvider(SandboxProvider):
     def __init__(self, sessionmaker: async_sessionmaker, *, runner: SbxRunner | None = None,
-                 sbxenv_path: Path = Path("team.sbxenv.yaml"),
-                 team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0) -> None:
+                 sbxenv_path: Path = DEFAULT_SBXENV,
+                 team_ready_timeout: float = 900.0, team_poll_interval: float = 5.0,
+                 create_timeout: float = float(os.environ.get("BAYTO_SBX_CREATE_TIMEOUT", "900")),
+                 provisioner=None) -> None:
+        # provisioner: async (name, seats) -> None that builds the whole team sandbox (see provision.py).
+        # Without one, create() only runs `sbx env create`, which gives an empty sandbox with no team tools.
+        self._provisioner = provisioner
+        self._create_timeout = create_timeout
         self._sessionmaker = sessionmaker
         self._runner = runner or SubprocessSbxRunner()
         self._sbxenv_path = sbxenv_path
@@ -247,19 +276,27 @@ class LocalSbxSandboxProvider(SandboxProvider):
         for name in list(self._held):
             self._drop_client(name)
 
-    async def _run(self, argv: list[str]) -> subprocess.CompletedProcess[str]:
-        result = await asyncio.to_thread(self._runner.run, argv)
+    async def _run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
+        try:
+            result = await asyncio.to_thread(self._runner.run, argv, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxProviderError(
+                f"`sbx {' '.join(argv[:2])}` did not finish within {timeout:.0f} s "
+                f"(still running or waiting for input); check `sbx` by hand") from exc
         if result.returncode != 0:
             raise SandboxCommandError(argv, result.returncode, result.stderr)
         return result
 
-    async def create(self, task_id: uuid.UUID, *, name: str) -> SandboxInfo:
+    async def create(self, task_id: uuid.UUID, *, name: str, seats=None) -> SandboxInfo:
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
             if row is None or row.status not in ("running", "creating"):
-                await self._run([
-                    "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
-                ])
+                if self._provisioner is not None and seats:
+                    await self._provisioner(name, seats)
+                else:
+                    await self._run([
+                        "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
+                    ], timeout=self._create_timeout)
                 if row is None:
                     row = Sandbox(
                         task_id=task_id, provider=PROVIDER_NAME, name=name,

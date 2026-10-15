@@ -1,5 +1,4 @@
-import { UUID } from 'crypto'
-
+import { ApiError, parseError } from './errors'
 export interface Task {
   id: string
   title: string
@@ -81,21 +80,14 @@ export interface SessionDetailOut {
   budget: any | null
   usage: UsageOut
   turn_counts: TurnCountOut[]
-}
-
-async function parseError(res: Response): Promise<string> {
-  try {
-    const body = await res.json()
-    return typeof body?.detail === 'string' ? body.detail : JSON.stringify(body)
-  } catch {
-    return res.statusText
-  }
+  failure_reason?: string | null
+  stage?: string | null
 }
 
 export async function listTasks(): Promise<Task[]> {
   const res = await fetch('/tasks')
   if (!res.ok) {
-    throw new Error(`GET /tasks failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `GET /tasks failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -107,7 +99,7 @@ export async function createTask(req: any): Promise<Task> {
     body: JSON.stringify(req),
   })
   if (!res.ok) {
-    throw new Error(`POST /tasks failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /tasks failed: ${res.status} ${await parseError(res)}`)
   }
   const data = await res.json()
   return data.task
@@ -120,7 +112,7 @@ export async function createSession(req: SessionCreateRequest): Promise<SessionC
     body: JSON.stringify(req),
   })
   if (!res.ok) {
-    throw new Error(`POST /sessions failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /sessions failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -130,7 +122,7 @@ export async function startSession(sessionId: string): Promise<{ session: { id: 
     method: 'POST',
   })
   if (!res.ok) {
-    throw new Error(`POST /sessions/${sessionId}/start failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/start failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -138,7 +130,7 @@ export async function startSession(sessionId: string): Promise<{ session: { id: 
 export async function getSessionDetail(sessionId: string): Promise<{ session: SessionDetailOut }> {
   const res = await fetch(`/sessions/${sessionId}`)
   if (!res.ok) {
-    throw new Error(`GET /sessions/${sessionId} failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `GET /sessions/${sessionId} failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -146,7 +138,7 @@ export async function getSessionDetail(sessionId: string): Promise<{ session: Se
 export async function getModes(): Promise<any[]> {
   const res = await fetch('/modes')
   if (!res.ok) {
-    throw new Error(`GET /modes failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `GET /modes failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -154,7 +146,7 @@ export async function getModes(): Promise<any[]> {
 export async function getAgentTemplates(): Promise<any[]> {
   const res = await fetch('/agents/templates')
   if (!res.ok) {
-    throw new Error(`GET /agents/templates failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `GET /agents/templates failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -166,7 +158,7 @@ export async function interjectSession(sessionId: string, body: string, to?: str
     body: JSON.stringify({ body, to }),
   })
   if (!res.ok) {
-    throw new Error(`POST /sessions/${sessionId}/interject failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/interject failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -178,7 +170,7 @@ export async function stopSession(sessionId: string, synthesize: boolean = true,
     body: JSON.stringify({ synthesize, reason }),
   })
   if (!res.ok) {
-    throw new Error(`POST /sessions/${sessionId}/stop failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/stop failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -188,7 +180,7 @@ export async function pauseSession(sessionId: string) {
     method: 'POST',
   })
   if (!res.ok) {
-    throw new Error(`POST /sessions/${sessionId}/pause failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/pause failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
 }
@@ -198,7 +190,23 @@ export async function resumeSession(sessionId: string) {
     method: 'POST',
   })
   if (!res.ok) {
-    throw new Error(`POST /sessions/${sessionId}/resume failed: ${res.status} ${await parseError(res)}`)
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/resume failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
+}
+
+export interface ArtifactOut {
+  id: string
+  type: string // "synthesis" | "minority_report"
+  content_json: Record<string, unknown>
+  source_turn_ids: string[]
+}
+
+export async function getSessionArtifacts(sessionId: string): Promise<ArtifactOut[]> {
+  const res = await fetch(`/sessions/${sessionId}/artifacts`)
+  if (!res.ok) {
+    throw new ApiError(res.status, `GET /sessions/${sessionId}/artifacts failed: ${res.status} ${await parseError(res)}`)
+  }
+  const body = await res.json()
+  return Array.isArray(body?.artifacts) ? body.artifacts : []
 }

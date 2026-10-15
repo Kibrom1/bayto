@@ -21,6 +21,8 @@ network until M5 (human seat/auth) lands.
 """
 import functools
 import logging
+import os
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 
@@ -32,6 +34,7 @@ from .api import agents_router, modes_router, sessions_router, tasks_router
 from .api.runtime import launch_runner
 from .db import get_sessionmaker
 from .floor.scorer import AnthropicHandRaiseScorer
+from .llm import make_client
 from .moderator.summarizer import AnthropicSummarizer
 from .moderator.synthesizer import AnthropicSynthesizer
 from .reconcile import reconcile_on_startup
@@ -48,13 +51,26 @@ async def lifespan(app: FastAPI):
     sessionmaker = get_sessionmaker()
     sandbox_provider = app.state.sandbox_provider_factory()
 
+    missing = [v for v in ("BAYTO_SUMMARY_MODEL", "BAYTO_SYNTHESIS_MODEL") if not os.environ.get(v)]
+    if missing:
+        log.warning("not configured: %s unset -- starting a session will answer 503 until it is set "
+                    "(see orchestrator/README.md, Configuration)", ", ".join(missing))
+
+    relaunch_tasks: set[asyncio.Task] = set()
+
     async def _relaunch(session_id: uuid.UUID) -> None:
-        await launch_runner(
+        """Start the relaunch in the background. Reconciliation runs before the API accepts
+        requests, and a relaunch can take minutes (sandbox create, team start): awaiting it here
+        kept the whole API returning 502 until it finished or timed out. launch_runner records its
+        own failure on the session, so nothing is lost by not waiting."""
+        task = asyncio.create_task(launch_runner(
             session_id, sessionmaker=sessionmaker, sandbox_provider=app.state.sandbox_provider_factory(),
             summarizer=app.state.summarizer_factory(), synthesizer=app.state.synthesizer_factory(),
             scorer_factory=app.state.scorer_factory,
             running_sessions=app.state.running_sessions, session_runtimes=app.state.session_runtimes,
-        )
+        ))
+        relaunch_tasks.add(task)  # strong reference: the loop only keeps weak ones
+        task.add_done_callback(relaunch_tasks.discard)
 
     try:
         report = await reconcile_on_startup(sandbox_provider, sessionmaker, _relaunch)
@@ -81,13 +97,18 @@ app.state.session_runtimes = {}  # session_id -> api.runtime.SessionRuntime
 # exec is released), so a fresh provider per request would lose track of every running team.
 @functools.cache
 def _local_sandbox_provider() -> LocalSbxSandboxProvider:
-    return LocalSbxSandboxProvider(get_sessionmaker())
+    from .sandbox.provision import provision_team_sandbox
+    # BAYTO_PROVISION=0 falls back to a bare `sbx env create` (no team tools; for debugging only).
+    provisioner = provision_team_sandbox if os.environ.get("BAYTO_PROVISION", "1") != "0" else None
+    return LocalSbxSandboxProvider(get_sessionmaker(), provisioner=provisioner)
 
 
 app.state.sandbox_provider_factory = _local_sandbox_provider
-app.state.summarizer_factory = AnthropicSummarizer
-app.state.synthesizer_factory = AnthropicSynthesizer
-app.state.scorer_factory = AnthropicHandRaiseScorer
+# The moderator's side calls use the Anthropic API when ANTHROPIC_API_KEY is set, otherwise the Claude
+# subscription through `claude -p` (BAYTO_LLM_BACKEND=api|cli overrides). See orchestrator/llm.
+app.state.summarizer_factory = lambda: AnthropicSummarizer(client=make_client())
+app.state.synthesizer_factory = lambda: AnthropicSynthesizer(client=make_client())
+app.state.scorer_factory = lambda: AnthropicHandRaiseScorer(client=make_client())
 
 app.include_router(tasks_router)
 app.include_router(sessions_router)

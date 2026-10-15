@@ -412,20 +412,23 @@ class ModeratorRunner:
     async def _budget_exceeded(self, row: SessionRow) -> bool:
         """Session.budget is nullable (null = uncapped, skip the check); shape assumed to
         be {"max_tokens": int, "max_cost": float} -- no canonical schema exists for this
-        JSONB column yet. Accuracy is bounded by the self-reported-meta convention (see
+        JSONB column yet.
+
+        Only `max_cost` is a HARD stop. `max_tokens` is a suggestion (product-owner decision
+        2026-10-09): it is shown against usage in the UI but never ends a session, because a
+        token count is a poor proxy for "enough discussion" while dollars are real spend.
+
+        Accuracy is bounded by the self-reported-meta convention (see
         docs/agent-communication-protocol.md's tokens_in/tokens_out/cost section). Usage
         aggregation itself lives in `budget.session_usage` (M3.1, shared with
         `GET /sessions/{id}` so the two never compute this differently)."""
         if not row.budget:
             return False
-        usage = await session_usage(self._sessionmaker, self._session_id)
-        max_tokens = row.budget.get("max_tokens")
-        if max_tokens is not None and (usage.tokens_in + usage.tokens_out) >= max_tokens:
-            return True
         max_cost = row.budget.get("max_cost")
-        if max_cost is not None and usage.cost >= max_cost:
-            return True
-        return False
+        if max_cost is None:
+            return False
+        usage = await session_usage(self._sessionmaker, self._session_id)
+        return usage.cost >= max_cost
 
     # ---------------------------------------------------------------- hand-raise collection
 
@@ -560,7 +563,7 @@ class ModeratorRunner:
             # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only
             # for subscribers that already exist -- subscribing after wake_role() would race and
             # could miss it.
-            queue = self._pubsub.subscribe()
+            queue = self._pubsub.subscribe(bounded=False)  # never drop the reply being awaited
             try:
                 streamed = False
                 if getattr(self._sandbox_provider, "supports_streaming", False):

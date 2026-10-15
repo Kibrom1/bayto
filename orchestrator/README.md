@@ -19,6 +19,37 @@ rate limiting. Anyone who can reach this service's HTTP port can create tasks/se
 interject/stop on any session. Do not expose this service beyond a private/internal network until
 M5 (human seat/auth) lands.
 
+## Configuration
+
+Environment variables the orchestrator reads. The three `*_MODEL` variables have no default and are
+required: until `BAYTO_SUMMARY_MODEL` and `BAYTO_SYNTHESIS_MODEL` are set, `POST /sessions/{id}/start`
+answers `503 not_configured` naming the missing variable (and the server logs a warning at boot).
+`BAYTO_HAND_RAISE_MODEL` is only needed for raise-hand modes.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | `postgresql+psycopg://bayto:bayto@localhost:5432/bayto` | Postgres connection |
+| `BAYTO_SUMMARY_MODEL` | none (required) | Model id for the moderator's rolling summary |
+| `BAYTO_SYNTHESIS_MODEL` | none (required) | Model id for the final synthesis |
+| `BAYTO_HAND_RAISE_MODEL` | none (raise-hand modes) | Model id for the hand-raise scorer |
+| `BAYTO_LLM_BACKEND` | `api` if `ANTHROPIC_API_KEY` is set, else `cli` | `api` or `cli` (`claude -p` on your subscription) |
+| `BAYTO_CLAUDE_BIN` | `claude` | Path to the `claude` binary for the `cli` backend |
+| `BAYTO_FACTORY_ROOT` | `orchestrator/.sessions` | Where each session's host-mounted message directory lives |
+| `BAYTO_MODES_DIR` | repo `modes/` | Directory of discussion-mode YAML files |
+| `BAYTO_SBXENV` | `envs/team.sbxenv.yaml` | `sbx` environment spec used for team sandboxes |
+| `BAYTO_SBX_CREATE_TIMEOUT` | `900` | Seconds to wait for `sbx env create` |
+| `BAYTO_PROVISION` | `1` | `0` falls back to a bare `sbx env create` (no team tools; debugging only) |
+| `BAYTO_STREAMING_TURNS` | off | `1` streams turn deltas to the room as they are produced |
+| `BAYTO_TRACE_CONSOLE` | off | `1` prints OpenTelemetry spans to the console |
+
+Example for a local run on your Claude subscription:
+
+```sh
+export BAYTO_SUMMARY_MODEL=claude-sonnet-5-5 BAYTO_SYNTHESIS_MODEL=claude-sonnet-5-5 \
+       BAYTO_HAND_RAISE_MODEL=claude-sonnet-5-5 BAYTO_LLM_BACKEND=cli
+uv run uvicorn orchestrator.app:app --port 8000
+```
+
 ## Layout
 
 - `pyproject.toml` — uv-managed project (`bayto-orchestrator`); depends on `acp` from `../agent-comms` as an

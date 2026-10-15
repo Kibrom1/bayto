@@ -62,7 +62,7 @@ max_tokens_per_turn: 400
 ```
 
 - **Diversity by design:** personas alone converge fast. Vary stance, model, temperature and knowledge sources to get real disagreement.
-- **Agent library:** templates (Architect, Security Reviewer, PM, Lawyer, Customer, Historian) plus user-built agents; an "auto-cast" option lets the moderator propose a roster from the task brief.
+- **Agent library:** templates (Architect, Security Reviewer, PM, Lawyer, Customer, Historian, Developer, QA Tester, E2E Tester, UX Designer, Researcher, CFO, Technical Writer) plus user-built agents; an "auto-cast" option lets the moderator propose a roster from the task brief.
 - **Human seat:** the user can also sit at the table as a participant, not only as an observer.
 
 ## Bring your own agents
@@ -256,7 +256,7 @@ flowchart LR
 - Parallel-blind: all agents answer independently (Delphi), then see each other.
 - Moderator-pick: the moderator names the next speaker (fallback / override).
 
-**Stop conditions:** max rounds, token/cost budget, consensus detected (no raised hands for K rounds), no new arguments for K turns, or user ends it.
+**Stop conditions:** max rounds, dollar cap (the token budget is only a suggestion and never stops a session), consensus detected (no raised hands for K rounds), no new arguments for K turns, or user ends it.
 
 **Context management:** keep a rolling moderator summary plus the last N turns, so long debates don't blow the context window. Each agent sees only what its role should see (e.g., blind voting in Delphi).
 

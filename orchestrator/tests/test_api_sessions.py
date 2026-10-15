@@ -532,26 +532,55 @@ async def test_sse_emits_rolling_summary_events(client, live_sessionmaker, tmp_p
 
     await client.post(f"/sessions/{session_id}/start")
 
-    # Connect to the live stream right away, no since_seq.
+    # Connect right after /start, no since_seq. The runtime is registered a moment later; the
+    # handler waits for it, and the stream ends with an `end` event once the runner is done.
     async def _read_live():
-        events = []
+        events, name = [], None
         async with client.stream("GET", f"/sessions/{session_id}/events") as resp:
             async for line in resp.aiter_lines():
-                if line.startswith("event: rolling_summary"):
-                    # the next line should be data
-                    data_line = await resp.aiter_lines().__anext__()
-                    events.append(json.loads(data_line[len("data:"):].strip()))
-                    break
+                if line.startswith("event:"):
+                    name = line[len("event:"):].strip()
+                elif line.startswith("data:") and name == "rolling_summary":
+                    events.append(json.loads(line[len("data:"):].strip()))
+                elif not line.strip():
+                    name = None
         return events
 
-    # Wait for the session to finish in the background, but also listen to the stream.
-    # The read will return as soon as it sees a rolling_summary event.
-    events = await asyncio.wait_for(_read_live(), timeout=5.0)
-    
-    assert len(events) == 1
+    events = await asyncio.wait_for(_read_live(), timeout=10.0)
+    assert len(events) >= 1  # live update(s) and/or the persisted snapshot sent on connect
     assert events[0]["summary"] == "s"
 
     await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+
+async def test_sse_messages_carry_ids_and_last_event_id_resumes(client, live_sessionmaker, tmp_path):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    sandbox_provider = FakeSandboxProvider(on_wake=_auto_responder(tmp_path / "sessions", {"id": session_id}))
+    _wire_fakes(sandbox_provider)
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+    async def _read(headers=None, query=""):
+        ids, datas = [], []
+        async with client.stream("GET", f"/sessions/{session_id}/events{query}", headers=headers or {}) as r:
+            async for line in r.aiter_lines():
+                if line.startswith("id:"):
+                    ids.append(int(line[3:].strip()))
+                elif line.startswith("data:") and "message_id" in line:
+                    datas.append(json.loads(line[5:].strip()))
+        return ids, datas
+
+    ids, datas = await asyncio.wait_for(_read(query="?since_seq=0"), timeout=5.0)
+    assert ids == sorted(ids) and len(ids) >= 2 and [d["seq"] for d in datas] == ids
+
+    # An automatic browser reconnect sends Last-Event-ID instead of since_seq: only newer messages come back.
+    later_ids, _ = await asyncio.wait_for(_read(headers={"Last-Event-ID": str(ids[0])}), timeout=5.0)
+    assert later_ids == ids[1:]
 
 
 async def test_sse_returns_nothing_live_for_a_session_that_was_never_started(client, live_sessionmaker):
@@ -571,7 +600,61 @@ async def test_sse_returns_nothing_live_for_a_session_that_was_never_started(cli
         return body
 
     body = await asyncio.wait_for(_read_all(), timeout=5.0)
-    assert body == b""
+    assert b"event: end" in body  # nothing live: a final `end` so the client stops reconnecting
+    assert b"data: {\"protocol\"" not in body  # and no messages
+
+
+# ---------------------------------------------------------------- pause/resume keeps one live mirror
+
+async def test_resume_retires_the_old_mirror_and_the_discussion_continues(client, live_sessionmaker, tmp_path):
+    """Resume relaunches the runner with a fresh mirror. The old mirror used to keep running, racing the
+    new one for every reply; only the winner publishes, so the resumed runner could wait out its whole
+    grant timeout for an answer that had already arrived (the session then never finished, and /stop sat
+    in `stopping`). Found by driving pause -> resume -> stop in the real app."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(a), "seat_order": i} for i, a in enumerate(agent_ids)],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    base = _auto_responder(tmp_path / "sessions", {"id": session_id})
+
+    async def slow(role):  # leave a window in which to pause
+        await asyncio.sleep(0.3)
+        await base(role)
+
+    _wire_fakes(FakeSandboxProvider(on_wake=slow))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_mirrored_message(live_sessionmaker, session_id, "answer")
+
+    old = app.state.session_runtimes[session_id]
+    assert (await client.post(f"/sessions/{session_id}/pause")).status_code == 202
+    await asyncio.wait_for(old.runner_task, timeout=5.0)  # the runner winds down once paused
+
+    assert (await client.post(f"/sessions/{session_id}/resume")).status_code == 202
+    await _wait_for_status(live_sessionmaker, session_id, "active")
+    new = app.state.session_runtimes[session_id]
+
+    assert new is not old
+    assert old.mirror_task.done(), "the previous mirror must be stopped when the session is relaunched"
+    assert not new.mirror_task.done()
+    await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
+
+
+async def test_a_finished_session_stops_its_mirror(client, live_sessionmaker, tmp_path):
+    """The mirror used to poll forever after its session ended, one leaked task per finished session."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(a), "seat_order": i} for i, a in enumerate(agent_ids)],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    _wire_fakes(FakeSandboxProvider(on_wake=_auto_responder(tmp_path / "sessions", {"id": session_id})))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
+    runtime = app.state.session_runtimes[session_id]
+    await asyncio.wait_for(asyncio.gather(runtime.mirror_task, return_exceptions=True), timeout=5.0)
+    assert runtime.mirror_task.done()
 
 
 # ---------------------------------------------------------------- GET /sessions/{id} (M3.1)
@@ -637,3 +720,69 @@ async def test_get_session_round_and_usage_are_zero_before_any_turns(client, liv
     assert body["usage"] == {"tokens_in": 0, "tokens_out": 0, "cost": 0.0}
     assert body["turn_counts"] == []
     assert body["budget"] is None
+
+
+async def test_get_session_reports_why_a_failed_session_failed(client, live_sessionmaker):
+    from orchestrator.api.runtime import session_failures
+    from orchestrator.models import Session
+
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0])}],
+    })
+    session_id = resp.json()["session"]["id"]
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, uuid.UUID(session_id))
+        row.status = "failed"
+        await db.commit()
+    session_failures[uuid.UUID(session_id)] = "RuntimeError: sbx env create failed"
+
+    body = (await client.get(f"/sessions/{session_id}")).json()["session"]
+    assert body["status"] == "failed"
+    assert body["failure_reason"] == "RuntimeError: sbx env create failed"
+
+
+async def test_get_session_reports_the_start_stage_while_starting(client, live_sessionmaker):
+    from orchestrator.api.runtime import session_stages
+    from orchestrator.models import Session
+
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0])}],
+    })
+    session_id = resp.json()["session"]["id"]
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, uuid.UUID(session_id))
+        row.status = "starting"
+        await db.commit()
+    session_stages[uuid.UUID(session_id)] = "creating the sandbox (sbx env create)"
+
+    body = (await client.get(f"/sessions/{session_id}")).json()["session"]
+    assert body["stage"] == "creating the sandbox (sbx env create)"
+
+
+# ---------------------------------------------------------------- GET /sessions/{id}/artifacts
+
+async def test_get_artifacts_404_for_unknown_session(client, live_sessionmaker):
+    resp = await client.get(f"/sessions/{uuid.uuid4()}/artifacts")
+    assert resp.status_code == 404
+
+
+async def test_get_artifacts_empty_then_returns_synthesis(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0])}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+
+    assert (await client.get(f"/sessions/{session_id}/artifacts")).json() == {"artifacts": []}
+
+    async with live_sessionmaker() as db:
+        db.add(Artifact(session_id=session_id, type="synthesis", content_json={"recommendation": "ship weekly"},
+                        source_turn_ids=[]))
+        await db.commit()
+    body = (await client.get(f"/sessions/{session_id}/artifacts")).json()
+    assert [a["type"] for a in body["artifacts"]] == ["synthesis"]
+    assert body["artifacts"][0]["content_json"] == {"recommendation": "ship weekly"}

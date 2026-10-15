@@ -47,7 +47,9 @@ def test_resolve_mode_parses_the_real_open_chat_mode(monkeypatch):
     monkeypatch.delenv("BAYTO_MODES_DIR", raising=False)
     mode = resolve_mode("open-chat")
     assert mode.floor_policy == "raise-hand"
-    assert mode.roles == {"*": ["note", "question", "answer", "x-hand-raise"]}
+    assert mode.roles["*"] == ["note", "question", "answer", "x-hand-raise"]
+    assert mode.roles["moderator"] == ["assignment", "summary", "note"]
+    assert mode.roles["human"] == ["note", "x-stop"]
     assert mode.stop_rules["max_rounds"] is None
     assert mode.synthesis_prompt_hint is None
 
@@ -56,7 +58,9 @@ def test_resolve_mode_parses_the_real_debate_mode(monkeypatch):
     monkeypatch.delenv("BAYTO_MODES_DIR", raising=False)
     mode = resolve_mode("debate")
     assert mode.floor_policy == "round-robin"
-    assert mode.roles == {"*": ["note", "question", "answer", "x-hand-raise"]}
+    assert mode.roles["*"] == ["note", "question", "answer", "x-hand-raise"]
+    assert mode.roles["moderator"] == ["assignment", "summary", "note"]
+    assert mode.roles["human"] == ["note", "x-stop"]
     assert mode.stop_rules["max_rounds"] == 6
     assert mode.synthesis_prompt_hint and "verdict" in mode.synthesis_prompt_hint
 

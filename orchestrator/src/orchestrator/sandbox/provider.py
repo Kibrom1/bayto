@@ -48,6 +48,17 @@ class SandboxCommandError(SandboxProviderError):
 
 
 @dataclass(frozen=True, slots=True)
+class SeatSpec:
+    """One participant the team sandbox must have a seat for: built from the session's Agent rows."""
+
+    role: str  # seat id; also Agent.role, which the moderator uses to address the seat
+    name: str
+    brief: str  # the persona's system prompt and stance, written into the seat's role brief
+    model: str | None = None
+    tools: tuple[str, ...] = ()  # extra Claude tools the seat may use, on top of read-only
+
+
+@dataclass(frozen=True, slots=True)
 class SandboxDrift:
     task_id: uuid.UUID | None  # None if this is an orphan sbx ls has no DB row for
     name: str
@@ -64,8 +75,8 @@ class SandboxProvider(abc.ABC):
     startup-time action, not a poll loop)."""
 
     @abc.abstractmethod
-    async def create(self, task_id: uuid.UUID, *, name: str) -> SandboxInfo:
-        """Idempotent: if a Sandbox row already exists for task_id, return it (re-issuing
+    async def create(self, task_id: uuid.UUID, *, name: str, seats: list[SeatSpec] | None = None) -> SandboxInfo:
+        """`seats`, when given, are the participants to build seats for. Idempotent: if a Sandbox row already exists for task_id, return it (re-issuing
         the create command only if its last known status is not running/creating).
         Sandbox.task_id is unique, so this is the only entry point that inserts a row."""
 

@@ -9,6 +9,6 @@ args:
     default: ..
 sandboxOptions:
   cpus: 4
-  memory: 8g
+  memory: 4g
 kits:
   - source: ../kits/bayto-team

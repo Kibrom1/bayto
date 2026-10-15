@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BaytoRoom } from './BaytoRoom'
@@ -36,7 +35,9 @@ beforeEach(() => {
     public onerror: ((event: Event) => void) | null = null
     public close = vi.fn()
 
-    constructor(public url: string) {
+    public url: string
+    constructor(url: string) {
+      this.url = url
       FakeEventSource.instances.push(this)
     }
 
