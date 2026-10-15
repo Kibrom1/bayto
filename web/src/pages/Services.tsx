@@ -110,10 +110,11 @@ export function Services() {
   const result = (key: string) => results[key]
 
   return (
+    <div className="svc-theme">
     <div className="svc-page">
       <header className="svc-header">
         <div>
-          <p className="svc-kicker">Bayto</p>
+          <p className="svc-kicker">For developers</p>
           <h1>Services</h1>
         </div>
         <Link className="btn" to="/">← Tasks</Link>
@@ -256,6 +257,7 @@ export function Services() {
           </section>
         </>
       )}
+    </div>
     </div>
   )
 }

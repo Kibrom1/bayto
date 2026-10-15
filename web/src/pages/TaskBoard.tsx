@@ -21,6 +21,23 @@ function statusChip(status: string | null) {
   return <span className={`chip ${tone}`}>{STATUS_LABEL[status] ?? status}</span>
 }
 
+type Filter = 'all' | 'live' | 'finished' | 'ready'
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'live', label: 'Live' },
+  { id: 'finished', label: 'Finished' },
+  { id: 'ready', label: 'Not started' },
+]
+const LIVE = ['active', 'needs_human', 'starting', 'stopping']
+const DONE = ['finished', 'completed']
+
+function matches(task: Task, f: Filter): boolean {
+  if (f === 'all') return true
+  if (f === 'live') return LIVE.includes(task.status ?? '')
+  if (f === 'finished') return DONE.includes(task.status ?? '') || !!task.output_artifact_id
+  return !task.status
+}
+
 function actionsFor(task: Task) {
   const live = ['active', 'needs_human', 'starting', 'stopping'].includes(task.status ?? '')
   const done = ['finished', 'completed'].includes(task.status ?? '')
@@ -42,6 +59,7 @@ export function TaskBoard() {
   const [tasks, setTasks] = useState<Task[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [formOpen, setFormOpen] = useState(false)
+  const [filter, setFilter] = useState<Filter>('all')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -71,8 +89,8 @@ export function TaskBoard() {
     <section className="page">
       <header className="page-head">
         <div>
-          <h1>Tasks</h1>
-          <p className="page-sub">Each task is a question for a team of agents to work through, ending in a written synthesis you can use.</p>
+          <h1>Your tasks</h1>
+          <p className="page-sub">Each task is a question for the table: a team of agents works through it and ends with a written synthesis you can use.</p>
         </div>
         <button type="button" className="btn primary" onClick={() => setFormOpen(true)}>New task</button>
       </header>
@@ -99,22 +117,32 @@ export function TaskBoard() {
       )}
 
       {tasks !== null && tasks.length > 0 && (
-        <ul className="task-list">
-          {tasks.map((task) => (
-            <li key={task.id} className="task-card card">
-              <div className="task-main">
-                <h2 className="task-title">{task.title.trim() || '(untitled task)'}</h2>
-                {task.brief && <p className="task-brief">{task.brief}</p>}
-                <div className="task-meta">
+        <>
+          <div className="task-filters" role="group" aria-label="Filter tasks">
+            {FILTERS.map((f) => (
+              <button key={f.id} type="button" className="filter-pill" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>
+            ))}
+          </div>
+          <ul className="task-list">
+            {tasks.filter((t) => matches(t, filter)).map((task) => (
+              <li key={task.id} className="task-card card">
+                <div className="task-top">
                   {statusChip(task.status)}
-                  <span className="chip">{task.output_type}</span>
+                  <span className="task-output">{task.output_type}</span>
+                </div>
+                <div className="task-main">
+                  <h2 className="task-title">{task.title.trim() || '(untitled task)'}</h2>
+                  {task.brief && <p className="task-brief">{task.brief}</p>}
                   {task.output_artifact_id && <span className="chip accent">Synthesis ready</span>}
                 </div>
-              </div>
-              <div className="task-actions">{actionsFor(task)}</div>
-            </li>
-          ))}
-        </ul>
+                <div className="task-actions">{actionsFor(task)}</div>
+              </li>
+            ))}
+          </ul>
+          {tasks.filter((t) => matches(t, filter)).length === 0 && (
+            <p className="empty-note">Nothing here yet. Try another filter.</p>
+          )}
+        </>
       )}
 
       {formOpen && (
