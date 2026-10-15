@@ -197,3 +197,12 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
   .page-head h1 { font-size: 1.9rem; }
   .brand-ge { display: none; }
 }
+
+/* ---- Build mode: repository fields in the new-task form ---- */
+.build-toggle label { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.build-fields { border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4) var(--space-4); margin: 0 0 var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
+.build-fields legend { padding: 0 0.4rem; font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
+.build-fields .field { margin-bottom: var(--space-2); }
+.build-fields .alert { margin: var(--space-2) 0 0; }
+.build-fields .check-btn { align-self: flex-start; }
+.build-fields:not(:has(legend)) { border: 0; padding: 0; margin: 0; }

@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from 'react'
 import type { TaskCreateRequest } from '../api/tasks'
+import { EMPTY_WORKSPACE, WorkspaceFields, workspaceBody, type WorkspaceDraft } from '../components/WorkspaceFields'
 import { Modal } from '../components/Dialog'
 
 interface NewTaskFormProps {
@@ -9,7 +10,7 @@ interface NewTaskFormProps {
   onCancel: () => void
 }
 
-const OUTPUT_TYPES = ['decision', 'plan', 'memo', 'review', 'ideas', 'report']
+const OUTPUT_TYPES = ['decision', 'plan', 'memo', 'review', 'ideas', 'report', 'code change']
 
 export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFormProps) {
   const [title, setTitle] = useState('')
@@ -22,6 +23,15 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
   const listId = useId()
   const successCriteriaId = useId()
 
+  // Build mode: a task that changes code names the repository the team works in.
+  const [build, setBuild] = useState(false)
+  const [ws, setWs] = useState<WorkspaceDraft>(EMPTY_WORKSPACE)
+
+  function toggleBuild(on: boolean) {
+    setBuild(on)
+    if (on && !outputType.trim()) setOutputType('code change')
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     onSubmit({
@@ -29,10 +39,11 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
       brief: brief.trim(),
       output_type: outputType.trim(),
       success_criteria: successCriteria.trim() || null,
+      ...(build ? { workspace: workspaceBody(ws) } : {}),
     })
   }
 
-  const canSubmit = title.trim() !== '' && brief.trim() !== '' && outputType.trim() !== ''
+  const canSubmit = title.trim() !== '' && brief.trim() !== '' && outputType.trim() !== '' && (!build || ws.repo_path.trim() !== '')
 
   return (
     <Modal label="New task" onClose={() => { if (!submitting) onCancel() }}>
@@ -70,6 +81,16 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
             <textarea id={successCriteriaId} value={successCriteria} onChange={(e) => setSuccessCriteria(e.target.value)} rows={2}
               placeholder="How will you judge a good answer?" />
           </div>
+
+          <div className="field build-toggle">
+            <label>
+              <input type="checkbox" checked={build} onChange={(e) => toggleBuild(e.target.checked)} />{' '}
+              This task changes code (Build mode)
+            </label>
+            <span className="hint">The team plans, codes, tests and reviews on a new git branch in your repository. You review and merge it.</span>
+          </div>
+
+          {build && <WorkspaceFields value={ws} onChange={setWs} />}
 
           {error && <p role="alert" className="alert bad" style={{ margin: 0 }}>{error}</p>}
         </div>

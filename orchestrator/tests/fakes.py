@@ -21,13 +21,15 @@ class FakeSandboxProvider(SandboxProvider):
                  reconcile_raises: Exception | None = None):
         self.woken: list[str] = []
         self.created_for: list[uuid.UUID] = []
+        self.workspaces: list[str | None] = []
         self.started_teams: list[str] = []
         self._on_wake = on_wake
         self._sandboxes: dict[uuid.UUID, SandboxInfo] = {}
         self._reconcile_result = reconcile_result or []
         self._reconcile_raises = reconcile_raises
 
-    async def create(self, task_id: uuid.UUID, *, name: str, seats=None) -> SandboxInfo:
+    async def create(self, task_id: uuid.UUID, *, name: str, seats=None, workspace=None) -> SandboxInfo:
+        self.workspaces.append(workspace)
         if task_id in self._sandboxes:
             return self._sandboxes[task_id]
         self.created_for.append(task_id)

@@ -69,5 +69,7 @@ YML
 # Sizing overrides for the M1.12 spike (defaults unchanged): SBX_CPUS, SBX_MEMORY.
 sed -e "s/^  cpus: .*/  cpus: ${SBX_CPUS:-4}/" -e "s/^  memory: .*/  memory: ${SBX_MEMORY:-4g}/" "$build/factory/sbxenv.yaml" > "$build/factory/sbxenv.yaml.tmp" && mv "$build/factory/sbxenv.yaml.tmp" "$build/factory/sbxenv.yaml"
 [ -n "${NO_SWITCH:-}" ] || git -C "$repo" switch main >/dev/null 2>&1 || true
-echo "Mounting $repo read-write. Engineers commit to sbx/<task> branches, push them and open PRs (GitHub secret needed, see dev-team/README.md)"
-exec "$build/scripts/launch-factory.sh" "$name" "$repo"
+# Build mode mounts the task's own repository instead (the orchestrator has already put it on its build branch).
+mount="${BAYTO_WORKSPACE_REPO:-$repo}"
+echo "Mounting $mount read-write. Engineers commit to sbx/<task> branches, push them and open PRs (GitHub secret needed, see dev-team/README.md)"
+exec "$build/scripts/launch-factory.sh" "$name" "$mount"

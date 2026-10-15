@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..models import Artifact, Session, Task
+from ..build_policy import parse_test_command
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
 from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
@@ -51,6 +52,22 @@ async def preflight(ws: WorkspaceIn) -> WorkspacePreflightOut:
     return _report_out(await asyncio.to_thread(preflight_workspace, ws.repo_path, ws.base_branch))
 
 
+async def _validated_workspace(ws: WorkspaceIn) -> dict:
+    """Shared by POST /tasks and PUT /tasks/{id}/workspace. Dirty trees pass here (a Build session checks again
+    when it starts); a bad test command or an unusable repo is a 422 with a code the UI can show."""
+    if ws.test_command:
+        try:
+            parse_test_command(ws.test_command)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={"error": {
+                "code": "workspace_bad_test_command", "detail": str(exc), "field": "workspace"}})
+    rep = await asyncio.to_thread(preflight_workspace, ws.repo_path, ws.base_branch)
+    if not rep.ok:
+        raise HTTPException(status_code=422, detail={"error": {
+            "code": "workspace_" + rep.problems[0]["code"], "detail": rep.problems[0]["detail"], "field": "workspace"}})
+    return {"repo_path": rep.repo_root, "base_branch": ws.base_branch, "test_command": ws.test_command}
+
+
 class TaskCreateRequest(BaseModel):
     title: text(TITLE_MAX)
     brief: text(BRIEF_MAX)
@@ -80,19 +97,28 @@ async def create_task(
     req: TaskCreateRequest,
     sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
 ) -> TaskCreateResponse:
-    workspace = None
-    if req.workspace is not None:
-        rep = await asyncio.to_thread(preflight_workspace, req.workspace.repo_path, req.workspace.base_branch)
-        if not rep.ok:
-            # Dirty trees are fine here; a Build session checks again when it starts.
-            raise HTTPException(status_code=422, detail={"error": {"code": "workspace_" + rep.problems[0]["code"],
-                                                                   "detail": rep.problems[0]["detail"], "field": "workspace"}})
-        workspace = {"repo_path": rep.repo_root, "base_branch": req.workspace.base_branch,
-                     "test_command": req.workspace.test_command}
+    workspace = await _validated_workspace(req.workspace) if req.workspace is not None else None
     async with sessionmaker() as db:
         row = Task(title=req.title, brief=req.brief, output_type=req.output_type,
                     success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace)
         db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
+
+
+@router.put("/tasks/{task_id}/workspace", response_model=TaskCreateResponse)
+async def set_task_workspace(
+    task_id: uuid.UUID, ws: WorkspaceIn,
+    sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
+) -> TaskCreateResponse:
+    """Give an existing task a repository, for example to continue a finished discussion as a Build."""
+    workspace = await _validated_workspace(ws)
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
+        row.workspace = workspace
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
@@ -110,6 +136,7 @@ class TaskListOut(BaseModel):
     status: str | None
     last_session_id: uuid.UUID | None
     output_artifact_id: uuid.UUID | None
+    workspace: dict | None = None  # Build mode: {repo_path, base_branch, test_command}
 
 
 @router.get("/tasks", response_model=list[TaskListOut])
@@ -140,7 +167,7 @@ async def list_tasks(sessionmaker: async_sessionmaker = Depends(get_db_sessionma
                 id=task.id, title=task.title, brief=task.brief, output_type=task.output_type,
                 status=last_session.status if last_session is not None else None,
                 last_session_id=last_session.id if last_session is not None else None,
-                output_artifact_id=output_artifact_id,
+                output_artifact_id=output_artifact_id, workspace=task.workspace,
             ))
         return out
 

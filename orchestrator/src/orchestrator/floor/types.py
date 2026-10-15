@@ -43,6 +43,7 @@ class ConversationView(BaseModel):
     last_verdict: str | None = None  # the last turn's "VERDICT: x" value, lowercased; None if it gave none
     turns_by_role: dict[str, int] = Field(default_factory=dict)
     consecutive_same_speaker: int = 0
+    last_evidence_ok: bool = False  # the last turn showed a command, and every exit code it showed was 0
 
 
 class Grant(BaseModel):

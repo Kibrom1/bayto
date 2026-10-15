@@ -327,12 +327,15 @@ class LocalSbxSandboxProvider(SandboxProvider):
             raise SandboxCommandError(argv, result.returncode, result.stderr)
         return result
 
-    async def create(self, task_id: uuid.UUID, *, name: str, seats=None) -> SandboxInfo:
+    async def create(self, task_id: uuid.UUID, *, name: str, seats=None, workspace: str | None = None) -> SandboxInfo:
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
             if row is None or row.status not in ("running", "creating"):
                 if self._provisioner is not None and seats:
-                    await self._provisioner(name, seats)
+                    if workspace:
+                        await self._provisioner(name, seats, workspace=workspace)
+                    else:
+                        await self._provisioner(name, seats)
                 else:
                     await self._run([
                         "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",

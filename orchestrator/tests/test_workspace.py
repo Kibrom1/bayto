@@ -102,3 +102,59 @@ async def test_task_with_bad_workspace_is_422(live_sessionmaker, tmp_path):
 async def test_task_without_workspace_still_works(live_sessionmaker):
     resp = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "text"})
     assert resp.status_code == 201 and resp.json()["task"]["workspace"] is None
+
+
+async def test_put_workspace_on_an_existing_task(live_sessionmaker, repo):
+    created = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "decision"})
+    task_id = created.json()["task"]["id"]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        ok = await c.put(f"/tasks/{task_id}/workspace", json={"repo_path": str(repo), "test_command": "make test"})
+        bad = await c.put(f"/tasks/{task_id}/workspace", json={"repo_path": str(repo), "test_command": "make; rm -rf /"})
+        missing = await c.put("/tasks/11111111-1111-1111-1111-111111111111/workspace", json={"repo_path": str(repo)})
+        listed = (await c.get("/tasks")).json()
+    assert ok.status_code == 200 and ok.json()["task"]["workspace"]["test_command"] == "make test"
+    assert bad.status_code == 422 and bad.json()["detail"]["error"]["code"] == "workspace_bad_test_command"
+    assert missing.status_code == 404
+    assert [t for t in listed if t["id"] == task_id][0]["workspace"]["base_branch"] == "main"
+
+
+# ---- B2: the branch the sandbox will mount
+
+from orchestrator.workspace import WorkspaceError, build_branch_name, prepare_branch  # noqa: E402
+
+
+def _head(repo):
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_prepare_branch_creates_it_from_the_base_and_checks_it_out(repo):
+    assert prepare_branch(str(repo), "main", "bayto/build-abcd1234") is True
+    assert _head(repo) == "bayto/build-abcd1234"
+
+
+def test_prepare_branch_resumes_an_existing_branch(repo):
+    prepare_branch(str(repo), "main", "bayto/build-abcd1234")
+    _git(repo, "switch", "main")
+    assert prepare_branch(str(repo), "main", "bayto/build-abcd1234") is False
+    assert _head(repo) == "bayto/build-abcd1234"
+
+
+def test_prepare_branch_refuses_a_dirty_tree_and_leaves_it_alone(repo):
+    (repo / "a.txt").write_text("edited")
+    with pytest.raises(WorkspaceError, match="uncommitted changes.*a.txt"):
+        prepare_branch(str(repo), "main", "bayto/build-abcd1234")
+    assert _head(repo) == "main" and (repo / "a.txt").read_text() == "edited"
+
+
+def test_prepare_branch_refuses_a_missing_base_and_a_bad_name(repo):
+    with pytest.raises(WorkspaceError, match="no local branch"):
+        prepare_branch(str(repo), "nope", "bayto/build-abcd1234")
+    with pytest.raises(WorkspaceError, match="usable branch name"):
+        prepare_branch(str(repo), "main", "-x")
+
+
+def test_session_branch_name_is_the_one_prepare_branch_makes(repo):
+    sid = "0123abcd-1111-2222-3333-444455556666"
+    prepare_branch(str(repo), "main", build_branch_name(sid))
+    assert _head(repo) == "bayto/build-0123abcd"

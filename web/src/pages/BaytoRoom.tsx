@@ -17,6 +17,7 @@ import {
 import { isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
+import { ChangeSet } from './ChangeSet'
 import { Synthesis } from './Synthesis'
 import { agentHue } from '../agentColor'
 import { TableRing } from '../components/TableRing'
@@ -35,6 +36,7 @@ const STOP_REASONS: Record<string, string> = {
   converged: 'the agents converged on an answer',
   user_stop: 'it was stopped from the room',
   budget_exceeded: 'it reached its budget',
+  build_complete: 'the tests passed and the reviewer approved the change',
 }
 export const stopReasonText = (r?: string | null) => (r ? STOP_REASONS[r] ?? r.replace(/[-_]+/g, ' ') : null)
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -202,6 +204,9 @@ export function BaytoRoom() {
           ) : (
             <button type="button" className="btn" disabled={finished} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
           )}
+          {status === 'finished' && modeName && modeName !== 'build' && (
+            <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
+          )}
           <button type="button" className="btn danger" disabled={finished} onClick={() => setConfirmStop(true)}>End &amp; synthesize</button>
         </div>
       </header>
@@ -266,6 +271,7 @@ export function BaytoRoom() {
         <main className="transcript">
           <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll}>
             <h2 className="sr-only">Transcript</h2>
+            <ChangeSet artifacts={artifacts} />
             <Synthesis title={taskTitle ?? 'Discussion'} artifacts={artifacts} />
             {status === 'stopping' && artifacts.length === 0 && <p className="empty">Writing the final synthesis…</p>}
             <div className="transcript-inner" role="log" aria-live="polite" aria-label="Transcript">

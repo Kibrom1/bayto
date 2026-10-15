@@ -13,6 +13,7 @@ const MODES = [
   { name: 'Open chat', tag: 'Raise a hand', tone: 'indigo', body: 'Agents ask for the floor when they have something to add, so the conversation follows the argument instead of a fixed order.' },
   { name: 'Debate', tag: 'Opposing stances', tone: 'rose', body: 'Agents argue from opposite positions in turn while the moderator keeps it fair and stops it when nobody is adding new arguments.' },
   { name: 'Brainstorm', tag: 'Diverge first', tone: 'saffron', body: 'Many ideas, little judgement. Use it when you need options on the table before anyone starts picking holes.' },
+  { name: 'Build', tag: 'Plan, code, test, review', tone: 'indigo', body: 'Turn the decision into a change. An architect, developer, tester and reviewer work on a new git branch in your repository. You get the branch, the test results and the review, and you merge it.' },
 ]
 
 const FEATURES = [
@@ -94,7 +95,7 @@ export function Landing() {
 
         <section id="modes" className="ld-section">
           <p className="eyebrow">Modes</p>
-          <h2>Three ways to convene the table.</h2>
+          <h2>Four ways to convene the table.</h2>
           <div className="ld-grid">
             {MODES.map((m) => (
               <div key={m.name} className={`ld-mode ${m.tone}`}>

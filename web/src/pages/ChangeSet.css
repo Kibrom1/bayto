@@ -1,0 +1,30 @@
+.changeset {
+  max-width: 48rem;
+  margin: 0 auto var(--space-5);
+  padding: 1.5rem 1.75rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--ok);
+  border-radius: var(--radius);
+}
+.changeset.needs-you { border-left-color: var(--warn); }
+.cs-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-3); }
+.cs-title { margin: 0; font-size: 1.5rem; line-height: 1.15; }
+.cs-branch { display: flex; align-items: center; gap: var(--space-2); background: #12152e; color: #fff; border-radius: var(--radius-sm); padding: 0.6rem 0.9rem; }
+.cs-branch code { flex: 1; min-width: 0; overflow-x: auto; font-family: var(--mono, ui-monospace, monospace); font-size: 0.95rem; }
+.cs-branch .btn { color: #fff; border-color: rgb(255 255 255 / 0.4); }
+.cs-sub { margin: var(--space-2) 0 var(--space-3); color: var(--ink-3); font-size: 0.88rem; }
+.cs-issues { margin: 0 0 var(--space-3); padding: 0.75rem 1rem 0.75rem 2rem; background: var(--warn-soft); color: var(--warn); border-radius: var(--radius-sm); }
+.cs-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr)); gap: var(--space-3); margin: var(--space-4) 0; }
+.cs-stats div { background: var(--surface-2); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; }
+.cs-stats dt { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); }
+.cs-stats dd { margin: 0.1rem 0 0; font-family: var(--display); font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink); }
+.cs-stats .plus { color: var(--ok); }
+.cs-stats .minus { color: var(--danger); }
+.cs-line { margin: 0 0 var(--space-2); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.cs-pre { margin: 0; max-height: 14rem; overflow: auto; padding: 0.75rem 1rem; background: var(--surface-2); border-radius: var(--radius-sm); font-family: var(--mono, ui-monospace, monospace); font-size: 0.82rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cs-list { margin: 0; padding-left: 1.1rem; line-height: 1.7; }
+.cs-list code, .cs-sub code, .cs-line code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.88em; }
+.cs-file-status { display: inline-block; min-width: 4.2rem; color: var(--ink-3); font-size: 0.8rem; }
+.cs-files { margin-top: var(--space-3); }
+.cs-files summary { cursor: pointer; font-weight: 600; }
