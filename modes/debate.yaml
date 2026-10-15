@@ -8,6 +8,13 @@ mode: debate
 floor_policy: round-robin
 moderator: null
 roles:
+  # The orchestrator sends as "moderator" (turn assignments) and as "human" (interjections, the stop
+  # record). Without these explicit entries both fell under "*", which does not allow those kinds,
+  # so the first turn grant of every session in this mode failed with a PermissionError.
+  moderator:
+    may_send: [assignment, summary, note]
+  human:
+    may_send: [note, x-stop]
   "*":
     may_send: [note, question, answer, x-hand-raise]
 route: {}

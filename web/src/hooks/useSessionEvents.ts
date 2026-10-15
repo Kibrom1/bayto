@@ -1,20 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export interface LiveTurn {
   text: string
   tool: string | null
 }
 
-export function useSessionEvents(sessionId: string) {
+// The stream is reopened whenever `sessionStatus` (from the room's status polling) changes. That is what
+// makes Pause then Resume work: a paused session's runner ends, so the server ends the stream, and Resume
+// starts a new runner with a new event channel that the old connection would never hear from. Each
+// connection resumes after the last message already seen. A stream that ends while the status is
+// unchanged is NOT reopened, so a stale status can never cause a reconnect loop.
+export function useSessionEvents(sessionId: string, sessionStatus?: string) {
   const [messages, setMessages] = useState<any[]>([])
   const [rollingSummary, setRollingSummary] = useState<string | null>(null)
   const [live, setLive] = useState<Record<string, LiveTurn>>({})
   const [connected, setConnected] = useState(false)
+  const lastSeq = useRef(0)
 
   useEffect(() => {
-    // since_seq=0 replays the stored transcript, so opening or reloading the room mid-session
-    // shows the whole conversation; on an automatic reconnect the browser's Last-Event-ID resumes it.
-    const eventSource = new EventSource(`/sessions/${sessionId}/events?since_seq=0`)
+    // since_seq=0 (first connect) replays the stored transcript, so opening or reloading the room
+    // mid-session shows the whole conversation; later connects resume after the last seq seen.
+    const eventSource = new EventSource(`/sessions/${sessionId}/events?since_seq=${lastSeq.current}`)
 
     eventSource.onopen = () => setConnected(true)
     eventSource.onerror = () => setConnected(false)
@@ -23,6 +29,7 @@ export function useSessionEvents(sessionId: string) {
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+        if (typeof data.seq === 'number') lastSeq.current = Math.max(lastSeq.current, data.seq)
         // A reconnect can replay a message we already have; message_id makes that harmless.
         setMessages((prev) => (prev.some((m) => m.message_id === data.message_id) ? prev : [...prev, data]))
         // The finished message replaces that speaker's in-progress bubble.
@@ -71,7 +78,7 @@ export function useSessionEvents(sessionId: string) {
     )
 
     return () => eventSource.close()
-  }, [sessionId])
+  }, [sessionId, sessionStatus])
 
   return { messages, rollingSummary, live, connected }
 }
