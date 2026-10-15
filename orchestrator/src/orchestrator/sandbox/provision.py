@@ -62,8 +62,9 @@ def _tail(text: str, n: int = 1500) -> str:
 
 
 async def provision_team_sandbox(name: str, seats: list[SeatSpec], *, repo_root: Path = REPO_ROOT,
-                                 timeout: float = 900.0) -> None:
-    """Create sandbox `name` with one seat per entry of `seats` (runs dev-team/run.sh with SESSION=none)."""
+                                 timeout: float = 900.0, workspace: str | None = None) -> None:
+    """Create sandbox `name` with one seat per entry of `seats` (runs dev-team/run.sh with SESSION=none).
+    `workspace` is the host repository to mount read-write instead of this project's own (Build mode)."""
     script = repo_root / "dev-team" / "run.sh"
     if not script.exists():
         raise SandboxProviderError(f"{script} not found; cannot build the team sandbox")
@@ -75,6 +76,8 @@ async def provision_team_sandbox(name: str, seats: list[SeatSpec], *, repo_root:
         write_catalog(seats, roles_dir, roster_file)
         env = {**os.environ, "ROSTER": str(roster_file), "BAYTO_ROLES_DIR": str(roles_dir),
                "SESSION": "none", "NO_SWITCH": "1"}
+        if workspace:
+            env["BAYTO_WORKSPACE_REPO"] = workspace
         async with _BUILD_LOCK:
             proc = await asyncio.create_subprocess_exec(
                 "bash", str(script), name, cwd=str(repo_root), env=env,

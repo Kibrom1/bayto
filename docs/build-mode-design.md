@@ -116,3 +116,8 @@ About 10 working days. B3 and B5 carry the risk; B2 needs the Mac's `sbx`.
 - A tester `pass` must show a command and an exit code of 0 (`require_evidence` in the mode's `stop_rules`); otherwise the turn is repeated once with a note saying why, then the session pauses for a person.
 - The test command is limited to plain steps joined by `&&` (no pipes, redirects, `;`, `$(...)`), checked when the task is created, because each step becomes an allow rule.
 - The session's branch is `bayto/build-<first 8 chars of the session id>`; the `change_set` artifact reads it from git.
+
+### B2 (2026-10-15): how the repository reaches the sandbox
+- Before the sandbox is created, the orchestrator runs `prepare_branch` on the host: it refuses a dirty tree, then switches the repository to `bayto/build-<id8>` (created from the base branch, or resumed if it exists). A git worktree was rejected: its `.git` file points outside the mount, so git would fail inside the sandbox.
+- `provision_team_sandbox(workspace=...)` sets `BAYTO_WORKSPACE_REPO`; `dev-team/run.sh` mounts that folder read-write instead of the Bayto repo.
+- NOT verified against a real `sbx`: that the kit still finds `agent-comms` and `bayto-mcp` when a foreign repo is the workspace (see `kits/bayto-team/spec.yaml`, which looks under `$WORKSPACE_DIR`, `$WORKSPACE_DIR/app` and `$HOME/work/app`). That is the first thing the B9 live run must check.

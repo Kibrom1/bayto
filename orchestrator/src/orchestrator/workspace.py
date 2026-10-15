@@ -101,3 +101,31 @@ def collect_branch_changes(repo_path: str, base_branch: str, branch: str, *, max
     return {"commits": commits, "files": files, "files_changed": nums["file"],
             "insertions": nums["insertion"], "deletions": nums["deletion"],
             "diff_stat": stat.stdout.strip()}
+
+
+class WorkspaceError(RuntimeError):
+    """The repository cannot host a Build session right now. The message is shown to the person."""
+
+
+def prepare_branch(repo_path: str, base_branch: str, branch: str) -> bool:
+    """Put the repository on `branch`, ready for the sandbox to mount (B2). Returns True when the branch
+    was created from `base_branch`, False when it already existed (a resumed session).
+
+    The sandbox mounts the real repository folder, so the branch has to be checked out there; a
+    separate git worktree would not work, because its .git file points outside the mount. That is
+    why a dirty tree is refused: switching branches over uncommitted work could lose or mix it."""
+    if not valid_branch_name(branch):
+        raise WorkspaceError(f"'{branch}' is not a usable branch name.")
+    rep = preflight_workspace(repo_path, base_branch)
+    if not rep.ok:
+        raise WorkspaceError(rep.problems[0]["detail"])
+    if rep.dirty:
+        shown = ", ".join(rep.dirty_files[:5])
+        raise WorkspaceError(
+            f"The repository has uncommitted changes ({shown}). Commit or stash them, then start the session again.")
+    exists = _git(repo_path, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
+    cmd = ("switch", branch) if exists else ("switch", "-c", branch, base_branch)
+    out = _git(repo_path, *cmd)
+    if out.returncode != 0:
+        raise WorkspaceError(f"git could not switch to {branch}: {out.stderr.strip()[:300]}")
+    return not exists

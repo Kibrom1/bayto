@@ -42,6 +42,7 @@ from ..floor import PipelineFloorPolicy, RaiseHandFloorPolicy, RoundRobinFloorPo
 from ..floor.scorer import HandRaiseScorer
 from ..mirror import MessageMirror
 from ..build_policy import build_seat_tools
+from ..workspace import build_branch_name, prepare_branch
 from ..models import Agent, Mode, Session, SessionAgent, Task
 from ..moderator import ModeratorRunner, Summarizer, Synthesizer
 from ..modes_registry import resolve_mode
@@ -195,7 +196,16 @@ async def launch_runner(
 
         session_stages[session_id] = "creating the sandbox (sbx env create)"
         log.info("session %s: %s", session_id, session_stages[session_id])
-        sandbox = await sandbox_provider.create(task_id, name=f"sbx-{task_id}", seats=seats)
+        repo_path = None
+        if mode_config.floor_policy == "pipeline" and workspace and workspace.get("repo_path"):
+            # Build mode: put the repository on the session's branch before the sandbox mounts it.
+            repo_path = workspace["repo_path"]
+            session_stages[session_id] = "creating the build branch"
+            await asyncio.to_thread(prepare_branch, repo_path, workspace.get("base_branch") or "main",
+                                    build_branch_name(session_id))
+            session_stages[session_id] = "creating the sandbox (sbx env create)"
+        sandbox = await sandbox_provider.create(
+            task_id, name=f"sbx-{task_id}", seats=seats, **({"workspace": repo_path} if repo_path else {}))
         session_stages[session_id] = "starting the agent team in the sandbox"
         log.info("session %s: %s", session_id, session_stages[session_id])
         await sandbox_provider.start_team(sandbox)
