@@ -24,7 +24,7 @@ ap.add_argument("--headed", action="store_true")
 ap.add_argument("--natural-finish", action="store_true")
 ap.add_argument("--start-timeout", type=int, default=900, help="seconds for sandboxes to build and the first run to start")
 ap.add_argument("--turn-timeout", type=int, default=240, help="seconds to wait for a turn")
-ap.add_argument("--resume-timeout", type=int, default=240, help="seconds to wait for a turn after Resume; >120 usually means the grant-timeout bug")
+ap.add_argument("--resume-timeout", type=int, default=420, help="seconds to wait for a turn after Resume (Resume first lets the paused runner finish its turn, up to 180 s)")
 ap.add_argument("--stop-timeout", type=int, default=300)
 ap.add_argument("--out", default="live-e2e-out")
 args = ap.parse_args()
@@ -151,8 +151,8 @@ def main():
             ok = wait(lambda: turns(sid) > t2 or session(sid)["status"] in ("failed", "finished"), args.resume_timeout)
             dt = time.time() - t0
             check("resume: the discussion continues", turns(sid) > t2,
-                  f"turns {t2} -> {turns(sid)} in {dt:.0f}s; status={session(sid)['status']}"
-                  + ("  (slow: check for the grant-timeout bug)" if dt > 120 else ""))
+                  f"turns {t2} -> {turns(sid)} in {dt:.0f}s; status={session(sid)['status']}; stop_reason={session(sid).get('stop_reason')}"
+                  + ("  (slow: Resume waits for the paused turn first; over 300 s suggests a stuck runner)" if dt > 300 else ""))
             shot("4-resumed")
 
         # ---- 6. offline / online
