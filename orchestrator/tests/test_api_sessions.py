@@ -695,6 +695,7 @@ async def test_get_session_reports_round_usage_and_turn_counts(client, live_sess
     assert resp.status_code == 200
     body = resp.json()["session"]
     assert body["status"] == "finished"
+    assert body["stop_reason"] == "max_rounds"  # the room can say why the session ended
     assert body["round"] == expected_round
     assert body["budget"] == {"max_tokens": 1000}
     # round-robin-test.yaml: max_rounds=2 -- opening (a, b) then one more grant (a) hits it,

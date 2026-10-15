@@ -511,6 +511,8 @@ class SessionDetailOut(BaseModel):
     turn_counts: list[TurnCountOut]
     failure_reason: str | None = None
     stage: str | None = None
+    # Why a finished session ended (max_rounds, no_new_arguments, user_stop, ...); null while it runs.
+    stop_reason: str | None = None
 
 
 class SessionDetailResponse(BaseModel):
@@ -548,6 +550,7 @@ async def get_session(
                      for role, agent_id, count in turn_counts_rows],
         failure_reason=session_failures.get(session_id) if row.status == "failed" else None,
         stage=session_stages.get(session_id) if row.status == "starting" else None,
+        stop_reason=row.stop_reason,
     ))
 
 
