@@ -1,0 +1,36 @@
+# Plan, code, test and review on a branch (Build mode, docs/build-mode-design.md, B4).
+# A pipeline, not a discussion: one writer at a time. Every turn ends with `VERDICT: <word>` and the
+# route table below picks the next role from "<role>.report.<verdict>". `done` ends the session
+# successfully (stop_reason build_complete). Anything the table does not route (for example a
+# `blocked` verdict) pauses the session for a person instead of failing it.
+mode: build
+floor_policy: pipeline
+moderator: null
+roles:
+  # Same reason as the discussion modes: the orchestrator sends as "moderator" and as "human".
+  moderator:
+    may_send: [assignment, summary, note]
+  human:
+    may_send: [note, x-stop]
+  "*":
+    may_send: [note, question, answer, x-hand-raise]
+route:
+  start: build-architect
+  build-architect.report.planned: build-developer
+  build-developer.report.implemented: build-tester
+  build-tester.report.pass: build-reviewer
+  build-tester.report.fail: build-developer
+  build-reviewer.report.approve: done
+  build-reviewer.report.changes: build-developer
+stop_rules:
+  # A guard against a runaway loop, not the normal ending: the happy path is 4 turns and the worst
+  # allowed path (3 fix cycles, each ending in a test or review) is well under this.
+  max_rounds: 30
+  max_fix_cycles: 3
+  # Staleness is ignored by the pipeline; kept so the shared config parses with its defaults.
+  stale_argument_turns: 3
+synthesis_prompt_hint: >
+  Summarise the build for the person who will review and merge it. Cover: what was asked, what was
+  changed (files and behaviour), the tests that were run with their commands and results, what the
+  reviewer concluded, how many fix cycles it took, and anything left open or that a person should
+  double-check. Report only what the transcript shows was actually run; do not infer a passing test.

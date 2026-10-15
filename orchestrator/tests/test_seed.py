@@ -17,7 +17,7 @@ async def test_seed_agents_inserts_all_six_templates_with_the_expected_shape(liv
         rows = (await session.execute(select(Agent))).scalars().all()
 
     assert {r.name for r in rows} == {t["name"] for t in AGENT_TEMPLATES}
-    assert len(rows) == 13
+    assert len(rows) == 17
     by_name = {r.name: r for r in rows}
     architect = by_name["Architect"]
     assert architect.kind == "native"
@@ -38,7 +38,7 @@ async def test_seed_agents_is_idempotent(live_sessionmaker):
 
     async with live_sessionmaker() as session:
         rows = (await session.execute(select(Agent))).scalars().all()
-    assert len(rows) == 13  # not 26 -- re-running upserts, never duplicates
+    assert len(rows) == 17  # not 34 -- re-running upserts, never duplicates
 
 
 async def test_seed_agents_updates_existing_rows_in_place_on_a_content_tweak(live_sessionmaker, monkeypatch):
@@ -64,12 +64,12 @@ async def test_seed_agents_updates_existing_rows_in_place_on_a_content_tweak(liv
             select(Agent).where(Agent.name == "Architect")
         )).scalar_one()
 
-    assert len(rows) == 13  # the tweak updated the existing row, didn't add a fourteenth
+    assert len(rows) == 17  # the tweak updated the existing row, didn't add a eighteenth
     assert updated.id == original_id  # same row, not a new one under a fresh id
     assert updated.system_prompt == "A brand new prompt after a content tweak."
 
 
-async def test_seed_modes_inserts_all_three_matching_the_real_yaml_files(live_sessionmaker):
+async def test_seed_modes_inserts_all_matching_the_real_yaml_files(live_sessionmaker):
     async with live_sessionmaker() as session:
         await seed_modes(session)
         await session.commit()
@@ -84,6 +84,8 @@ async def test_seed_modes_inserts_all_three_matching_the_real_yaml_files(live_se
     assert by_name["debate"].turn_policy == "round-robin"
     assert by_name["debate"].stop_rules_json["max_rounds"] == 6
     assert by_name["brainstorm"].stop_rules_json["max_rounds"] == 6
+    assert by_name["build"].turn_policy == "pipeline"
+    assert by_name["build"].stop_rules_json["max_fix_cycles"] == 3
     assert all(r.phases_json == {} for r in rows)
     assert all(r.output_schema is None for r in rows)
 
@@ -98,11 +100,11 @@ async def test_seed_modes_is_idempotent(live_sessionmaker):
 
     async with live_sessionmaker() as session:
         rows = (await session.execute(select(Mode))).scalars().all()
-    assert len(rows) == 3
+    assert len(rows) == 4
 
 
 def test_templates_cover_the_core_team_and_are_unique():
     names = [t["name"] for t in AGENT_TEMPLATES]
-    assert len(names) == len(set(names)) == 13
+    assert len(names) == len(set(names)) == 17
     assert {"Developer", "QA Tester", "E2E Tester", "UX Designer", "Researcher", "CFO", "Technical Writer"} <= set(names)
     assert all(t["system_prompt"].strip() and t["stance"] and t["role"] for t in AGENT_TEMPLATES)

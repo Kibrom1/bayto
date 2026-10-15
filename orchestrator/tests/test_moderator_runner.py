@@ -937,3 +937,111 @@ async def test_the_synthesis_prompt_includes_the_task(tmp_path, live_sessionmake
     runner._synthesizer = SpySynthesizer()
     await runner._finish(await runner._build_view(), "max-rounds")
     assert "Task: Pick a cadence" in SpySynthesizer.hints[0] and "Expected output: decision" in SpySynthesizer.hints[0]
+
+
+# ---------------------------------------------------------------- Build mode (pipeline floor policy)
+
+BUILD_ROUTE = {
+    "start": "architect",
+    "architect.report.planned": "developer",
+    "developer.report.implemented": "qa-tester",
+    "qa-tester.report.pass": "reviewer",
+    "qa-tester.report.fail": "developer",
+    "reviewer.report.approve": "done",
+}
+
+
+async def _build_session(live_sessionmaker, tmp_path, script, *, max_fix_cycles=3):
+    """Seats the four Build roles in a deliberately non-pipeline order and plays `script` (role -> list of
+    reply bodies, consumed in order) through the real runner, mirror and database."""
+    from orchestrator.floor import PipelineFloorPolicy
+
+    session_id = await _make_session(live_sessionmaker)
+    for i, role in enumerate(["reviewer", "qa-tester", "developer", "architect"]):
+        await _seat(live_sessionmaker, session_id, role, i)
+    mode = ModeConfig(name="build", floor_policy="pipeline", roles={"moderator": None, "*": None},
+                      route=BUILD_ROUTE, moderator=None)
+    replies = {role: list(bodies) for role, bodies in script.items()}
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, replies[role].pop(0))
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id, mode=mode,
+        policy=PipelineFloorPolicy(BUILD_ROUTE, max_fix_cycles=max_fix_cycles), on_wake=on_wake,
+        stop_rules=StopRulesConfig(max_fix_cycles=max_fix_cycles),
+    )
+    return session_id, runner, sandbox
+
+
+async def _run_to_stop(runner, limit=20):
+    for _ in range(limit):
+        result = await runner.run_once()
+        if result.stopped:
+            return result
+    raise AssertionError("runner never stopped")
+
+
+async def test_build_pipeline_plans_builds_fails_fixes_passes_and_finishes(tmp_path, live_sessionmaker):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": ["Plan: touch a.py.\nVERDICT: planned"],
+        "developer": ["Wrote a.py.\nVERDICT: implemented", "Fixed the off-by-one.\nVERDICT: implemented"],
+        "qa-tester": ["pytest exit 1\nVERDICT: fail", "pytest exit 0\nVERDICT: pass"],
+        "reviewer": ["Diff reads well.\nVERDICT: approve"],
+    })
+
+    result = await _run_to_stop(runner)
+
+    # No opening lap: the architect starts even though the reviewer is seat 0, and each role speaks as routed.
+    assert sandbox.woken == ["architect", "developer", "qa-tester", "developer", "qa-tester", "reviewer"]
+    assert result.reason == "build-complete"
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        assert row.status == "finished" and row.stop_reason == "build_complete"
+
+
+async def test_build_pipeline_pauses_for_a_human_when_fix_cycles_run_out(tmp_path, live_sessionmaker):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": ["Plan.\nVERDICT: planned"],
+        "developer": ["try 1\nVERDICT: implemented", "try 2\nVERDICT: implemented"],
+        "qa-tester": ["red\nVERDICT: fail", "red\nVERDICT: fail"],
+    }, max_fix_cycles=1)
+
+    result = await _run_to_stop(runner)
+
+    assert result.reason == "needs_human"
+    assert sandbox.woken == ["architect", "developer", "qa-tester", "developer", "qa-tester"]
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        assert row.status == "needs_human"  # paused with the work kept, not failed
+
+
+async def test_build_pipeline_ignores_staleness(tmp_path, live_sessionmaker):
+    """Staleness is a discussion measure; the summarizer saying 'no new argument' must not stop a build."""
+    from orchestrator.floor import PipelineFloorPolicy  # noqa: F401  (imported in _build_session)
+
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": ["Plan.\nVERDICT: planned"],
+        "developer": ["ok\nVERDICT: implemented"],
+        "qa-tester": ["ok\nVERDICT: pass"],
+        "reviewer": ["ok\nVERDICT: approve"],
+    })
+    runner._summarizer = FakeSummarizer([SummaryResult(summary="s", has_new_argument=False) for _ in range(20)])
+
+    result = await _run_to_stop(runner)
+
+    assert result.reason == "build-complete"
+
+
+async def test_build_turn_prompt_carries_the_task_workspace_and_the_verdict_contract(tmp_path, live_sessionmaker):
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {})
+    async with live_sessionmaker() as db:
+        task = await db.get(Task, (await db.get(Session, session_id)).task_id)
+        task.workspace = {"repo_path": "/r", "base_branch": "develop", "test_command": "pytest -q"}
+        await db.commit()
+
+    prompt = await runner._build_context(await runner._build_view())
+
+    assert "build pipeline" in prompt and "discussion" not in prompt
+    assert "base branch develop" in prompt and "Test command: pytest -q" in prompt
+    assert "VERDICT: <word>" in prompt

@@ -6,6 +6,7 @@ scorer.py for the hand-raise-collection seam (HandRaiseScorer Protocol +
 AnthropicHandRaiseScorer + FakeHandRaiseScorer).
 """
 from .raise_hand import RaiseHandFloorPolicy, StopRulesConfig
+from .pipeline import PipelineFloorPolicy, parse_verdict
 from .round_robin import RoundRobinFloorPolicy, next_seat
 from .scorer import (
     AnthropicHandRaiseScorer,
@@ -14,10 +15,11 @@ from .scorer import (
     PersonaBrief,
     ScorerError,
 )
-from .types import AskHuman, ConversationView, Converged, FloorDecision, FloorPolicy, Grant, Parallel
+from .types import AskHuman, ConversationView, Converged, Done, FloorDecision, FloorPolicy, Grant, Parallel
 
 __all__ = [
-    "ConversationView", "Grant", "Parallel", "Converged", "AskHuman", "FloorDecision", "FloorPolicy",
+    "ConversationView", "Grant", "Parallel", "Converged", "AskHuman", "Done",
+    "PipelineFloorPolicy", "parse_verdict", "FloorDecision", "FloorPolicy",
     "RoundRobinFloorPolicy", "next_seat",
     "RaiseHandFloorPolicy", "StopRulesConfig",
     "HandRaiseScorer", "AnthropicHandRaiseScorer", "FakeHandRaiseScorer", "PersonaBrief", "ScorerError",

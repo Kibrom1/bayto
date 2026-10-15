@@ -38,7 +38,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
-from ..floor import RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
+from ..floor import PipelineFloorPolicy, RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
 from ..floor.scorer import HandRaiseScorer
 from ..mirror import MessageMirror
 from ..models import Agent, Mode, Session, SessionAgent
@@ -207,6 +207,10 @@ async def launch_runner(
         if mode_config.floor_policy == "raise-hand":
             policy = RaiseHandFloorPolicy(StopRulesConfig.from_mode(mode_config))
             scorer = scorer_factory()
+        elif mode_config.floor_policy == "pipeline":
+            policy = PipelineFloorPolicy(mode_config.route,
+                                         max_fix_cycles=StopRulesConfig.from_mode(mode_config).max_fix_cycles)
+            scorer = None
         else:
             policy = RoundRobinFloorPolicy()
             scorer = None

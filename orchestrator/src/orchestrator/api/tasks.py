@@ -6,19 +6,49 @@ tasks. See docs/decisions.md and README.md.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..models import Artifact, Session, Task
+from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
 from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
 
 router = APIRouter()
+
+
+class WorkspaceIn(BaseModel):
+    """Build mode: the local repository the team may change (docs/build-mode-design.md)."""
+    repo_path: text(1024)
+    base_branch: text(200) = "main"
+    test_command: text(500) | None = None
+
+
+class WorkspacePreflightOut(BaseModel):
+    ok: bool
+    problems: list[dict]
+    repo_root: str | None
+    current_branch: str | None
+    dirty: bool
+    dirty_files: list[str]
+
+
+def _report_out(rep: WorkspaceReport) -> WorkspacePreflightOut:
+    return WorkspacePreflightOut(ok=rep.ok, problems=rep.problems, repo_root=rep.repo_root,
+                                 current_branch=rep.current_branch, dirty=rep.dirty, dirty_files=rep.dirty_files)
+
+
+@router.post("/workspaces/preflight", response_model=WorkspacePreflightOut)
+async def preflight(ws: WorkspaceIn) -> WorkspacePreflightOut:
+    """Check a repo path before a task uses it. Local-only service with no auth (see module
+    docstring): it reveals whether a path is a git repo, which is fine on the developer's machine."""
+    return _report_out(await asyncio.to_thread(preflight_workspace, ws.repo_path, ws.base_branch))
 
 
 class TaskCreateRequest(BaseModel):
@@ -27,6 +57,7 @@ class TaskCreateRequest(BaseModel):
     output_type: text(OUTPUT_TYPE_MAX)
     success_criteria: text(CRITERIA_MAX) | None = None
     owner_id: uuid.UUID | None = None
+    workspace: WorkspaceIn | None = None
 
 
 class TaskOut(BaseModel):
@@ -36,6 +67,7 @@ class TaskOut(BaseModel):
     output_type: str
     success_criteria: str | None
     owner_id: uuid.UUID | None
+    workspace: dict | None = None
     created_at: datetime
 
 
@@ -48,9 +80,18 @@ async def create_task(
     req: TaskCreateRequest,
     sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
 ) -> TaskCreateResponse:
+    workspace = None
+    if req.workspace is not None:
+        rep = await asyncio.to_thread(preflight_workspace, req.workspace.repo_path, req.workspace.base_branch)
+        if not rep.ok:
+            # Dirty trees are fine here; a Build session checks again when it starts.
+            raise HTTPException(status_code=422, detail={"error": {"code": "workspace_" + rep.problems[0]["code"],
+                                                                   "detail": rep.problems[0]["detail"], "field": "workspace"}})
+        workspace = {"repo_path": rep.repo_root, "base_branch": req.workspace.base_branch,
+                     "test_command": req.workspace.test_command}
     async with sessionmaker() as db:
         row = Task(title=req.title, brief=req.brief, output_type=req.output_type,
-                    success_criteria=req.success_criteria, owner_id=req.owner_id)
+                    success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace)
         db.add(row)
         await db.commit()
         await db.refresh(row)

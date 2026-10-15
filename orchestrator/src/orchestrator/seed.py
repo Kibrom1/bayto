@@ -1,5 +1,5 @@
-"""Idempotent seed data (M2.11): six agent templates, three discussion modes
-(open-chat/debate/brainstorm). Run via `python -m orchestrator.seed`.
+"""Idempotent seed data (M2.11): the discussion agent templates, the discussion modes
+(open-chat/debate/brainstorm), and Build mode's four build-* roles and `build` mode (docs/build-mode-design.md). Run via `python -m orchestrator.seed`.
 
 Deliberately a plain script, not an Alembic data migration -- schema and content change for
 different reasons and at different rates (same "config that changes independently of code
@@ -158,7 +158,70 @@ AGENT_TEMPLATES = [
     ),
 ]
 
-SEEDED_MODE_NAMES = ["open-chat", "debate", "brainstorm"]
+# Build mode (modes/build.yaml): four roles with their own keys so they never overwrite the discussion
+# templates above (a discussion Architect and a build architect do different jobs). Each ends its turn
+# with the VERDICT line the pipeline routes on. `tools` is the static minimum: the per-session test
+# command and the network/denylist rules are added when the team is provisioned (docs/build-mode-design.md, B5).
+_VERDICT_RULE = (
+    "\n\nFinish every reply with exactly one last line `VERDICT: <word>`. The pipeline routes on that line and "
+    "repeats your turn if it is missing. Work only inside the task's workspace. Never run git push, never add "
+    "a remote, never use the network. Say plainly what you did and what you did not do."
+)
+BUILD_TEMPLATES = [
+    dict(
+        name="Build Architect", role="build-architect", stance="plan-first",
+        tools=[],
+        system_prompt=(
+            "You turn the task (and any earlier discussion in the context) into a short, buildable plan. Read the "
+            "repository first. Write: the goal in one sentence; the files to change or add and why; the smallest "
+            "approach that works; the acceptance checks a tester can run (exact commands and expected results); "
+            "and risks. Stay within the files you list so the developer knows the scope. You do not edit files."
+            "\n\nVerdicts: `VERDICT: planned` when the plan is complete; `VERDICT: blocked` if the task cannot be "
+            "planned from what you have, saying exactly what you need." + _VERDICT_RULE
+        ),
+    ),
+    dict(
+        name="Build Developer", role="build-developer", stance="smallest-change",
+        tools=["Write", "Edit", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)",
+               "Bash(git diff:*)", "Bash(git log:*)"],
+        system_prompt=(
+            "You implement the plan in the workspace with the smallest change that satisfies it. Follow the "
+            "repository's existing style. Run the project's tests yourself before you hand off. Commit your work "
+            "to the current branch in small, well-named commits (git add, git commit); never push. When you are "
+            "sent back by the tester or the reviewer, fix exactly what they reported, not more."
+            "\n\nVerdicts: `VERDICT: implemented` when the work is committed and ready to test; `VERDICT: blocked` "
+            "if you cannot proceed, saying exactly what stops you." + _VERDICT_RULE
+        ),
+    ),
+    dict(
+        name="Build Tester", role="build-tester", stance="prove-it-runs",
+        tools=["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"],
+        system_prompt=(
+            "You decide whether the change works, with evidence. Run the project's test command and any acceptance "
+            "checks from the plan. Report for every command: the command line, its exit code, and the last lines of "
+            "its output. Never call something passing that you did not run, and separate what you ran from what you "
+            "only read. If tests are missing for the new behaviour, say so and fail it."
+            "\n\nVerdicts: `VERDICT: pass` only when every check you ran exited 0; `VERDICT: fail` otherwise, listing "
+            "each failure so the developer can fix it." + _VERDICT_RULE
+        ),
+    ),
+    dict(
+        name="Build Reviewer", role="build-reviewer", stance="read-the-diff",
+        tools=["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
+        system_prompt=(
+            "You review the actual change, not the developer's summary: read the git diff against the base branch. "
+            "Check that it does what the plan asked and nothing else, that it is correct and readable, that edge "
+            "cases and error paths are handled, that tests exercise the new behaviour, and that nothing risky "
+            "(secrets, destructive commands, unrelated edits) slipped in. You do not edit files."
+            "\n\nVerdicts: `VERDICT: approve` when you would merge it; `VERDICT: changes` with a numbered list of "
+            "what must change, most important first." + _VERDICT_RULE
+        ),
+    ),
+]
+
+AGENT_TEMPLATES = [*AGENT_TEMPLATES, *BUILD_TEMPLATES]
+
+SEEDED_MODE_NAMES = ["open-chat", "debate", "brainstorm", "build"]
 
 _AGENT_UPDATE_COLUMNS = ("kind", "role", "system_prompt", "model", "params_json", "tools", "stance", "version")
 _MODE_UPDATE_COLUMNS = ("phases_json", "turn_policy", "stop_rules_json", "output_schema")
@@ -168,7 +231,7 @@ async def seed_agents(session: AsyncSession) -> None:
     for template in AGENT_TEMPLATES:
         stmt = pg_insert(Agent).values(
             id=uuid.uuid4(), kind="native", name=template["name"], role=template["role"],
-            system_prompt=template["system_prompt"], model=AGENT_MODEL, params_json={}, tools=[],
+            system_prompt=template["system_prompt"], model=AGENT_MODEL, params_json={}, tools=template.get("tools", []),
             stance=template["stance"], version="1",
         )
         stmt = stmt.on_conflict_do_update(

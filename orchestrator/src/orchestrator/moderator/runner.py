@@ -60,6 +60,7 @@ from ..floor import (
     AskHuman,
     ConversationView,
     Converged,
+    Done,
     FloorDecision,
     FloorPolicy,
     Grant,
@@ -67,6 +68,7 @@ from ..floor import (
     Parallel,
     PersonaBrief,
     StopRulesConfig,
+    parse_verdict,
 )
 from .budget import session_usage
 from .summarizer import Summarizer
@@ -99,6 +101,7 @@ _STOP_REASON_VALUES = {
     "max-rounds": "max_rounds",
     "no-new-arguments": "staleness",
     "converged": "converged",
+    "build-complete": "build_complete",
     "external-status-change": "user_stop",
 }
 
@@ -151,7 +154,9 @@ class ModeratorRunner:
         self._synthesizer = synthesizer
         self._scorer = scorer
         self._config = config
-        self._opening_done = False
+        # Build mode (pipeline): the architect starts, not a lap through every seat, so there is no opening pass.
+        self._pipeline = mode.floor_policy == "pipeline"
+        self._opening_done = self._pipeline
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
@@ -272,6 +277,9 @@ class ModeratorRunner:
         if isinstance(decision, AskHuman):
             await self._escalate_to_human(view, decision.reason)
             return RunOnceResult(stopped=True, reason=STATUS_NEEDS_HUMAN)
+        if isinstance(decision, Done):
+            await self._finish(view, decision.reason)
+            return RunOnceResult(stopped=True, reason=decision.reason)
         if isinstance(decision, Parallel):
             # No M2.6/M2.7 policy produces this. Kept as an explicit "not supported by any
             # built policy" stub for the FloorDecision union to type-check, per the
@@ -333,6 +341,22 @@ class ModeratorRunner:
             if last_turn is not None:
                 agent = await session.get(Agent, last_turn.speaker_id)
                 last_speaker = agent.role if agent else None
+            last_verdict = parse_verdict(last_turn.content) if (self._pipeline and last_turn is not None) else None
+            turns_by_role: dict[str, int] = {}
+            consecutive_same_speaker = 0
+            if self._pipeline:
+                turns_by_role = {role: n for role, n in (await session.execute(
+                    select(Agent.role, func.count(Turn.id)).join(Turn, Turn.speaker_id == Agent.id)
+                    .where(Turn.session_id == self._session_id).group_by(Agent.role)
+                )).all()}
+                recent_roles = (await session.execute(
+                    select(Agent.role).join(Turn, Turn.speaker_id == Agent.id)
+                    .where(Turn.session_id == self._session_id).order_by(Turn.seq.desc()).limit(10)
+                )).scalars().all()
+                for role in recent_roles:
+                    if role != last_speaker:
+                        break
+                    consecutive_same_speaker += 1
 
             grants_this_window = await self._grants_this_window(session)
             recent_transcript = await self._recent_transcript_lines(session)
@@ -352,6 +376,9 @@ class ModeratorRunner:
             # a future round definition spanning multiple grants.
             queue_jumped_this_round=False,
             recent_transcript=recent_transcript,
+            last_verdict=last_verdict,
+            turns_by_role=turns_by_role,
+            consecutive_same_speaker=consecutive_same_speaker,
         )
 
     async def _grants_this_window(self, session) -> dict[str, int]:
@@ -403,7 +430,9 @@ class ModeratorRunner:
 
             if self._stop_rules.max_rounds is not None and view.round >= self._stop_rules.max_rounds:
                 return "max-rounds"
-            if row.stale_argument_count >= self._stop_rules.stale_argument_turns:
+            # Staleness is a discussion measure (no new argument); a build turn that edits files and runs
+            # tests can legitimately add no "argument", so a pipeline never stops on it.
+            if not self._pipeline and row.stale_argument_count >= self._stop_rules.stale_argument_turns:
                 return "no-new-arguments"
             if await self._budget_exceeded(row):
                 return "budget-exceeded"
@@ -669,6 +698,11 @@ class ModeratorRunner:
         lines.append(f"Expected output: {task.output_type}")
         if task.success_criteria:
             lines.append(f"Success criteria: {task.success_criteria}")
+        ws = task.workspace or {}
+        if ws:
+            lines.append(f"Workspace: git repository, base branch {ws.get('base_branch', 'main')}")
+            if ws.get("test_command"):
+                lines.append(f"Test command: {ws['test_command']}")
         return "\n".join(lines)
 
     async def _build_context(self, view: ConversationView) -> str:
@@ -684,6 +718,9 @@ class ModeratorRunner:
                 .order_by(SessionRow.started_at.desc())
             )).all()
             prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
+
+        if self._pipeline:
+            return self._pipeline_context(task_text, summary, prev_summaries, view)
 
         lines = []
         if task_text:
@@ -706,6 +743,19 @@ class ModeratorRunner:
         lines.append("")
         lines.append("Recent turns:")
         lines.extend(view.recent_transcript)
+        return "\n".join(lines)
+
+    def _pipeline_context(self, task_text: str, summary: str | None, prev_summaries: list[str],
+                          view: ConversationView) -> str:
+        """Build mode turn prompt: the task, the work so far, and the one-line reporting contract the
+        pipeline floor policy routes on. The role brief (system prompt) says what the role does."""
+        lines = ["You are one step in a build pipeline with other agents. Do your role's job on this task, "
+                 "in the shared workspace, and report what you did.", task_text, ""]
+        if prev_summaries:
+            lines += ["Previous Session Context:", *prev_summaries, ""]
+        lines += [f"Rolling summary: {summary or '(none yet)'}", "", "Previous steps (full text):", *view.recent_transcript, ""]
+        lines.append("End your reply with exactly one line of the form `VERDICT: <word>` using the words your role "
+                     "brief gives you. The pipeline routes on that line; without it your turn is repeated.")
         return "\n".join(lines)
 
     async def _await_response(self, queue: asyncio.Queue, participant: str, timeout: float) -> dict | None:

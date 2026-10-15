@@ -38,6 +38,11 @@ class ConversationView(BaseModel):
     # separate transcript param). Pre-bounded by whoever builds the view (M2.7+'s
     # turn-runner); FloorPolicy.next() itself never reads this field, only the scorer does.
     recent_transcript: list[str] = Field(default_factory=list)
+    # Build mode (pipeline floor policy). Computed by the runner from Turn history, like the fields
+    # above; the other policies never read them.
+    last_verdict: str | None = None  # the last turn's "VERDICT: x" value, lowercased; None if it gave none
+    turns_by_role: dict[str, int] = Field(default_factory=dict)
+    consecutive_same_speaker: int = 0
 
 
 class Grant(BaseModel):
@@ -57,7 +62,13 @@ class AskHuman(BaseModel):
     reason: str
 
 
-FloorDecision = Grant | Parallel | Converged | AskHuman
+class Done(BaseModel):
+    """The pipeline reached its end (Build mode: tests pass and the reviewer approved). Unlike
+    Converged this is a success the mode defined, not a lull in the discussion."""
+    reason: str
+
+
+FloorDecision = Grant | Parallel | Converged | AskHuman | Done
 
 
 class FloorPolicy(Protocol):
