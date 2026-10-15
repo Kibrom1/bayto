@@ -52,7 +52,7 @@ from ..conversation import OrchestratorConversation
 from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
 from ..models import Session as SessionRow
-from ..models import SessionAgent, Turn
+from ..models import SessionAgent, Task, Turn
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..sandbox.turns import TextDelta, ToolUse, TurnResult
@@ -653,7 +653,26 @@ class ModeratorRunner:
             meta={"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost": result.cost})
         return True
 
+    async def _task_text(self) -> str:
+        """The task the group is working on. Seats are fresh `claude -p` runs with no other way to learn
+        it: before this was included they were woken with only the rolling summary, answered "nothing in
+        my inbox", and every turn was judged to add no new argument (the first live run ended on
+        `staleness` after three empty turns)."""
+        async with self._sessionmaker() as session:
+            row = await session.get(SessionRow, self._session_id)
+            task = await session.get(Task, row.task_id)
+        if task is None:
+            return ""
+        lines = [f"Task: {task.title}"]
+        if task.brief:
+            lines.append(f"Brief: {task.brief}")
+        lines.append(f"Expected output: {task.output_type}")
+        if task.success_criteria:
+            lines.append(f"Success criteria: {task.success_criteria}")
+        return "\n".join(lines)
+
     async def _build_context(self, view: ConversationView) -> str:
+        task_text = await self._task_text()
         async with self._sessionmaker() as session:
             row = await session.get(SessionRow, self._session_id)
             summary = row.rolling_summary
@@ -667,6 +686,11 @@ class ModeratorRunner:
             prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
 
         lines = []
+        if task_text:
+            lines.append("You are taking part in a discussion with other agents. This is the task you are all "
+                         "working on; contribute your own view on it, building on what others have said.")
+            lines.append(task_text)
+            lines.append("")
         if prev_summaries:
             lines.append("Previous Session Context:")
             lines.extend(prev_summaries)
@@ -843,9 +867,13 @@ class ModeratorRunner:
                 select(Turn).where(Turn.session_id == self._session_id).order_by(Turn.seq)
             )).scalars().all()
             all_turns = [await self._to_turn_summary(session, t) for t in all_turns_rows]
+            hint = self._mode.synthesis_prompt_hint
+            task_text = await self._task_text()
+            if task_text:  # so the artifact answers the task, in the output type that was asked for
+                hint = f"{hint}\n\n{task_text}" if hint else task_text
             result = await self._synthesizer.synthesize(
                 view, row.rolling_summary or "", all_turns,
-                synthesis_prompt_hint=self._mode.synthesis_prompt_hint,
+                synthesis_prompt_hint=hint,
             )
 
             session.add(Artifact(session_id=self._session_id, type="synthesis",

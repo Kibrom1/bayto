@@ -867,3 +867,73 @@ async def test_streaming_turn_publishes_deltas_and_records_turn(tmp_path, live_s
     async with live_sessionmaker() as session:
         turn = (await session.execute(select(Turn).where(Turn.session_id == session_id))).scalars().one()
     assert turn.content == "hello" and turn.tokens_in == 10 and float(turn.cost) == 0.01
+
+
+# ---------------------------------------------------------------- the task reaches the seats and the synthesis
+
+async def _set_task(sessionmaker, session_id, **fields):
+    from orchestrator.models import Task
+    async with sessionmaker() as session:
+        row = await session.get(Session, session_id)
+        task = await session.get(Task, row.task_id)
+        for k, v in fields.items():
+            setattr(task, k, v)
+        await session.commit()
+
+
+async def test_a_seats_prompt_contains_the_task(tmp_path, live_sessionmaker):
+    """Seats are fresh runs that know nothing but the prompt. The first live run woke them with only the
+    rolling summary, so they answered "nothing in my inbox" and the session ended on `staleness`."""
+    from orchestrator.sandbox.turns import TurnResult
+    from fakes import FakeStreamingProvider
+
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    await _set_task(live_sessionmaker, session_id, title="Weekly or biweekly releases?",
+                    brief="Decide the release cadence for next quarter.", output_type="decision",
+                    success_criteria="Names one cadence and the main risk.")
+    runner, transport, mirror, _ = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mk_mode_config(), policy=RoundRobinFloorPolicy())
+    provider = FakeStreamingProvider([TurnResult(text="hi", tokens_in=1, tokens_out=1, cost=0, session_id="s")])
+    runner._sandbox_provider = provider
+
+    async def mirror_later():
+        for _ in range(50):
+            await asyncio.sleep(0.02)
+            await mirror.poll_once()
+    task = asyncio.create_task(mirror_later())
+    await runner.run_once()
+    task.cancel()
+
+    prompt = provider.prompts[0][1]
+    assert "Task: Weekly or biweekly releases?" in prompt
+    assert "Brief: Decide the release cadence for next quarter." in prompt
+    assert "Expected output: decision" in prompt
+    assert "Success criteria: Names one cadence and the main risk." in prompt
+
+
+async def test_task_text_omits_the_optional_parts_it_does_not_have(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _set_task(live_sessionmaker, session_id, title="T", brief=None, output_type="memo", success_criteria=None)
+    runner, *_ = mk_runner(tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+                           mode=mk_mode_config(), policy=RoundRobinFloorPolicy())
+    assert await runner._task_text() == "Task: T\nExpected output: memo"
+
+
+async def test_the_synthesis_prompt_includes_the_task(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _set_task(live_sessionmaker, session_id, title="Pick a cadence", output_type="decision")
+
+    class SpySynthesizer:
+        hints = []
+
+        async def synthesize(self, view, summary, all_turns, synthesis_prompt_hint=None):
+            self.hints.append(synthesis_prompt_hint)
+            return SynthesisResult(content_json={}, source_turn_ids=[])
+
+    runner, *_ = mk_runner(tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+                           mode=mk_mode_config(), policy=RoundRobinFloorPolicy())
+    runner._synthesizer = SpySynthesizer()
+    await runner._finish(await runner._build_view(), "max-rounds")
+    assert "Task: Pick a cadence" in SpySynthesizer.hints[0] and "Expected output: decision" in SpySynthesizer.hints[0]
