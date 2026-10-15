@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from ..models import Artifact, Session, Task
+from ..models import Artifact, Session, Task, UsageLedger
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
 from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
@@ -151,16 +151,15 @@ async def get_task_usage_report(
 ) -> dict:
     """M6: detailed usage ledger for a task across all its sessions."""
     async with sessionmaker() as db:
+        if await db.get(Task, task_id) is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "detail": "task not found"}})
+
         # Find all sessions for this task
         sessions = (await db.execute(
             select(Session.id).where(Session.task_id == task_id)
         )).scalars().all()
 
-        if not sessions:
-            return {"error": "no sessions found for this task"}
-
         # Aggregate ledger entries
-        from ..models import UsageLedger
         ledger_rows = (await db.execute(
             select(UsageLedger).where(UsageLedger.session_id.in_(sessions))
             .order_by(UsageLedger.timestamp)
