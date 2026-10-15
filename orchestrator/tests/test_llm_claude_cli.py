@@ -162,3 +162,31 @@ async def test_a_failing_claude_reports_the_reason_not_the_usage_block(tmp_path)
     client = ClaudeCliClient(binary=_fake_claude(tmp_path, f"cat {out}\nexit 1\n"))
     with pytest.raises(ClaudeCliError, match="model not found: bogus"):
         await client.run(model="bogus", system="s", prompt="p")
+
+
+# ---------------------------------------------------------------- the real tool schemas (regression: list-valued "type")
+
+def _real_tools():
+    from orchestrator.floor import scorer
+    from orchestrator.moderator import summarizer, synthesizer
+    return {"summarizer": summarizer._tool_definition(), "synthesizer": synthesizer._tool_definition(),
+            "scorer": scorer._tool_definition()}
+
+
+@pytest.mark.parametrize("name", ["summarizer", "synthesizer", "scorer"])
+def test_the_validator_handles_every_real_tool_schema_without_raising(name):
+    schema = _real_tools()[name]["input_schema"]
+    problems = schema_errors({}, schema)  # used to raise TypeError on `"type": ["object", "null"]`
+    assert any("missing required field" in p for p in problems)
+
+
+def test_type_lists_and_null_are_accepted():
+    schema = _real_tools()["synthesizer"]["input_schema"]
+    base = {"content_json": {"a": 1}, "source_turn_ids": []}
+    assert schema_errors({**base, "minority_report": None}, schema) == []
+    assert schema_errors({**base, "minority_report": {"objection": "x"}}, schema) == []
+    assert schema_errors({**base, "minority_report": "text"}, schema)  # a string is neither object nor null
+
+
+def test_empty_hand_raises_is_a_valid_scorer_reply():
+    assert schema_errors({"hand_raises": []}, _real_tools()["scorer"]["input_schema"]) == []
