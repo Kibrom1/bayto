@@ -69,26 +69,40 @@ _JSON_TYPES = {"string": str, "boolean": bool, "object": dict, "array": list, "n
                "integer": int, "number": (int, float)}
 
 
+def _type_ok(value: Any, name: Any) -> bool:
+    py = _JSON_TYPES.get(name) if isinstance(name, str) else None
+    if py is None:
+        return True  # a type name we do not know is not a reason to reject the reply
+    if isinstance(value, bool):
+        return name in ("boolean",)
+    return isinstance(value, py)
+
+
 def schema_errors(value: Any, schema: dict, path: str = "$") -> list[str]:
     """Check `value` against the subset of JSON Schema the tool schemas use (type, required, properties,
-    items, enum). A reply that is valid JSON but the wrong shape used to flow on into the runner and fail
-    far from its cause (a KeyError, or a number where text was expected); catch it here instead, where it
-    can be retried with the problem spelled out."""
+    items, enum, anyOf/oneOf). A reply that is valid JSON but the wrong shape used to flow on into the
+    runner and fail far from its cause (a KeyError, or a number where text was expected); catch it here
+    instead, where it can be retried with the problem spelled out. `type` may be a list
+    (`["object", "null"]`). Keywords not handled here are ignored, never an error."""
     errors: list[str] = []
     want = schema.get("type")
     if want is not None:
-        py = _JSON_TYPES.get(want)
-        bad_bool = isinstance(value, bool) and want in ("integer", "number")
-        if py is not None and (not isinstance(value, py) or bad_bool):
-            return [f"{path}: expected {want}, got {type(value).__name__}"]
-    if "enum" in schema and value not in schema["enum"]:
+        names = want if isinstance(want, list) else [want]
+        if not any(_type_ok(value, n) for n in names):
+            label = "/".join(str(n) for n in names)
+            return [f"{path}: expected {label}, got {type(value).__name__}"]
+    for key in ("anyOf", "oneOf"):
+        alts = schema.get(key)
+        if isinstance(alts, list) and alts and all(schema_errors(value, a, path) for a in alts if isinstance(a, dict)):
+            return [f"{path}: does not match any allowed shape"]
+    if "enum" in schema and isinstance(schema["enum"], list) and value not in schema["enum"]:
         errors.append(f"{path}: must be one of {schema['enum']}")
     if isinstance(value, dict):
-        for key in schema.get("required", []):
+        for key in schema.get("required") or []:
             if key not in value:
                 errors.append(f"{path}: missing required field '{key}'")
         for key, sub in (schema.get("properties") or {}).items():
-            if key in value:
+            if key in value and isinstance(sub, dict):
                 errors += schema_errors(value[key], sub, f"{path}.{key}")
     if isinstance(value, list) and isinstance(schema.get("items"), dict):
         for i, item in enumerate(value):
