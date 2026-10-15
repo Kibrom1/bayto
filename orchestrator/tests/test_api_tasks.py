@@ -1,11 +1,12 @@
 """M2.8: POST /tasks. M3.1 adds GET /tasks. Real Postgres (task rows), no sbx or
 Anthropic needed."""
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
 
 from orchestrator.app import app
-from orchestrator.models import Artifact, Mode, Session, Task
+from orchestrator.models import Artifact, Mode, Session, Task, UsageLedger
 
 
 async def test_create_task_persists_and_returns_it(live_sessionmaker):
@@ -154,3 +155,61 @@ async def test_list_tasks_links_the_synthesis_artifact_not_a_minority_report(liv
 
     [body] = [t for t in resp.json() if t["id"] == str(task.id)]
     assert body["output_artifact_id"] == str(synthesis.id)
+
+
+# ---------------------------------------------------------------- GET /tasks/{id}/usage-report (M6)
+
+async def test_usage_report_404s_for_an_unknown_task_id(live_sessionmaker):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/tasks/{uuid.uuid4()}/usage-report")
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"]["code"] == "not_found"
+
+
+async def test_usage_report_is_zeroed_for_a_task_with_no_sessions(live_sessionmaker):
+    task = await _make_task(live_sessionmaker)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/tasks/{task.id}/usage-report")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_tokens_in"] == 0
+    assert body["total_tokens_out"] == 0
+    assert body["total_cost"] == 0.0
+    assert body["ledger"] == []
+
+
+async def test_usage_report_aggregates_ledger_entries_across_sessions(live_sessionmaker):
+    task = await _make_task(live_sessionmaker)
+    mode = await _make_mode(live_sessionmaker, "m-usage")
+    async with live_sessionmaker() as db:
+        session_a = Session(task_id=task.id, mode_id=mode.id, status="finished",
+                             started_at=datetime.now(timezone.utc))
+        session_b = Session(task_id=task.id, mode_id=mode.id, status="finished",
+                             started_at=datetime.now(timezone.utc))
+        db.add_all([session_a, session_b])
+        await db.flush()
+        db.add_all([
+            UsageLedger(session_id=session_a.id, tokens_in=100, tokens_out=50, cost=0.01),
+            UsageLedger(session_id=session_a.id, tokens_in=200, tokens_out=75, cost=0.02),
+            UsageLedger(session_id=session_b.id, tokens_in=300, tokens_out=125, cost=0.03),
+        ])
+        await db.commit()
+        await db.refresh(session_a)
+        await db.refresh(session_b)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/tasks/{task.id}/usage-report")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_tokens_in"] == 600
+    assert body["total_tokens_out"] == 250
+    assert round(body["total_cost"], 2) == 0.06
+    assert len(body["ledger"]) == 3
+    session_ids = {entry["session_id"] for entry in body["ledger"]}
+    assert session_ids == {str(session_a.id), str(session_b.id)}
+    for entry in body["ledger"]:
+        assert set(entry.keys()) == {"session_id", "tokens_in", "tokens_out", "cost", "timestamp"}
