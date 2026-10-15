@@ -46,6 +46,7 @@ class StopRulesConfig(BaseModel):
     urgency_boost_multiplier: float = 1.3
     urgency_boost_reasons: set[Reason] = Field(default_factory=lambda: {Reason.NEW_POINT, Reason.DISAGREE})
     max_consecutive_grants: int = 2
+    max_fix_cycles: int = 3  # pipeline (Build) mode: extra developer turns allowed after the first
 
     @classmethod
     def from_mode(cls, mode: ModeConfig) -> "StopRulesConfig":
