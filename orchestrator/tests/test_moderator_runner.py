@@ -1119,3 +1119,20 @@ async def test_finished_build_session_gets_a_change_set_read_from_the_repo(tmp_p
     cs = by_type["change_set"]
     assert cs["status"] == "ready_to_merge" and cs["commits"][0]["subject"] == "feat: new"
     assert cs["tests"]["exit_code"] == 0 and cs["review"]["verdict"] == "approve"
+
+
+async def test_build_turn_prompt_includes_an_earlier_sessions_synthesis(tmp_path, live_sessionmaker):
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {})
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(Session, session_id)).task_id
+        mode_id = (await db.get(Session, session_id)).mode_id
+        old = Session(task_id=task_id, mode_id=mode_id, status="finished")
+        db.add(old)
+        await db.flush()
+        db.add(Artifact(session_id=old.id, type="synthesis", content_json={"decision": "use a queue, not cron"},
+                        source_turn_ids=[]))
+        await db.commit()
+
+    prompt = await runner._build_context(await runner._build_view())
+
+    assert "Earlier synthesis" in prompt and "use a queue, not cron" in prompt

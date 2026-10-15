@@ -733,6 +733,15 @@ class ModeratorRunner:
                 .order_by(SessionRow.started_at.desc())
             )).all()
             prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
+            if self._pipeline:
+                # "Continue as Build": an earlier discussion's final synthesis is the brief to build from
+                # (the rolling summary alone drops the decision and the dissent).
+                earlier = (await session.execute(
+                    select(Artifact.content_json).join(SessionRow, SessionRow.id == Artifact.session_id)
+                    .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id,
+                           Artifact.type == "synthesis").order_by(SessionRow.started_at.desc())
+                )).scalars().all()
+                prev_summaries += [f"Earlier synthesis: {json.dumps(c)[:6000]}" for c in earlier]
 
         if self._pipeline:
             return self._pipeline_context(task_text, summary, prev_summaries, view)

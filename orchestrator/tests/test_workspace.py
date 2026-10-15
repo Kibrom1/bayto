@@ -102,3 +102,17 @@ async def test_task_with_bad_workspace_is_422(live_sessionmaker, tmp_path):
 async def test_task_without_workspace_still_works(live_sessionmaker):
     resp = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "text"})
     assert resp.status_code == 201 and resp.json()["task"]["workspace"] is None
+
+
+async def test_put_workspace_on_an_existing_task(live_sessionmaker, repo):
+    created = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "decision"})
+    task_id = created.json()["task"]["id"]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        ok = await c.put(f"/tasks/{task_id}/workspace", json={"repo_path": str(repo), "test_command": "make test"})
+        bad = await c.put(f"/tasks/{task_id}/workspace", json={"repo_path": str(repo), "test_command": "make; rm -rf /"})
+        missing = await c.put("/tasks/11111111-1111-1111-1111-111111111111/workspace", json={"repo_path": str(repo)})
+        listed = (await c.get("/tasks")).json()
+    assert ok.status_code == 200 and ok.json()["task"]["workspace"]["test_command"] == "make test"
+    assert bad.status_code == 422 and bad.json()["detail"]["error"]["code"] == "workspace_bad_test_command"
+    assert missing.status_code == 404
+    assert [t for t in listed if t["id"] == task_id][0]["workspace"]["base_branch"] == "main"

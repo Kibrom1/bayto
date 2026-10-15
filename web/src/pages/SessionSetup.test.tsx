@@ -8,6 +8,10 @@ const MODES = [
   { id: 'm1', name: 'brainstorm', floor_policy: 'round_robin', stop_rules: {} },
   { id: 'm2', name: 'debate', floor_policy: 'round_robin', stop_rules: {} },
 ]
+const BUILD_MODE = { id: 'm3', name: 'build', floor_policy: 'pipeline', stop_rules: {} }
+const BUILD_AGENTS = ['architect', 'developer', 'tester', 'reviewer'].map((r, i) => (
+  { id: `b${i}`, name: `Build ${r}`, role: `build-${r}`, system_prompt: '', stance: 'x', model: 'sonnet' }
+))
 const AGENTS = [
   { id: 'a1', name: 'Skeptic', role: 'Challenges claims', system_prompt: '', stance: 'critical', model: 'sonnet' },
   { id: 'a2', name: 'Builder', role: 'Proposes designs', system_prompt: '', stance: 'constructive', model: 'sonnet' },
@@ -17,11 +21,15 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-function mockApi() {
+function mockApi(opts: { build?: boolean; workspace?: object | null } = {}) {
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
-    if (url.endsWith('/modes')) return json(MODES)
-    if (url.endsWith('/agents/templates')) return json(AGENTS)
+    if (url.endsWith('/tasks')) {
+      return json([{ id: 'task-1', title: 't', brief: null, output_type: 'code change', workspace: opts.workspace ?? null }])
+    }
+    if (url.endsWith('/tasks/task-1/workspace') && init?.method === 'PUT') return json({ task: { id: 'task-1' } })
+    if (url.endsWith('/modes')) return json(opts.build ? [...MODES, BUILD_MODE] : MODES)
+    if (url.endsWith('/agents/templates')) return json(opts.build ? [...AGENTS, ...BUILD_AGENTS] : AGENTS)
     if (url.endsWith('/sessions') && init?.method === 'POST') return json({ session: { id: 's9', status: 'created' } }, 201)
     if (url.endsWith('/start')) return json({ session: { id: 's9', status: 'running' } })
     return json({ detail: 'nope' }, 404)
@@ -90,6 +98,57 @@ describe('SessionSetup', () => {
       mode_id: 'm2',
       roster: [{ agent_id: 'a1', seat_order: 0 }, { agent_id: 'a2', seat_order: 1 }],
     })
+  })
+})
+
+describe('SessionSetup in Build mode', () => {
+  const WS = { repo_path: '/code/app', base_branch: 'main', test_command: 'npm test' }
+
+  it('seats the four build roles, hides discussion agents and raises the budget', async () => {
+    const user = userEvent.setup()
+    mockApi({ build: true, workspace: WS })
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    expect(screen.queryByText('Build architect')).not.toBeInTheDocument() // build agents are hidden in discussion modes
+
+    await user.click(screen.getByRole('radio', { name: /^build/i }))
+
+    expect(screen.getAllByText(/^Build (architect|developer|tester|reviewer)$/).length).toBeGreaterThanOrEqual(4)
+    expect(screen.queryByText('Skeptic')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/dollar cap/i)).toHaveValue(15)
+    expect(await screen.findByText('/code/app')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /start session/i })).toBeEnabled()
+  })
+
+  it('asks for a repository when the task has none, and saves it before starting', async () => {
+    const user = userEvent.setup()
+    mockApi({ build: true })
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    await user.click(screen.getByRole('radio', { name: /^build/i }))
+
+    await user.click(screen.getByRole('button', { name: /start session/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/enter the repository path/i)
+
+    await user.type(await screen.findByLabelText('Repository path'), '/code/app')
+    await user.click(screen.getByRole('button', { name: /start session/i }))
+
+    await waitFor(() => expect(screen.getByText('room page')).toBeInTheDocument())
+    const calls = vi.mocked(fetch).mock.calls.map(([u, i]) => `${i?.method ?? 'GET'} ${String(u)}`)
+    expect(calls.indexOf('PUT /tasks/task-1/workspace')).toBeGreaterThan(-1)
+    expect(calls.indexOf('PUT /tasks/task-1/workspace')).toBeLessThan(calls.indexOf('POST /sessions'))
+  })
+
+  it('goes back to discussion agents when you leave Build', async () => {
+    const user = userEvent.setup()
+    mockApi({ build: true, workspace: WS })
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    await user.click(screen.getByRole('radio', { name: /^build/i }))
+    await user.click(screen.getByRole('radio', { name: /debate/i }))
+    expect(screen.getByText('Skeptic')).toBeInTheDocument()
+    expect(screen.queryByText('Build architect')).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/dollar cap/i)).toHaveValue(5)
   })
 })
 

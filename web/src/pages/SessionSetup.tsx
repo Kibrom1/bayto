@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   createSession,
   getAgentTemplates,
   getModes,
   listTasks,
   startSession,
+  type Task,
   type SessionCreateRequest,
 } from '../api/sessions'
 import { agentHue } from '../agentColor'
+import { setTaskWorkspace } from '../api/tasks'
 import { TableRing } from '../components/TableRing'
+import { EMPTY_WORKSPACE, WorkspaceFields, workspaceBody, type WorkspaceDraft } from '../components/WorkspaceFields'
 import './SessionSetup.css'
 
 interface AgentTemplate {
@@ -32,6 +35,7 @@ interface Mode {
 const MODE_BLURBS: Record<string, string> = {
   brainstorm: 'Diverge first: many ideas, little judgement.',
   debate: 'Opposing stances argue; the moderator keeps it fair.',
+  build: 'Plan, code, test and review on a git branch. You review and merge it.',
   review: 'Agents critique a draft and converge on fixes.',
   decision: 'Weigh options and end with a recommendation.',
 }
@@ -43,7 +47,11 @@ const BUDGET_PRESETS = [
 ]
 
 // Rough planning figure per seat for a standard-length session; shown as an estimate only.
+// Build seats run tools (read the repo, edit, run tests) and loop on failures, so they cost more.
 const COST_PER_SEAT = 0.5
+const BUILD_COST_PER_SEAT = 3
+const BUILD_ROLES = ['build-architect', 'build-developer', 'build-tester', 'build-reviewer']
+const isBuildTemplate = (t: { role?: string }) => (t.role ?? '').startsWith('build-')
 
 function titleCase(s: string) {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -56,6 +64,7 @@ function initials(name: string) {
 export function SessionSetup() {
   const { taskId } = useParams<{ taskId: string }>()
   const navigate = useNavigate()
+  const [search] = useSearchParams()
 
   const [modes, setModes] = useState<Mode[] | null>(null)
   const [templates, setTemplates] = useState<AgentTemplate[] | null>(null)
@@ -72,9 +81,16 @@ export function SessionSetup() {
   // The route takes any id, so check the task exists. If the lookup itself fails we carry on: the
   // setup options below report their own load errors, and starting a session re-validates the task.
   const [taskMissing, setTaskMissing] = useState(false)
+  const [task, setTask] = useState<Task | null>(null)
+  const [ws, setWs] = useState<WorkspaceDraft>(EMPTY_WORKSPACE) // for a task that has no repository yet
   useEffect(() => {
     listTasks()
-      .then((ts) => { if (Array.isArray(ts) && !ts.some((t) => t.id === taskId)) setTaskMissing(true) })
+      .then((ts) => {
+        if (!Array.isArray(ts)) return
+        const found = ts.find((t) => t.id === taskId)
+        if (found) setTask(found)
+        else setTaskMissing(true)
+      })
       .catch(() => {})
   }, [taskId])
 
@@ -84,9 +100,39 @@ export function SessionSetup() {
         setModes(m)
         setTemplates(t)
         if (m.length === 1) setModeId(m[0].id)
+        // "Continue as Build" links here with ?mode=build
+        const wanted = search.get('mode')
+        const pick = wanted && m.find((x: Mode) => x.name === wanted)
+        if (pick) chooseModeFrom(pick, t)
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
   }, [])
+
+  const selectedMode = modes?.find((m) => m.id === modeId)
+  const isBuild = selectedMode?.name === 'build'
+  const visibleTemplates = useMemo(
+    () => (templates ?? []).filter((t) => (isBuild ? isBuildTemplate(t) : !isBuildTemplate(t))),
+    [templates, isBuild],
+  )
+
+  // Build uses its own four roles; discussion modes never show them. Switching between the two kinds starts
+  // a fresh roster so the two never mix, and Build starts with its team already seated and a bigger budget.
+  function chooseModeFrom(mode: Mode, tpls: AgentTemplate[]) {
+    const toBuild = mode.name === 'build'
+    setModeId(mode.id)
+    setAgentIds(
+      toBuild ? BUILD_ROLES.map((r) => tpls.find((t) => t.role === r)?.id).filter((x): x is string => !!x) : [],
+    )
+    if (toBuild) { setDollars('15'); setTokens('600000') }
+  }
+  function chooseMode(mode: Mode) {
+    if (!templates) return
+    if (mode.id === modeId) return
+    const wasBuild = isBuild
+    if (wasBuild === (mode.name === 'build')) setModeId(mode.id)
+    else chooseModeFrom(mode, templates)
+    if (wasBuild && mode.name !== 'build') { setDollars('5'); setTokens('200000') }
+  }
 
   const roster = useMemo(
     () => agentIds.map((id) => templates?.find((t) => t.id === id)).filter((t): t is AgentTemplate => !!t),
@@ -94,12 +140,18 @@ export function SessionSetup() {
   )
 
   const cap = parseFloat(dollars)
-  const estimate = roster.length * COST_PER_SEAT
+  const estimate = roster.length * (isBuild ? BUILD_COST_PER_SEAT : COST_PER_SEAT)
   const pct = cap > 0 ? Math.round((estimate / cap) * 100) : null
 
   const problems: string[] = []
   if (!modeId) problems.push('Choose a mode.')
-  if (roster.length < 2) problems.push('Add at least two agents so there is something to discuss.')
+  if (isBuild) {
+    const missing = BUILD_ROLES.filter((r) => !roster.some((t) => t.role === r))
+    if (missing.length > 0) problems.push(`Build needs all four roles: add ${missing.map((r) => r.replace('build-', '')).join(', ')}.`)
+    if (task && !task.workspace && ws.repo_path.trim() === '') problems.push('Enter the repository path the team should work in.')
+  } else if (roster.length < 2) {
+    problems.push('Add at least two agents so there is something to discuss.')
+  }
   if (!(cap > 0)) problems.push('Set a dollar cap above zero.')
 
   function toggle(id: string) {
@@ -137,6 +189,7 @@ export function SessionSetup() {
           dollars: cap > 0 ? cap : undefined,
         },
       }
+      if (isBuild && task && !task.workspace) await setTaskWorkspace(taskId, workspaceBody(ws))
       const { session } = await createSession(req)
       await startSession(session.id)
       navigate(`/room/${session.id}`)
@@ -179,7 +232,9 @@ export function SessionSetup() {
         <div>
           <p className="eyebrow">New session</p>
           <h1>Session setup</h1>
-          <p className="muted">Pick how the discussion runs, who takes part, and how much it may spend.</p>
+          <p className="muted">{isBuild
+            ? 'Pick who builds, and how much the build may spend. The team works on a new branch in your repository.'
+            : 'Pick how the discussion runs, who takes part, and how much it may spend.'}</p>
         </div>
         <Link className="btn" to="/">← Tasks</Link>
       </header>
@@ -191,7 +246,7 @@ export function SessionSetup() {
             <div className="mode-grid" role="radiogroup" aria-label="Mode">
               {modes.map((m) => (
                 <label key={m.id} className={`mode-card${modeId === m.id ? ' selected' : ''}`}>
-                  <input type="radio" name="mode" value={m.id} checked={modeId === m.id} onChange={() => setModeId(m.id)} />
+                  <input type="radio" name="mode" value={m.id} checked={modeId === m.id} onChange={() => chooseMode(m)} />
                   <span className="mode-name">{titleCase(m.name)}</span>
                   <span className="mode-blurb">{MODE_BLURBS[m.name.toLowerCase()] ?? titleCase(m.floor_policy ?? m.turn_policy ?? '')}</span>
                 </label>
@@ -199,11 +254,28 @@ export function SessionSetup() {
             </div>
           </section>
 
+          {isBuild && task && !task.workspace && (
+            <section className="card card-pad" aria-labelledby="repo-h">
+              <h2 id="repo-h">Repository</h2>
+              <p className="hint">This task has no repository yet. The team will work on a new branch in it; nothing is pushed.</p>
+              <WorkspaceFields value={ws} onChange={setWs} legend="" />
+            </section>
+          )}
+          {isBuild && task?.workspace && (
+            <section className="card card-pad" aria-labelledby="repo-h">
+              <h2 id="repo-h">Repository</h2>
+              <p className="muted"><code>{task.workspace.repo_path}</code> on <code>{task.workspace.base_branch}</code>
+                {task.workspace.test_command ? <> · tests: <code>{task.workspace.test_command}</code></> : ' · no test command set'}</p>
+            </section>
+          )}
+
           <section className="card card-pad" aria-labelledby="agents-h">
             <h2 id="agents-h">2. Agent explorer</h2>
-            <p className="hint">Order matters: seats speak in roster order.</p>
+            <p className="hint">{isBuild
+              ? 'The pipeline decides who speaks: plan, build, test, review. Fixes go back to the developer.'
+              : 'Order matters: seats speak in roster order.'}</p>
             <ul className="agent-list">
-              {templates.map((t) => {
+              {visibleTemplates.map((t) => {
                 const on = agentIds.includes(t.id)
                 return (
                   <li key={t.id} className={`agent-card${on ? ' on' : ''}`} style={{ ['--agent-h' as string]: agentHue(t.role ?? t.name) }}>
