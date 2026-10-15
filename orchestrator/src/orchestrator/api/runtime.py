@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -52,6 +53,20 @@ log = logging.getLogger(__name__)
 session_failures: dict[uuid.UUID, str] = {}
 # What a starting session is doing right now, so a slow start is visible instead of silent.
 session_stages: dict[uuid.UUID, str] = {}
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def scrub_failure(text: str) -> str:
+    """The failure reason is shown to whoever can reach the API (there is no auth yet), and it can
+    contain a script's raw output. Replace absolute host paths -- the repo, the home directory, any
+    /Users/<name> or /home/<name> -- so it explains what failed without disclosing the machine's
+    layout. The full, unscrubbed error is still in the server log."""
+    for real, placeholder in ((str(_REPO_ROOT), "<repo>"), (str(Path.home()), "~")):
+        if real and real != "/":
+            text = text.replace(real, placeholder)
+    return re.sub(r"/(?:Users|home)/[^/\s:]+", "/<user>", text)
+
 
 DEFAULT_FACTORY_ROOT = Path(__file__).resolve().parents[2] / ".sessions"
 
@@ -151,7 +166,7 @@ async def launch_runner(
     except Exception as exc:
         log.exception("session %s failed to start", session_id)
         stage = session_stages.pop(session_id, "setup")
-        session_failures[session_id] = f"while {stage}: {type(exc).__name__}: {exc}"[:600]
+        session_failures[session_id] = scrub_failure(f"while {stage}: {type(exc).__name__}: {exc}")[:600]
         async with sessionmaker() as db:
             row = await db.get(Session, session_id)
             if row is not None:

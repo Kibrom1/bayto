@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..db import get_sessionmaker
@@ -34,12 +34,24 @@ def get_sandbox_provider(request: Request) -> SandboxProvider:
     return request.app.state.sandbox_provider_factory()
 
 
+def _not_configured(exc: ValueError) -> HTTPException:
+    """A missing BAYTO_*_MODEL variable is a deployment problem, not a server bug: say which one
+    (the factory's message names it) with a 503 instead of an anonymous 500."""
+    return HTTPException(503, detail={"error": {"code": "not_configured", "detail": str(exc)}})
+
+
 def get_summarizer(request: Request) -> Summarizer:
-    return request.app.state.summarizer_factory()
+    try:
+        return request.app.state.summarizer_factory()
+    except ValueError as exc:
+        raise _not_configured(exc) from exc
 
 
 def get_synthesizer(request: Request) -> Synthesizer:
-    return request.app.state.synthesizer_factory()
+    try:
+        return request.app.state.synthesizer_factory()
+    except ValueError as exc:
+        raise _not_configured(exc) from exc
 
 
 def get_hand_raise_scorer_factory(request: Request) -> Callable[[], HandRaiseScorer]:

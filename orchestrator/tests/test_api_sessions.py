@@ -532,26 +532,55 @@ async def test_sse_emits_rolling_summary_events(client, live_sessionmaker, tmp_p
 
     await client.post(f"/sessions/{session_id}/start")
 
-    # Connect to the live stream right away, no since_seq.
+    # Connect right after /start, no since_seq. The runtime is registered a moment later; the
+    # handler waits for it, and the stream ends with an `end` event once the runner is done.
     async def _read_live():
-        events = []
+        events, name = [], None
         async with client.stream("GET", f"/sessions/{session_id}/events") as resp:
             async for line in resp.aiter_lines():
-                if line.startswith("event: rolling_summary"):
-                    # the next line should be data
-                    data_line = await resp.aiter_lines().__anext__()
-                    events.append(json.loads(data_line[len("data:"):].strip()))
-                    break
+                if line.startswith("event:"):
+                    name = line[len("event:"):].strip()
+                elif line.startswith("data:") and name == "rolling_summary":
+                    events.append(json.loads(line[len("data:"):].strip()))
+                elif not line.strip():
+                    name = None
         return events
 
-    # Wait for the session to finish in the background, but also listen to the stream.
-    # The read will return as soon as it sees a rolling_summary event.
-    events = await asyncio.wait_for(_read_live(), timeout=5.0)
-    
-    assert len(events) == 1
+    events = await asyncio.wait_for(_read_live(), timeout=10.0)
+    assert len(events) >= 1  # live update(s) and/or the persisted snapshot sent on connect
     assert events[0]["summary"] == "s"
 
     await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+
+async def test_sse_messages_carry_ids_and_last_event_id_resumes(client, live_sessionmaker, tmp_path):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    sandbox_provider = FakeSandboxProvider(on_wake=_auto_responder(tmp_path / "sessions", {"id": session_id}))
+    _wire_fakes(sandbox_provider)
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+    async def _read(headers=None, query=""):
+        ids, datas = [], []
+        async with client.stream("GET", f"/sessions/{session_id}/events{query}", headers=headers or {}) as r:
+            async for line in r.aiter_lines():
+                if line.startswith("id:"):
+                    ids.append(int(line[3:].strip()))
+                elif line.startswith("data:") and "message_id" in line:
+                    datas.append(json.loads(line[5:].strip()))
+        return ids, datas
+
+    ids, datas = await asyncio.wait_for(_read(query="?since_seq=0"), timeout=5.0)
+    assert ids == sorted(ids) and len(ids) >= 2 and [d["seq"] for d in datas] == ids
+
+    # An automatic browser reconnect sends Last-Event-ID instead of since_seq: only newer messages come back.
+    later_ids, _ = await asyncio.wait_for(_read(headers={"Last-Event-ID": str(ids[0])}), timeout=5.0)
+    assert later_ids == ids[1:]
 
 
 async def test_sse_returns_nothing_live_for_a_session_that_was_never_started(client, live_sessionmaker):
@@ -571,7 +600,8 @@ async def test_sse_returns_nothing_live_for_a_session_that_was_never_started(cli
         return body
 
     body = await asyncio.wait_for(_read_all(), timeout=5.0)
-    assert body == b""
+    assert b"event: end" in body  # nothing live: a final `end` so the client stops reconnecting
+    assert b"data: {\"protocol\"" not in body  # and no messages
 
 
 # ---------------------------------------------------------------- GET /sessions/{id} (M3.1)

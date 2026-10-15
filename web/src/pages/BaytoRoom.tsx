@@ -14,6 +14,7 @@ import {
   type ArtifactOut,
   type SessionDetailOut,
 } from '../api/sessions'
+import { isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { Synthesis } from './Synthesis'
 import './BaytoRoom.css'
@@ -41,6 +42,7 @@ export function BaytoRoom() {
   const { messages, rollingSummary, live, connected } = useSessionEvents(sessionId || '')
   const [session, setSession] = useState<SessionDetailOut | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notFound, setNotFound] = useState(false)
   const [taskTitle, setTaskTitle] = useState<string | null>(null)
   const [modeName, setModeName] = useState<string | null>(null)
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
@@ -61,7 +63,10 @@ export function BaytoRoom() {
         setSession(res.session)
         setError(null)
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) => {
+        setNotFound(isNotFound(err))
+        setError(err instanceof Error ? err.message : String(err))
+      })
   }, [sessionId])
 
   useEffect(() => {
@@ -151,7 +156,10 @@ export function BaytoRoom() {
   if (error && !session) {
     return (
       <div className="room-error" role="alert">
-        Couldn't load this session: {error}. <Link to="/">Back to tasks</Link>
+        {notFound
+          ? <>This session doesn't exist, or the link is wrong. </>
+          : <>Couldn't load this session: {error}. </>}
+        <Link to="/">Back to tasks</Link>
       </div>
     )
   }

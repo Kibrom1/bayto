@@ -92,3 +92,18 @@ describe('SessionSetup', () => {
     })
   })
 })
+
+describe('SessionSetup with an unknown task', () => {
+  it('says the task does not exist instead of showing a setup form for it', async () => {
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.endsWith('/tasks')) return json([{ id: 'other-task', title: 'x', brief: null, output_type: 'memo' }])
+      if (url.endsWith('/modes')) return json(MODES)
+      if (url.endsWith('/agents/templates')) return json(AGENTS)
+      return json({ detail: 'nope' }, 404)
+    })
+    renderSetup()
+    expect(await screen.findByText(/that task doesn't exist/i)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /session setup/i })).not.toBeInTheDocument()
+  })
+})

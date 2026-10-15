@@ -12,7 +12,9 @@ export function useSessionEvents(sessionId: string) {
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    const eventSource = new EventSource(`/sessions/${sessionId}/events`)
+    // since_seq=0 replays the stored transcript, so opening or reloading the room mid-session
+    // shows the whole conversation; on an automatic reconnect the browser's Last-Event-ID resumes it.
+    const eventSource = new EventSource(`/sessions/${sessionId}/events?since_seq=0`)
 
     eventSource.onopen = () => setConnected(true)
     eventSource.onerror = () => setConnected(false)
@@ -21,7 +23,8 @@ export function useSessionEvents(sessionId: string) {
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
-        setMessages((prev) => [...prev, data])
+        // A reconnect can replay a message we already have; message_id makes that harmless.
+        setMessages((prev) => (prev.some((m) => m.message_id === data.message_id) ? prev : [...prev, data]))
         // The finished message replaces that speaker's in-progress bubble.
         setLive((prev) => {
           if (!(data.from in prev)) return prev
@@ -42,6 +45,13 @@ export function useSessionEvents(sessionId: string) {
           console.error(`Error parsing ${name}:`, err)
         }
       })
+
+    // Nothing more will arrive (finished, failed or never started): stop, or the browser would
+    // reconnect forever.
+    eventSource.addEventListener('end', () => {
+      eventSource.close()
+      setConnected(false)
+    })
 
     named('rolling_summary', (data) => setRollingSummary(data.summary))
     named('turn_delta', (data) =>
