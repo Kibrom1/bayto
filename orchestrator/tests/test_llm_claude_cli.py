@@ -86,3 +86,56 @@ async def test_nonzero_exit_and_missing_binary_give_clear_errors(tmp_path):
         await bad.run(model="m", system="s", prompt="p")
     with pytest.raises(ClaudeCliError, match="not found"):
         await ClaudeCliClient(binary="definitely-not-a-binary").run(model="m", system="s", prompt="p")
+
+
+# ---------------------------------------------------------------- schema validation of replies
+
+from orchestrator.llm.claude_cli import schema_errors
+
+SUMMARY_TOOL = {"name": "t", "input_schema": {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}, "has_new_argument": {"type": "boolean"},
+                   "ids": {"type": "array", "items": {"type": "string"}}, "kind": {"enum": ["a", "b"]}},
+    "required": ["summary", "has_new_argument"]}}
+
+
+@pytest.mark.parametrize("value, fragment", [
+    ({"summary": "s"}, "missing required field 'has_new_argument'"),
+    ({"summary": 3, "has_new_argument": True}, "$.summary: expected string"),
+    ({"summary": "s", "has_new_argument": "yes"}, "$.has_new_argument: expected boolean"),
+    ({"summary": "s", "has_new_argument": True, "ids": ["a", 2]}, "$.ids[1]: expected string"),
+    ({"summary": "s", "has_new_argument": True, "kind": "z"}, "must be one of"),
+])
+def test_schema_errors_names_the_problem(value, fragment):
+    assert any(fragment in e for e in schema_errors(value, SUMMARY_TOOL["input_schema"]))
+
+
+def test_schema_errors_accepts_a_valid_reply_and_does_not_treat_bool_as_number():
+    assert schema_errors({"summary": "s", "has_new_argument": False, "ids": []}, SUMMARY_TOOL["input_schema"]) == []
+    assert schema_errors(True, {"type": "integer"})
+
+
+async def test_a_wrong_shape_reply_is_retried_with_the_problem_stated(tmp_path):
+    """Valid JSON of the wrong shape used to be returned as-is and blew up later in the runner."""
+    bad = tmp_path / "bad.json"
+    good = tmp_path / "good.json"
+    bad.write_text(_envelope('{"summary": "only this"}'))
+    good.write_text(_envelope('{"summary": "S", "has_new_argument": true}'))
+    seen = tmp_path / "prompts.txt"
+    # First call answers badly; the second (whose prompt now names the problem) answers correctly.
+    script = (f'printf "%s\\n---\\n" "$2" >> {seen}\n'
+              f'case "$2" in *rejected*) cat {good};; *) cat {bad};; esac\n')
+    client = ClaudeCliClient(binary=_fake_claude(tmp_path, script))
+    resp = await client.messages.create(model="m", max_tokens=1, system="s",
+                                        messages=[{"role": "user", "content": "q"}], tools=[SUMMARY_TOOL])
+    assert resp.content[0].input == {"summary": "S", "has_new_argument": True}
+    assert "missing required field 'has_new_argument'" in seen.read_text()
+
+
+async def test_a_reply_that_stays_the_wrong_shape_fails_clearly(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text(_envelope('{"summary": 5}'))
+    client = ClaudeCliClient(binary=_fake_claude(tmp_path, f"cat {bad}\n"))
+    with pytest.raises(ClaudeCliError, match="does not match the schema.*after retry"):
+        await client.messages.create(model="m", max_tokens=1, system="s",
+                                     messages=[{"role": "user", "content": "q"}], tools=[SUMMARY_TOOL])
