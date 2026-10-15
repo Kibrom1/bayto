@@ -1045,3 +1045,77 @@ async def test_build_turn_prompt_carries_the_task_workspace_and_the_verdict_cont
     assert "build pipeline" in prompt and "discussion" not in prompt
     assert "base branch develop" in prompt and "Test command: pytest -q" in prompt
     assert "VERDICT: <word>" in prompt
+
+
+async def test_build_pipeline_sends_a_bare_pass_back_and_tells_the_tester_why(tmp_path, live_sessionmaker):
+    from orchestrator.floor import PipelineFloorPolicy
+
+    session_id = await _make_session(live_sessionmaker)
+    for i, role in enumerate(["reviewer", "qa-tester", "developer", "architect"]):
+        await _seat(live_sessionmaker, session_id, role, i)
+    mode = ModeConfig(name="build", floor_policy="pipeline", roles={"moderator": None, "*": None},
+                      route=BUILD_ROUTE, moderator=None)
+    replies = {
+        "architect": ["Plan.\nVERDICT: planned"],
+        "developer": ["ok\nVERDICT: implemented"],
+        "qa-tester": ["Looks good.\nVERDICT: pass", "Ran `pytest -q`\nexit code: 0\n3 passed\nVERDICT: pass"],
+        "reviewer": ["ok\nVERDICT: approve"],
+    }
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, replies[role].pop(0))
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id, mode=mode,
+        policy=PipelineFloorPolicy(BUILD_ROUTE, require_evidence={"qa-tester.report.pass"}), on_wake=on_wake)
+
+    prompts = []
+    original = runner._build_context
+
+    async def spy(view):
+        text = await original(view)
+        prompts.append(text)
+        return text
+    runner._build_context = spy
+
+    result = await _run_to_stop(runner)
+
+    assert result.reason == "build-complete"
+    assert sandbox.woken == ["architect", "developer", "qa-tester", "qa-tester", "reviewer"]
+    retry_prompt = prompts[3]  # the tester's second turn
+    assert "without showing its work" in retry_prompt and "exit code" in retry_prompt
+    assert "NOTE:" not in prompts[4]  # the note does not leak into the reviewer's turn
+
+
+async def test_finished_build_session_gets_a_change_set_read_from_the_repo(tmp_path, live_sessionmaker):
+    import subprocess
+
+    from orchestrator.workspace import build_branch_name
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    g("init", "-q", "-b", "main"); g("config", "user.email", "t@e.com"); g("config", "user.name", "t")
+    (repo / "a.txt").write_text("a"); g("add", "."); g("commit", "-q", "-m", "init")
+
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path / "f", {
+        "architect": ["Plan.\nVERDICT: planned"], "developer": ["ok\nVERDICT: implemented"],
+        "qa-tester": ["`pytest -q`\nexit code: 0\n1 passed\nVERDICT: pass"], "reviewer": ["ok\nVERDICT: approve"],
+    }) if (tmp_path / "f").mkdir() is None else (None, None, None)
+    # the "developer" left a commit on the session's branch
+    g("switch", "-q", "-c", build_branch_name(session_id)); (repo / "new.py").write_text("1\n")
+    g("add", "."); g("commit", "-q", "-m", "feat: new"); g("switch", "-q", "main")
+    async with live_sessionmaker() as db:
+        task = await db.get(Task, (await db.get(Session, session_id)).task_id)
+        task.workspace = {"repo_path": str(repo), "base_branch": "main", "test_command": "pytest -q"}
+        await db.commit()
+
+    await _run_to_stop(runner)
+
+    async with live_sessionmaker() as db:
+        arts = (await db.execute(select(Artifact).where(Artifact.session_id == session_id))).scalars().all()
+    by_type = {a.type: a.content_json for a in arts}
+    assert set(by_type) == {"synthesis", "change_set"}
+    cs = by_type["change_set"]
+    assert cs["status"] == "ready_to_merge" and cs["commits"][0]["subject"] == "feat: new"
+    assert cs["tests"]["exit_code"] == 0 and cs["review"]["verdict"] == "approve"

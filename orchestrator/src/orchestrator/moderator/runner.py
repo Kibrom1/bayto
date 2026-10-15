@@ -68,9 +68,11 @@ from ..floor import (
     Parallel,
     PersonaBrief,
     StopRulesConfig,
+    evidence_ok,
     parse_verdict,
 )
 from .budget import session_usage
+from .change_set import build_change_set
 from .summarizer import Summarizer
 from .synthesizer import Synthesizer
 from .turn_summary import TurnSummary
@@ -106,6 +108,15 @@ _STOP_REASON_VALUES = {
 }
 
 _STREAK_LOOKBACK = 50  # bounds the speaking-time-cap query; a real streak can't exceed this in practice
+
+
+_RETRY_NOTES = {
+    "report-verdict": "your last reply had no `VERDICT: <word>` line, so the pipeline could not continue. Reply again, "
+                      "briefly, and end with the verdict line.",
+    "report-evidence": "your last reply reported a pass without showing its work. Show, for each command you ran: the "
+                       "command in backticks, its exit code (`exit code: 0`), and the last lines of its output. If you "
+                       "did not actually run it, run it now. If it exits non-zero, the verdict is fail.",
+}
 
 
 class ModeratorConfig(BaseModel):
@@ -157,6 +168,7 @@ class ModeratorRunner:
         # Build mode (pipeline): the architect starts, not a lap through every seat, so there is no opening pass.
         self._pipeline = mode.floor_policy == "pipeline"
         self._opening_done = self._pipeline
+        self._retry_note: str | None = None  # why this pipeline turn is a repeat (set per grant)
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
@@ -342,6 +354,7 @@ class ModeratorRunner:
                 agent = await session.get(Agent, last_turn.speaker_id)
                 last_speaker = agent.role if agent else None
             last_verdict = parse_verdict(last_turn.content) if (self._pipeline and last_turn is not None) else None
+            last_evidence_ok = bool(self._pipeline and last_turn is not None and evidence_ok(last_turn.content))
             turns_by_role: dict[str, int] = {}
             consecutive_same_speaker = 0
             if self._pipeline:
@@ -379,6 +392,7 @@ class ModeratorRunner:
             last_verdict=last_verdict,
             turns_by_role=turns_by_role,
             consecutive_same_speaker=consecutive_same_speaker,
+            last_evidence_ok=last_evidence_ok,
         )
 
     async def _grants_this_window(self, session) -> dict[str, int]:
@@ -561,6 +575,7 @@ class ModeratorRunner:
 
     async def _handle_grant(self, view: ConversationView, decision: Grant) -> None:
         participant = decision.participant
+        self._retry_note = _RETRY_NOTES.get(decision.reason or "")
         context = await self._build_context(view)
         await self._conversation.send(sender=self._mode.moderator or "moderator", to=[participant],
                                        kind="assignment", body=context)
@@ -754,6 +769,8 @@ class ModeratorRunner:
         if prev_summaries:
             lines += ["Previous Session Context:", *prev_summaries, ""]
         lines += [f"Rolling summary: {summary or '(none yet)'}", "", "Previous steps (full text):", *view.recent_transcript, ""]
+        if self._retry_note:
+            lines += [f"NOTE: {self._retry_note}", ""]
         lines.append("End your reply with exactly one line of the form `VERDICT: <word>` using the words your role "
                      "brief gives you. The pipeline routes on that line; without it your turn is repeated.")
         return "\n".join(lines)
@@ -928,6 +945,8 @@ class ModeratorRunner:
 
             session.add(Artifact(session_id=self._session_id, type="synthesis",
                                   content_json=result.content_json, source_turn_ids=result.source_turn_ids))
+            if self._pipeline:
+                await self._add_change_set(session, reason, all_turns_rows, result.content_json)
             if result.minority_report is not None:
                 session.add(Artifact(session_id=self._session_id, type="minority_report",
                                       content_json=result.minority_report,
@@ -937,6 +956,28 @@ class ModeratorRunner:
             row.stop_reason = _STOP_REASON_VALUES.get(reason, reason)
             row.ended_at = datetime.now(timezone.utc)
             await session.commit()
+
+    async def _add_change_set(self, session, reason: str, turn_rows, synthesis: dict) -> None:
+        """Build mode: attach the `change_set` artifact read from the repo's branch. Best effort: a git
+        problem must never stop the session from finishing, so it is logged and skipped."""
+        try:
+            row = await session.get(SessionRow, self._session_id)
+            task = await session.get(Task, row.task_id)
+            if not (task and task.workspace):
+                return
+            turns = []
+            for t in turn_rows:
+                agent = await session.get(Agent, t.speaker_id)
+                turns.append((agent.role if agent else "", t.content or ""))
+            content = await asyncio.to_thread(
+                build_change_set, workspace=task.workspace, session_id=self._session_id,
+                stop_reason=_STOP_REASON_VALUES.get(reason, reason), turns=turns,
+                summary=(synthesis or {}).get("summary") if isinstance(synthesis, dict) else None)
+            if content is not None:
+                session.add(Artifact(session_id=self._session_id, type="change_set", content_json=content,
+                                      source_turn_ids=[t.id for t in turn_rows]))
+        except Exception:
+            log.exception("session %s: could not build the change set", self._session_id)
 
     async def _end_without_synthesis(self, stop_reason: str) -> None:
         """The stop triggers that must NOT run the Synthesizer: M2.8's /stop with

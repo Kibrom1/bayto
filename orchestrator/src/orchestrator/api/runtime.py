@@ -41,7 +41,8 @@ from ..conversation import OrchestratorConversation
 from ..floor import PipelineFloorPolicy, RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
 from ..floor.scorer import HandRaiseScorer
 from ..mirror import MessageMirror
-from ..models import Agent, Mode, Session, SessionAgent
+from ..build_policy import build_seat_tools
+from ..models import Agent, Mode, Session, SessionAgent, Task
 from ..moderator import ModeratorRunner, Summarizer, Synthesizer
 from ..modes_registry import resolve_mode
 from ..pubsub import PubSub
@@ -180,10 +181,14 @@ async def launch_runner(
                 .where(SessionAgent.session_id == session_id, SessionAgent.removed_at.is_(None))
                 .order_by(SessionAgent.seat_order)
             )).all()
-            seats = [SeatSpec(role=a.role or a.name, name=a.name,
-                              brief="\n\n".join(x for x in (a.system_prompt, f"Stance: {a.stance}" if a.stance else "") if x),
-                              model=sa.model or a.model, tools=tuple(a.tools or ()))
-                     for sa, a in rows]
+            workspace = (await db.get(Task, task_id)).workspace
+            seats = []
+            for sa, a in rows:
+                tools, deny = build_seat_tools(a.role or a.name, tuple(a.tools or ()), workspace)
+                seats.append(SeatSpec(
+                    role=a.role or a.name, name=a.name,
+                    brief="\n\n".join(x for x in (a.system_prompt, f"Stance: {a.stance}" if a.stance else "") if x),
+                    model=sa.model or a.model, tools=tools, deny=deny))
 
         mode_config = resolve_mode(mode_row.name)  # re-validated here; the eager POST /sessions
                                                     # check doesn't guarantee the file is unchanged
@@ -209,7 +214,8 @@ async def launch_runner(
             scorer = scorer_factory()
         elif mode_config.floor_policy == "pipeline":
             policy = PipelineFloorPolicy(mode_config.route,
-                                         max_fix_cycles=StopRulesConfig.from_mode(mode_config).max_fix_cycles)
+                                         max_fix_cycles=StopRulesConfig.from_mode(mode_config).max_fix_cycles,
+                                         require_evidence=set(StopRulesConfig.from_mode(mode_config).require_evidence))
             scorer = None
         else:
             policy = RoundRobinFloorPolicy()

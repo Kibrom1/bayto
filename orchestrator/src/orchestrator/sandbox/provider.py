@@ -56,6 +56,7 @@ class SeatSpec:
     brief: str  # the persona's system prompt and stance, written into the seat's role brief
     model: str | None = None
     tools: tuple[str, ...] = ()  # extra Claude tools the seat may use, on top of read-only
+    deny: tuple[str, ...] = ()  # tools the seat is refused even if allowed elsewhere (Build mode's denylist)
 
 
 @dataclass(frozen=True, slots=True)

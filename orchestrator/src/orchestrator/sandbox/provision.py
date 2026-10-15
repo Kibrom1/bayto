@@ -42,7 +42,7 @@ def write_catalog(seats: list[SeatSpec], roles_dir: Path, roster_file: Path) -> 
             continue
         ids.append(rid)
         allow = READ_ONLY + [t for t in seat.tools if t not in READ_ONLY]
-        deny = [t for t in GATED if t not in allow]
+        deny = [t for t in GATED if t not in allow] + [t for t in seat.deny if t not in allow]
         (roles_dir / f"{rid}.yaml").write_text(yaml.safe_dump({
             "id": rid, "name": seat.name, "responsibility": f"{seat.name} takes part in the discussion.",
             "brief": f"roles/{rid}.md",

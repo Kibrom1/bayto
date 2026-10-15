@@ -47,7 +47,7 @@ Stop rules: `max_fix_cycles: 3` (then `needs_human`, not failure), per-turn wall
 | --- | --- | --- |
 | Architect | Read, Grep, Glob | Write, Edit, Bash except `acp` |
 | Developer | Read, Grep, Glob, Write, Edit, `Bash(git add/commit/status/diff/log)`, the project's test and build commands | `git push`, `git remote`, `rm -rf`, `curl`/`wget`, WebFetch, anything outside the worktree |
-| Tester | Read, Grep, Glob, Bash(test command), Write/Edit **only under test directories** | other writes, git commit |
+| Tester | Read, Grep, Glob, Bash(test command), read-only git | all writes, git commit |
 | Reviewer | Read, Grep, Glob, `Bash(git diff/log/show)` | Write, Edit |
 
 Implemented as new generated `tool-flags/<role>` files per mode. A missing flag file keeps today's behavior: the turn refuses to run. Network egress stays on the sandbox allowlist (package registries only).
@@ -107,3 +107,12 @@ About 10 working days. B3 and B5 carry the risk; B2 needs the Mac's `sbx`.
 3. **Commit policy:** the developer commits per logical step, or one commit at the end? Recommend per step, so the diff is reviewable and revertable.
 4. **PR creation** stays out of the MVP (needs a GitHub credential in the sandbox). OK?
 5. **Roster:** fixed four roles, or let the user add specialists such as UX and E2E tester? Recommend a default four with extras allowed, as read-only reviewers.
+
+## Decisions made while building (2026-10-15)
+
+- The tester does **not** write files. Path-scoped rules such as `Write(tests/**)` are unverified under `claude -p`, and an unscoped Write is not a "tests only" seat. The developer writes the tests; the tester fails the build when they are missing.
+- Role keys are `build-architect`, `build-developer`, `build-tester`, `build-reviewer`, so they never overwrite the discussion templates.
+- Routing is on a `VERDICT: <word>` line at the end of each turn, parsed by the orchestrator (not an envelope field).
+- A tester `pass` must show a command and an exit code of 0 (`require_evidence` in the mode's `stop_rules`); otherwise the turn is repeated once with a note saying why, then the session pauses for a person.
+- The test command is limited to plain steps joined by `&&` (no pipes, redirects, `;`, `$(...)`), checked when the task is created, because each step becomes an allow rule.
+- The session's branch is `bayto/build-<first 8 chars of the session id>`; the `change_set` artifact reads it from git.

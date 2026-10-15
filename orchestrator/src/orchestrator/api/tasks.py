@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..models import Artifact, Session, Task
+from ..build_policy import parse_test_command
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
 from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
@@ -82,6 +83,12 @@ async def create_task(
 ) -> TaskCreateResponse:
     workspace = None
     if req.workspace is not None:
+        if req.workspace.test_command:
+            try:
+                parse_test_command(req.workspace.test_command)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail={"error": {
+                    "code": "workspace_bad_test_command", "detail": str(exc), "field": "workspace"}})
         rep = await asyncio.to_thread(preflight_workspace, req.workspace.repo_path, req.workspace.base_branch)
         if not rep.ok:
             # Dirty trees are fine here; a Build session checks again when it starts.
