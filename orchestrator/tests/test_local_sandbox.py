@@ -481,3 +481,73 @@ def test_parse_sbx_ls_tolerates_the_shapes_the_cli_may_print():
     assert _parse_sbx_ls('[{"name": "a", "status": "running"}]') == {"a": "running"}
     assert _parse_sbx_ls('{"sandboxes": [{"Name": "b", "State": "stopped"}]}') == {"b": "stopped"}
     assert _parse_sbx_ls('{"count": 0}') == {}
+
+
+# ---------------------------------------------------------------- cancelling a streamed turn, repeated wakes
+
+class _BlockingStream:
+    """A subprocess stand-in: next() blocks until kill() is called, like a `claude -p` still generating."""
+
+    def __init__(self):
+        import threading
+        self._released = threading.Event()
+        self.killed = False
+        self.closed = False
+        self.inside_next = threading.Event()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.inside_next.set()
+        self._released.wait(10)
+        raise StopIteration
+
+    def kill(self):
+        self.killed = True
+        self._released.set()
+
+    def close(self):
+        self.closed = True
+
+
+async def test_cancelling_a_streamed_turn_is_clean(live_sessionmaker):
+    """Pause then Resume cancelled a runner mid-turn. Closing the stream while a worker thread was still
+    inside next() raised ValueError("generator already executing"), which replaced the CancelledError;
+    the runner swallowed it and carried on as a second runner. Cancellation must stay a cancellation."""
+    import asyncio
+
+    stream = _BlockingStream()
+
+    class R(FakeSbxRunner):
+        def stream(self, argv, *, stdin):
+            return stream
+
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=R())
+    task = asyncio.create_task(_collect(provider))
+    for _ in range(100):
+        if stream.inside_next.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert stream.inside_next.is_set()
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=5)
+    assert stream.killed and stream.closed  # the subprocess is ended, nothing is left running
+
+
+async def test_wake_role_treats_an_already_notified_seat_as_success():
+    already = subprocess.CompletedProcess(["x"], returncode=9, stdout="",
+                                          stderr="crew-notify: historian was already notified for notify:manual:historian")
+    runner = FakeSbxRunner({"exec crew-notify": already})
+    provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
+    await provider.wake_role(_fake_info(name="sbx-1"), "historian")  # must not raise
+
+
+async def test_wake_role_still_raises_on_other_failures():
+    other = subprocess.CompletedProcess(["x"], returncode=1, stdout="", stderr="boom")
+    runner = FakeSbxRunner({"exec crew-notify": other})
+    provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
+    with pytest.raises(SandboxCommandError):
+        await provider.wake_role(_fake_info(name="sbx-1"), "historian")

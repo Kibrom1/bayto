@@ -787,3 +787,36 @@ async def test_get_artifacts_empty_then_returns_synthesis(client, live_sessionma
     body = (await client.get(f"/sessions/{session_id}/artifacts")).json()
     assert [a["type"] for a in body["artifacts"]] == ["synthesis"]
     assert body["artifacts"][0]["content_json"] == {"recommendation": "ship weekly"}
+
+
+# ---------------------------------------------------------------- retiring a runner lets its turn finish
+
+async def test_retire_lets_an_in_flight_turn_finish_before_cancelling():
+    from orchestrator.api.runtime import SessionRuntime, _retire_runtime
+
+    finished = []
+
+    async def runner():
+        await asyncio.sleep(0.2)  # the paused runner's last turn
+        finished.append(True)
+
+    async def forever():
+        await asyncio.sleep(60)
+
+    rt = SessionRuntime(conversation=None, pubsub=None, mirror_task=asyncio.create_task(forever()),
+                        runner_task=asyncio.create_task(runner()))
+    await _retire_runtime(rt, grace=5.0)
+    assert finished == [True]  # not cancelled mid-turn
+    assert rt.runner_task.done() and rt.mirror_task.cancelled()
+
+
+async def test_retire_cancels_a_runner_that_does_not_stop_within_the_grace():
+    from orchestrator.api.runtime import SessionRuntime, _retire_runtime
+
+    async def forever():
+        await asyncio.sleep(60)
+
+    rt = SessionRuntime(conversation=None, pubsub=None, mirror_task=asyncio.create_task(forever()),
+                        runner_task=asyncio.create_task(forever()))
+    await asyncio.wait_for(_retire_runtime(rt, grace=0.2), timeout=5)
+    assert rt.runner_task.cancelled() and rt.mirror_task.cancelled()
