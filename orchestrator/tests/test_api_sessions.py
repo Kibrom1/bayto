@@ -641,6 +641,22 @@ async def test_resume_retires_the_old_mirror_and_the_discussion_continues(client
     await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
 
 
+async def test_a_finished_session_stops_its_mirror(client, live_sessionmaker, tmp_path):
+    """The mirror used to poll forever after its session ended, one leaked task per finished session."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(a), "seat_order": i} for i, a in enumerate(agent_ids)],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    _wire_fakes(FakeSandboxProvider(on_wake=_auto_responder(tmp_path / "sessions", {"id": session_id})))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
+    runtime = app.state.session_runtimes[session_id]
+    await asyncio.wait_for(asyncio.gather(runtime.mirror_task, return_exceptions=True), timeout=5.0)
+    assert runtime.mirror_task.done()
+
+
 # ---------------------------------------------------------------- GET /sessions/{id} (M3.1)
 
 async def test_get_session_returns_404_for_an_unknown_session(client, live_sessionmaker):

@@ -84,6 +84,21 @@ _CRASHABLE = ("starting", "active", "stopping", "cancelling")
 _failure_tasks: set[asyncio.Task] = set()  # strong refs: the loop only keeps weak ones
 
 
+_cleanup_tasks: set[asyncio.Task] = set()  # strong refs to mirror-release tasks
+
+
+async def _stop_mirror_after_run(mirror, mirror_task: asyncio.Task) -> None:
+    """Once a runner has ended (finished, stopped, paused, crashed) its mirror has nothing left to
+    watch. Stop the poll loop, then do one last poll so replies written just before the end are still
+    recorded and published. Without this every finished session leaked a polling task until restart."""
+    mirror_task.cancel()
+    await asyncio.gather(mirror_task, return_exceptions=True)
+    try:
+        await mirror.poll_once()
+    except Exception:
+        log.exception("final mirror poll failed")
+
+
 def _on_runner_done(task: asyncio.Task, session_id: uuid.UUID, sessionmaker: async_sessionmaker) -> None:
     """A ModeratorRunner that dies with an exception used to vanish: the exception was only logged when
     the task was garbage-collected, and the session stayed `active` forever with no turns. Record it
@@ -207,6 +222,13 @@ async def launch_runner(
         mirror_task = asyncio.create_task(mirror.run_forever())
         runner_task = asyncio.create_task(runner.run())
         runner_task.add_done_callback(lambda t: _on_runner_done(t, session_id, sessionmaker))
+
+        def _release_mirror(_t: asyncio.Task) -> None:
+            t = asyncio.get_running_loop().create_task(_stop_mirror_after_run(mirror, mirror_task))
+            _cleanup_tasks.add(t)
+            t.add_done_callback(_cleanup_tasks.discard)
+
+        runner_task.add_done_callback(_release_mirror)
         running_sessions[session_id] = runner_task
         session_runtimes[session_id] = SessionRuntime(conversation=conversation, pubsub=pubsub,
                                                         mirror_task=mirror_task, runner_task=runner_task)

@@ -118,3 +118,6 @@ h1, h2, h3, h4 { color: var(--ink); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* The sticky header must not cover an element scrolled or focused into view. */
+html { scroll-padding-top: calc(var(--shell-h) + var(--space-4)); }
