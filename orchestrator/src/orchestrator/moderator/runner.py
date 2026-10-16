@@ -45,7 +45,7 @@ from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
 from opentelemetry import trace
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
@@ -68,9 +68,11 @@ from ..floor import (
     Parallel,
     PersonaBrief,
     StopRulesConfig,
+    evidence_ok,
     parse_verdict,
 )
 from .budget import session_usage
+from .change_set import build_change_set
 from .summarizer import Summarizer
 from .synthesizer import Synthesizer
 from .turn_summary import TurnSummary
@@ -80,6 +82,8 @@ tracer = trace.get_tracer(__name__)
 
 STATUS_ACTIVE = "active"
 STATUS_NEEDS_HUMAN = "needs_human"
+_MAX_HUMAN_NOTES = 5  # most recent notes shown in one prompt
+_MAX_HUMAN_NOTE_CHARS = 2000
 STATUS_FINISHED = "finished"
 # M2.8's POST /sessions/{id}/stop writes one of these two (never "needs_human", which
 # means something different -- a pause, not a stop request). STATUS_STOPPING is the
@@ -106,6 +110,15 @@ _STOP_REASON_VALUES = {
 }
 
 _STREAK_LOOKBACK = 50  # bounds the speaking-time-cap query; a real streak can't exceed this in practice
+
+
+_RETRY_NOTES = {
+    "report-verdict": "your last reply had no `VERDICT: <word>` line, so the pipeline could not continue. Reply again, "
+                      "briefly, and end with the verdict line.",
+    "report-evidence": "your last reply reported a pass without showing its work. Show, for each command you ran: the "
+                       "command in backticks, its exit code (`exit code: 0`), and the last lines of its output. If you "
+                       "did not actually run it, run it now. If it exits non-zero, the verdict is fail.",
+}
 
 
 class ModeratorConfig(BaseModel):
@@ -157,9 +170,11 @@ class ModeratorRunner:
         # Build mode (pipeline): the architect starts, not a lap through every seat, so there is no opening pass.
         self._pipeline = mode.floor_policy == "pipeline"
         self._opening_done = self._pipeline
+        self._retry_note: str | None = None  # why this pipeline turn is a repeat (set per grant)
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
+        self._grant_notes = ""  # human notes this grant's prompt carries; set once per grant (see _human_notes_for)
         # M2.12: phase machine state
         self._current_phase_index = 0
         self._turns_in_phase = 0
@@ -342,6 +357,7 @@ class ModeratorRunner:
                 agent = await session.get(Agent, last_turn.speaker_id)
                 last_speaker = agent.role if agent else None
             last_verdict = parse_verdict(last_turn.content) if (self._pipeline and last_turn is not None) else None
+            last_evidence_ok = bool(self._pipeline and last_turn is not None and evidence_ok(last_turn.content))
             turns_by_role: dict[str, int] = {}
             consecutive_same_speaker = 0
             if self._pipeline:
@@ -379,6 +395,7 @@ class ModeratorRunner:
             last_verdict=last_verdict,
             turns_by_role=turns_by_role,
             consecutive_same_speaker=consecutive_same_speaker,
+            last_evidence_ok=last_evidence_ok,
         )
 
     async def _grants_this_window(self, session) -> dict[str, int]:
@@ -561,6 +578,8 @@ class ModeratorRunner:
 
     async def _handle_grant(self, view: ConversationView, decision: Grant) -> None:
         participant = decision.participant
+        self._retry_note = _RETRY_NOTES.get(decision.reason or "")
+        self._grant_notes = await self._human_notes_for(participant)
         context = await self._build_context(view)
         await self._conversation.send(sender=self._mode.moderator or "moderator", to=[participant],
                                        kind="assignment", body=context)
@@ -705,6 +724,38 @@ class ModeratorRunner:
                 lines.append(f"Test command: {ws['test_command']}")
         return "\n".join(lines)
 
+    async def _human_notes_for(self, participant: str) -> str:
+        """What the human said since `participant` was last given the floor, as a prompt block ('' if nothing).
+
+        Stateless on purpose: the anchor is the participant's own latest assignment, so a retried turn
+        sees the same notes again, a note sent while the participant is mid-turn shows up on its next
+        turn, and a resumed session needs no saved state. Computed once per grant (a streamed turn builds
+        its prompt a second time, after the assignment exists). A note sent only a moment before the grant
+        can miss it if the mirror has not recorded it yet; the next grant will not recover that note."""
+        async with self._sessionmaker() as session:
+            anchor = await session.scalar(
+                select(func.max(MessageRow.seq)).where(
+                    MessageRow.session_id == self._session_id,
+                    MessageRow.kind == "assignment",
+                    participant == any_(MessageRow.to)))
+            rows = (await session.execute(
+                select(MessageRow).where(
+                    MessageRow.session_id == self._session_id,
+                    MessageRow.from_ == "human",
+                    MessageRow.kind == "note",
+                    MessageRow.seq > (anchor or 0),
+                ).order_by(MessageRow.seq))).scalars().all()
+        notes = [r for r in rows if "*" in r.to or participant in r.to][-_MAX_HUMAN_NOTES:]
+        if not notes:
+            return ""
+        lines = ["MESSAGE FROM THE HUMAN running this session. They can see the discussion and are steering it. "
+                 "Follow what they say; where it conflicts with the plan so far, it wins, and say so in your reply."]
+        for r in notes:
+            target = "" if "*" in r.to else " (addressed to you)"
+            lines.append(f"> {r.body.strip()[:_MAX_HUMAN_NOTE_CHARS]}{target}")
+        lines.append("")
+        return "\n".join(lines)
+
     async def _build_context(self, view: ConversationView) -> str:
         task_text = await self._task_text()
         async with self._sessionmaker() as session:
@@ -718,6 +769,15 @@ class ModeratorRunner:
                 .order_by(SessionRow.started_at.desc())
             )).all()
             prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
+            if self._pipeline:
+                # "Continue as Build": an earlier discussion's final synthesis is the brief to build from
+                # (the rolling summary alone drops the decision and the dissent).
+                earlier = (await session.execute(
+                    select(Artifact.content_json).join(SessionRow, SessionRow.id == Artifact.session_id)
+                    .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id,
+                           Artifact.type == "synthesis").order_by(SessionRow.started_at.desc())
+                )).scalars().all()
+                prev_summaries += [f"Earlier synthesis: {json.dumps(c)[:6000]}" for c in earlier]
 
         if self._pipeline:
             return self._pipeline_context(task_text, summary, prev_summaries, view)
@@ -728,6 +788,8 @@ class ModeratorRunner:
                          "working on; contribute your own view on it, building on what others have said.")
             lines.append(task_text)
             lines.append("")
+        if self._grant_notes:
+            lines.append(self._grant_notes)
         if prev_summaries:
             lines.append("Previous Session Context:")
             lines.extend(prev_summaries)
@@ -751,9 +813,13 @@ class ModeratorRunner:
         pipeline floor policy routes on. The role brief (system prompt) says what the role does."""
         lines = ["You are one step in a build pipeline with other agents. Do your role's job on this task, "
                  "in the shared workspace, and report what you did.", task_text, ""]
+        if self._grant_notes:
+            lines.append(self._grant_notes)
         if prev_summaries:
             lines += ["Previous Session Context:", *prev_summaries, ""]
         lines += [f"Rolling summary: {summary or '(none yet)'}", "", "Previous steps (full text):", *view.recent_transcript, ""]
+        if self._retry_note:
+            lines += [f"NOTE: {self._retry_note}", ""]
         lines.append("End your reply with exactly one line of the form `VERDICT: <word>` using the words your role "
                      "brief gives you. The pipeline routes on that line; without it your turn is repeated.")
         return "\n".join(lines)
@@ -928,6 +994,8 @@ class ModeratorRunner:
 
             session.add(Artifact(session_id=self._session_id, type="synthesis",
                                   content_json=result.content_json, source_turn_ids=result.source_turn_ids))
+            if self._pipeline:
+                await self._add_change_set(session, reason, all_turns_rows, result.content_json)
             if result.minority_report is not None:
                 session.add(Artifact(session_id=self._session_id, type="minority_report",
                                       content_json=result.minority_report,
@@ -937,6 +1005,28 @@ class ModeratorRunner:
             row.stop_reason = _STOP_REASON_VALUES.get(reason, reason)
             row.ended_at = datetime.now(timezone.utc)
             await session.commit()
+
+    async def _add_change_set(self, session, reason: str, turn_rows, synthesis: dict) -> None:
+        """Build mode: attach the `change_set` artifact read from the repo's branch. Best effort: a git
+        problem must never stop the session from finishing, so it is logged and skipped."""
+        try:
+            row = await session.get(SessionRow, self._session_id)
+            task = await session.get(Task, row.task_id)
+            if not (task and task.workspace):
+                return
+            turns = []
+            for t in turn_rows:
+                agent = await session.get(Agent, t.speaker_id)
+                turns.append((agent.role if agent else "", t.content or ""))
+            content = await asyncio.to_thread(
+                build_change_set, workspace=task.workspace, session_id=self._session_id,
+                stop_reason=_STOP_REASON_VALUES.get(reason, reason), turns=turns,
+                summary=(synthesis or {}).get("summary") if isinstance(synthesis, dict) else None)
+            if content is not None:
+                session.add(Artifact(session_id=self._session_id, type="change_set", content_json=content,
+                                      source_turn_ids=[t.id for t in turn_rows]))
+        except Exception:
+            log.exception("session %s: could not build the change set", self._session_id)
 
     async def _end_without_synthesis(self, stop_reason: str) -> None:
         """The stop triggers that must NOT run the Synthesizer: M2.8's /stop with

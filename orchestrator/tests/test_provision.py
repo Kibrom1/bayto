@@ -87,3 +87,39 @@ async def test_create_uses_the_provisioner_instead_of_env_create(live_sessionmak
     assert calls == [("sbx-p", ["pm", "qa-tester", "pm"])]
     assert runner.calls == []  # no bare `sbx env create`
     assert info.name == "sbx-p" and info.status == "running"
+
+
+def test_workspace_reaches_the_launcher_as_an_env_var(tmp_path):
+    (tmp_path / "dev-team").mkdir()
+    (tmp_path / "dev-team" / "run.sh").write_text('echo "${BAYTO_WORKSPACE_REPO:-unset}" > "$0.ws"\n')
+    run = tmp_path / "dev-team" / "run.sh"
+    asyncio.run(provision_team_sandbox("sbx-3", SEATS, repo_root=tmp_path))
+    assert Path(f"{run}.ws").read_text().strip() == "unset"
+    asyncio.run(provision_team_sandbox("sbx-3", SEATS, repo_root=tmp_path, workspace="/work/proj"))
+    assert Path(f"{run}.ws").read_text().strip() == "/work/proj"
+
+
+def test_the_real_launcher_mounts_the_workspace_when_given_one():
+    script = (Path(__file__).resolve().parents[2] / "dev-team" / "run.sh").read_text()
+    assert 'mount="${BAYTO_WORKSPACE_REPO:-$repo}"' in script
+    assert 'launch-factory.sh" "$name" "$mount"' in script
+
+
+async def test_create_passes_the_workspace_only_when_there_is_one(live_sessionmaker):
+    from orchestrator.models import Task
+    from test_local_sandbox import FakeSbxRunner
+
+    calls = []
+
+    async def provisioner(name, seats, **kw):
+        calls.append(kw)
+
+    async with live_sessionmaker() as db:
+        t1, t2 = Task(title="a", brief="b", output_type="x"), Task(title="c", brief="d", output_type="x")
+        db.add_all([t1, t2])
+        await db.commit()
+        ids = (t1.id, t2.id)
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=FakeSbxRunner(), provisioner=provisioner)
+    await provider.create(ids[0], name="sbx-w1", seats=SEATS, workspace="/work/proj")
+    await provider.create(ids[1], name="sbx-w2", seats=SEATS)
+    assert calls == [{"workspace": "/work/proj"}, {}]

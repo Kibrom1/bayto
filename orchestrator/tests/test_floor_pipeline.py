@@ -91,3 +91,44 @@ def test_missing_or_muted_next_seat_asks_a_human():
 def test_route_needs_a_start_entry():
     with pytest.raises(ValueError):
         PipelineFloorPolicy({"architect.report.planned": "developer"})
+
+
+# ---------------------------------------------------------------- B6: evidence for a pass
+
+from orchestrator.floor import evidence_ok  # noqa: E402
+
+GOOD = "Ran `pytest -q`\nexit code: 0\n12 passed in 1.2s\nVERDICT: pass"
+
+
+@pytest.mark.parametrize("text,ok", [
+    (GOOD, True),
+    ("```\n$ npm test\n```\nexited with 0", True),
+    ("$ make test\nExit status 0", True),
+    ("All tests pass.\nVERDICT: pass", False),                      # no command, no exit code
+    ("Ran `pytest`; looks good", False),                            # command but no exit code
+    ("exit code: 0 (trust me)", False),                              # exit code but no command
+    ("`pytest` exit code: 1\n`pytest -k x` exit code: 0", False),   # any non-zero exit contradicts a pass
+    ("", False), (None, False),
+])
+def test_evidence_ok(text, ok):
+    assert evidence_ok(text) is ok
+
+
+def pol():
+    return PipelineFloorPolicy(ROUTE, require_evidence={"qa-tester.report.pass"})
+
+
+def test_a_bare_pass_is_sent_back_to_the_tester_then_escalated():
+    assert pol().next(view("qa-tester", "pass", consecutive=1), []) == Grant(participant="qa-tester", reason="report-evidence")
+    d = pol().next(view("qa-tester", "pass", consecutive=2), [])
+    assert isinstance(d, AskHuman) and "exit code of 0" in d.reason
+
+
+def test_a_pass_with_evidence_moves_on():
+    v = view("qa-tester", "pass")
+    v.last_evidence_ok = True
+    assert pol().next(v, []).participant == "reviewer"
+
+
+def test_a_fail_needs_no_evidence_check():
+    assert pol().next(view("qa-tester", "fail", turns={"developer": 1}), []).participant == "developer"

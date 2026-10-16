@@ -19,6 +19,8 @@ from acp.floor import HandRaise
 from .types import AskHuman, ConversationView, Done, FloorDecision, Grant
 
 _VERDICT_RE = re.compile(r"^\s*\**VERDICT\**\s*:\s*\**\s*([A-Za-z][A-Za-z_-]*)\s*\**\s*$", re.IGNORECASE | re.MULTILINE)
+_EXIT_RE = re.compile(r"\bexit(?:ed)?(?:\s+(?:code|status))?\s*(?:with\s+)?(?:code\s+)?[:=]?\s*(-?\d+)", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"```|`[^`\n]+`|^\s*\$ \S", re.MULTILINE)
 MAX_MISSING_VERDICT_RETRIES = 2  # consecutive turns by the same role before we stop and ask
 
 
@@ -28,12 +30,22 @@ def parse_verdict(text: str | None) -> str | None:
     return matches[-1].lower().replace("_", "-") if matches else None
 
 
+def evidence_ok(text: str | None) -> bool:
+    """A passing report shows its work: at least one command (code fence, backticks or a `$ ` line) and at
+    least one exit code, all of them 0. A deterministic check, not a judgement; a miss costs one retry."""
+    text = text or ""
+    codes = [int(c) for c in _EXIT_RE.findall(text)]
+    return bool(codes) and all(c == 0 for c in codes) and bool(_COMMAND_RE.search(text))
+
+
 class PipelineFloorPolicy:
-    def __init__(self, route: dict[str, str], *, max_fix_cycles: int = 3) -> None:
+    def __init__(self, route: dict[str, str], *, max_fix_cycles: int = 3,
+                 require_evidence: set[str] | frozenset[str] = frozenset()) -> None:
         if "start" not in route:
             raise ValueError("a pipeline route table needs a 'start' entry")
         self._route = route
         self._max_turns = max_fix_cycles + 1
+        self._require_evidence = set(require_evidence)  # route keys whose report must show command + exit code 0
 
     def next(self, view: ConversationView, raised: list[HandRaise]) -> FloorDecision | None:
         if view.last_speaker is None:
@@ -46,6 +58,11 @@ class PipelineFloorPolicy:
                                    "without a VERDICT line")
 
         key = f"{view.last_speaker}.report.{view.last_verdict}"
+        if key in self._require_evidence and not view.last_evidence_ok:
+            if view.consecutive_same_speaker < MAX_MISSING_VERDICT_RETRIES:
+                return Grant(participant=view.last_speaker, reason="report-evidence")
+            return AskHuman(reason=f"{view.last_speaker} reported '{view.last_verdict}' twice without showing the "
+                                   "command it ran and an exit code of 0")
         target = self._route.get(key)
         if target is None:
             return AskHuman(reason=f"{view.last_speaker} reported '{view.last_verdict}', which this pipeline "

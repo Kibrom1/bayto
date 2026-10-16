@@ -27,6 +27,8 @@ stop_rules:
   # allowed path (3 fix cycles, each ending in a test or review) is well under this.
   max_rounds: 30
   max_fix_cycles: 3
+  # A tester's "pass" must show the command it ran and an exit code of 0, or the turn is repeated.
+  require_evidence: [build-tester.report.pass]
   # Staleness is ignored by the pipeline; kept so the shared config parses with its defaults.
   stale_argument_turns: 3
 synthesis_prompt_hint: >

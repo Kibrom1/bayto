@@ -7,6 +7,7 @@ export interface Task {
   status: string | null
   last_session_id: string | null
   output_artifact_id: string | null
+  workspace?: { repo_path: string; base_branch: string; test_command?: string | null } | null
 }
 
 export interface BudgetIn {

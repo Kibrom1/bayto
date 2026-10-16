@@ -15,7 +15,7 @@ from acp import PermissionError_
 from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
 from acp.transport import FileTransport
-from sqlalchemy import select
+from sqlalchemy import any_, select
 
 from orchestrator.conversation import OrchestratorConversation
 from orchestrator.floor import RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
@@ -1045,3 +1045,160 @@ async def test_build_turn_prompt_carries_the_task_workspace_and_the_verdict_cont
     assert "build pipeline" in prompt and "discussion" not in prompt
     assert "base branch develop" in prompt and "Test command: pytest -q" in prompt
     assert "VERDICT: <word>" in prompt
+
+
+async def test_build_pipeline_sends_a_bare_pass_back_and_tells_the_tester_why(tmp_path, live_sessionmaker):
+    from orchestrator.floor import PipelineFloorPolicy
+
+    session_id = await _make_session(live_sessionmaker)
+    for i, role in enumerate(["reviewer", "qa-tester", "developer", "architect"]):
+        await _seat(live_sessionmaker, session_id, role, i)
+    mode = ModeConfig(name="build", floor_policy="pipeline", roles={"moderator": None, "*": None},
+                      route=BUILD_ROUTE, moderator=None)
+    replies = {
+        "architect": ["Plan.\nVERDICT: planned"],
+        "developer": ["ok\nVERDICT: implemented"],
+        "qa-tester": ["Looks good.\nVERDICT: pass", "Ran `pytest -q`\nexit code: 0\n3 passed\nVERDICT: pass"],
+        "reviewer": ["ok\nVERDICT: approve"],
+    }
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, replies[role].pop(0))
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id, mode=mode,
+        policy=PipelineFloorPolicy(BUILD_ROUTE, require_evidence={"qa-tester.report.pass"}), on_wake=on_wake)
+
+    prompts = []
+    original = runner._build_context
+
+    async def spy(view):
+        text = await original(view)
+        prompts.append(text)
+        return text
+    runner._build_context = spy
+
+    result = await _run_to_stop(runner)
+
+    assert result.reason == "build-complete"
+    assert sandbox.woken == ["architect", "developer", "qa-tester", "qa-tester", "reviewer"]
+    retry_prompt = prompts[3]  # the tester's second turn
+    assert "without showing its work" in retry_prompt and "exit code" in retry_prompt
+    assert "NOTE:" not in prompts[4]  # the note does not leak into the reviewer's turn
+
+
+async def test_finished_build_session_gets_a_change_set_read_from_the_repo(tmp_path, live_sessionmaker):
+    import subprocess
+
+    from orchestrator.workspace import build_branch_name
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    g("init", "-q", "-b", "main"); g("config", "user.email", "t@e.com"); g("config", "user.name", "t")
+    (repo / "a.txt").write_text("a"); g("add", "."); g("commit", "-q", "-m", "init")
+
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path / "f", {
+        "architect": ["Plan.\nVERDICT: planned"], "developer": ["ok\nVERDICT: implemented"],
+        "qa-tester": ["`pytest -q`\nexit code: 0\n1 passed\nVERDICT: pass"], "reviewer": ["ok\nVERDICT: approve"],
+    }) if (tmp_path / "f").mkdir() is None else (None, None, None)
+    # the "developer" left a commit on the session's branch
+    g("switch", "-q", "-c", build_branch_name(session_id)); (repo / "new.py").write_text("1\n")
+    g("add", "."); g("commit", "-q", "-m", "feat: new"); g("switch", "-q", "main")
+    async with live_sessionmaker() as db:
+        task = await db.get(Task, (await db.get(Session, session_id)).task_id)
+        task.workspace = {"repo_path": str(repo), "base_branch": "main", "test_command": "pytest -q"}
+        await db.commit()
+
+    await _run_to_stop(runner)
+
+    async with live_sessionmaker() as db:
+        arts = (await db.execute(select(Artifact).where(Artifact.session_id == session_id))).scalars().all()
+    by_type = {a.type: a.content_json for a in arts}
+    assert set(by_type) == {"synthesis", "change_set"}
+    cs = by_type["change_set"]
+    assert cs["status"] == "ready_to_merge" and cs["commits"][0]["subject"] == "feat: new"
+    assert cs["tests"]["exit_code"] == 0 and cs["review"]["verdict"] == "approve"
+
+
+async def test_build_turn_prompt_includes_an_earlier_sessions_synthesis(tmp_path, live_sessionmaker):
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {})
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(Session, session_id)).task_id
+        mode_id = (await db.get(Session, session_id)).mode_id
+        old = Session(task_id=task_id, mode_id=mode_id, status="finished")
+        db.add(old)
+        await db.flush()
+        db.add(Artifact(session_id=old.id, type="synthesis", content_json={"decision": "use a queue, not cron"},
+                        source_turn_ids=[]))
+        await db.commit()
+
+    prompt = await runner._build_context(await runner._build_view())
+
+    assert "Earlier synthesis" in prompt and "use a queue, not cron" in prompt
+
+
+# ---- A human message sent mid-session reaches the agents' prompts
+
+async def _human_says(runner, mirror, body, to=("*",)):
+    await runner._conversation.send(sender="human", to=list(to), kind="note", body=body)
+    await mirror.poll_once()
+
+
+async def _grant_prompt(live_sessionmaker, runner, role):
+    """Grants the floor to `role` and returns the prompt it was given (the assignment body)."""
+    from orchestrator.floor.types import Grant
+    from orchestrator.models import Message
+    await runner._handle_grant(await runner._build_view(), Grant(participant=role, reason="test"))
+    async with live_sessionmaker() as db:
+        rows = (await db.execute(select(Message).where(Message.kind == "assignment", role == any_(Message.to))
+                                 .order_by(Message.seq.desc()))).scalars().all()
+    return rows[0].body
+
+
+async def test_a_human_note_reaches_the_next_prompt_once_per_agent(tmp_path, live_sessionmaker):
+    reply = "did it\nVERDICT: planned"
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": [reply] * 3, "developer": ["ok\nVERDICT: implemented"]})
+    from orchestrator.mirror import MessageMirror
+    from orchestrator.pubsub import PubSub
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id)
+
+    first = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "MESSAGE FROM THE HUMAN" not in first
+
+    await _human_says(runner, mirror, "Use sqlite, not postgres.")
+    second = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "MESSAGE FROM THE HUMAN" in second and "Use sqlite, not postgres." in second
+
+    third = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "Use sqlite" not in third  # already delivered, not repeated
+
+    other = await _grant_prompt(live_sessionmaker, runner, "developer")
+    assert "Use sqlite, not postgres." in other  # a different agent has not seen it yet
+
+
+async def test_a_directed_note_goes_only_to_the_addressee(tmp_path, live_sessionmaker):
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": ["a\nVERDICT: planned"], "developer": ["d\nVERDICT: implemented"]})
+    from orchestrator.mirror import MessageMirror
+    from orchestrator.pubsub import PubSub
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id)
+    await _human_says(runner, mirror, "Architect: keep it to one file.", to=("architect",))
+    assert "keep it to one file" in await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "keep it to one file" not in await _grant_prompt(live_sessionmaker, runner, "developer")
+
+
+async def test_a_human_note_reaches_a_discussion_prompt_too(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "my view")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mk_mode_config(), policy=RoundRobinFloorPolicy(), on_wake=on_wake)
+    await _human_says(runner, mirror, "Please focus on cost.")
+    prompt = await _grant_prompt(live_sessionmaker, runner, "a")
+    assert "MESSAGE FROM THE HUMAN" in prompt and "Please focus on cost." in prompt

@@ -70,3 +70,62 @@ def preflight_workspace(repo_path: str, base_branch: str) -> WorkspaceReport:
         return problem("git_timeout", "git took too long to answer; is the repository on a slow or offline drive?")
     rep.ok = not rep.problems
     return rep
+
+
+# ---------------------------------------------------------------- Build mode: what the team left on its branch
+
+def build_branch_name(session_id) -> str:
+    """The branch a Build session works on. Derived from the session id so every part of the system (the
+    sandbox that creates it, the change set that reads it) agrees without storing it."""
+    return f"bayto/build-{str(session_id)[:8]}"
+
+
+def collect_branch_changes(repo_path: str, base_branch: str, branch: str, *, max_commits: int = 50) -> dict | None:
+    """Facts about `branch` relative to `base_branch`, read from git only (never from agent prose).
+    None when the branch does not exist or git cannot answer; an empty commit list means "no work landed"."""
+    try:
+        if _git(repo_path, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode != 0:
+            return None
+        log = _git(repo_path, "log", f"{base_branch}..{branch}", f"--max-count={max_commits}", "--format=%H%x1f%s")
+        stat = _git(repo_path, "diff", "--shortstat", f"{base_branch}...{branch}")
+        names = _git(repo_path, "diff", "--name-status", f"{base_branch}...{branch}")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if log.returncode != 0:
+        return None
+    commits = [{"sha": sha[:12], "subject": subject}
+               for sha, _, subject in (ln.partition("\x1f") for ln in log.stdout.splitlines())]
+    nums = {k: int(m.group(1)) if (m := re.search(rf"(\d+) {k}", stat.stdout)) else 0
+            for k in ("file", "insertion", "deletion")}
+    files = [{"status": ln[0], "path": ln[1:].strip()} for ln in names.stdout.splitlines() if ln.strip()][:200]
+    return {"commits": commits, "files": files, "files_changed": nums["file"],
+            "insertions": nums["insertion"], "deletions": nums["deletion"],
+            "diff_stat": stat.stdout.strip()}
+
+
+class WorkspaceError(RuntimeError):
+    """The repository cannot host a Build session right now. The message is shown to the person."""
+
+
+def prepare_branch(repo_path: str, base_branch: str, branch: str) -> bool:
+    """Put the repository on `branch`, ready for the sandbox to mount (B2). Returns True when the branch
+    was created from `base_branch`, False when it already existed (a resumed session).
+
+    The sandbox mounts the real repository folder, so the branch has to be checked out there; a
+    separate git worktree would not work, because its .git file points outside the mount. That is
+    why a dirty tree is refused: switching branches over uncommitted work could lose or mix it."""
+    if not valid_branch_name(branch):
+        raise WorkspaceError(f"'{branch}' is not a usable branch name.")
+    rep = preflight_workspace(repo_path, base_branch)
+    if not rep.ok:
+        raise WorkspaceError(rep.problems[0]["detail"])
+    if rep.dirty:
+        shown = ", ".join(rep.dirty_files[:5])
+        raise WorkspaceError(
+            f"The repository has uncommitted changes ({shown}). Commit or stash them, then start the session again.")
+    exists = _git(repo_path, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
+    cmd = ("switch", branch) if exists else ("switch", "-c", branch, base_branch)
+    out = _git(repo_path, *cmd)
+    if out.returncode != 0:
+        raise WorkspaceError(f"git could not switch to {branch}: {out.stderr.strip()[:300]}")
+    return not exists

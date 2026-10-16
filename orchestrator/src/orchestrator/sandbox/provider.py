@@ -56,6 +56,7 @@ class SeatSpec:
     brief: str  # the persona's system prompt and stance, written into the seat's role brief
     model: str | None = None
     tools: tuple[str, ...] = ()  # extra Claude tools the seat may use, on top of read-only
+    deny: tuple[str, ...] = ()  # tools the seat is refused even if allowed elsewhere (Build mode's denylist)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,8 +76,10 @@ class SandboxProvider(abc.ABC):
     startup-time action, not a poll loop)."""
 
     @abc.abstractmethod
-    async def create(self, task_id: uuid.UUID, *, name: str, seats: list[SeatSpec] | None = None) -> SandboxInfo:
-        """`seats`, when given, are the participants to build seats for. Idempotent: if a Sandbox row already exists for task_id, return it (re-issuing
+    async def create(self, task_id: uuid.UUID, *, name: str, seats: list[SeatSpec] | None = None,
+                     workspace: str | None = None) -> SandboxInfo:
+        """`seats`, when given, are the participants to build seats for. `workspace`, when given, is the
+        host path of a git repository to mount read-write instead of this project's own (Build mode). Idempotent: if a Sandbox row already exists for task_id, return it (re-issuing
         the create command only if its last known status is not running/creating).
         Sandbox.task_id is unique, so this is the only entry point that inserts a row."""
 
