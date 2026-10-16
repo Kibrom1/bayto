@@ -14,7 +14,7 @@ import {
   type ArtifactOut,
   type SessionDetailOut,
 } from '../api/sessions'
-import { isNotFound } from '../api/errors'
+import { ApiError, isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
@@ -146,13 +146,15 @@ export function BaytoRoom() {
 
   async function send() {
     const body = draft.trim()
-    if (!body || sending || !sessionId) return
+    if (!body || sending || !sessionId || !canSend) return
     setSending(true)
     try {
       await interjectSession(sessionId, body, target === '*' ? undefined : [target])
       setDraft('')
     } catch (err) {
-      flash(err instanceof Error ? err.message : 'Could not send', true)
+      flash(err instanceof ApiError && err.status === 409
+        ? "This session isn't running, so your message wasn't delivered. If you restarted the orchestrator, resume the session or start a new one."
+        : err instanceof Error ? err.message : 'Could not send', true)
     } finally {
       setSending(false)
     }
@@ -176,6 +178,9 @@ export function BaytoRoom() {
   const status = session.status
   const paused = PAUSED.includes(status)
   const finished = FINISHED.includes(status)
+  // Only a running session has a runtime that can take a message (the server answers 409 otherwise).
+  const canSend = status === 'active' || status === 'running'
+  const sendBlocked = finished ? 'ended' : paused ? 'paused' : canSend ? null : 'starting'
   const tokens = session.usage.tokens_in + session.usage.tokens_out
   const budgetTokens: number | null = session.budget?.tokens ?? session.budget?.max_tokens ?? null
   const pct = budgetTokens ? Math.min(100, Math.round((tokens / budgetTokens) * 100)) : null
@@ -313,7 +318,7 @@ export function BaytoRoom() {
 
           <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <div className="composer-row">
-              <select aria-label="Send to" value={target} onChange={(e) => setTarget(e.target.value)}>
+              <select aria-label="Send to" disabled={!canSend} value={target} onChange={(e) => setTarget(e.target.value)}>
                 <option value="*">Everyone</option>
                 {roster.map((tc) => (
                   <option key={tc.agent_id} value={tc.participant ?? ''}>{display(tc.participant ?? 'unknown').name}</option>
@@ -322,16 +327,23 @@ export function BaytoRoom() {
               <textarea
                 aria-label="Interject"
                 rows={1}
-                placeholder="Add your view or steer the discussion…"
+                disabled={!canSend}
+                placeholder={sendBlocked === 'ended' ? 'This session has ended' : sendBlocked === 'paused' ? 'Paused: resume to send a message' : sendBlocked === 'starting' ? 'Waiting for the session to start…' : 'Add your view or steer the discussion…'}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
                 }}
               />
-              <button type="submit" className="btn primary" disabled={!draft.trim() || sending || finished}>Send</button>
+              <button type="submit" className="btn primary" disabled={!draft.trim() || sending || !canSend}>Send</button>
             </div>
-            <p className="composer-hint">Enter to send, Shift+Enter for a new line</p>
+            {sendBlocked === 'ended' ? (
+              <p className="composer-hint">This session has ended and can't take messages. <Link to={`/setup/${session.task_id}`}>Start a new session</Link> on this task to keep going.</p>
+            ) : sendBlocked === 'paused' ? (
+              <p className="composer-hint">The session is paused. Resume it to send a message.</p>
+            ) : (
+              <p className="composer-hint">Enter to send, Shift+Enter for a new line</p>
+            )}
           </form>
         </main>
 
