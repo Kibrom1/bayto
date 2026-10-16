@@ -91,4 +91,38 @@ describe('BaytoRoom', () => {
     expect(stopReasonText('some_new_reason')).toBe('some new reason')
     expect(stopReasonText(null)).toBeNull()
   })
+
+  async function renderWithStatus(status: string) {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 'task-1', mode_id: 'build', status, started_at: null, ended_at: null,
+      round: 1, budget: null, usage: { tokens_in: 1, tokens_out: 1, cost: 0 }, turn_counts: [] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    return screen.findByLabelText('Interject', undefined, { timeout: 5000 })
+  }
+
+  it('lets you message a running session', async () => {
+    const box = await renderWithStatus('active')
+    expect(box).toBeEnabled()
+  })
+
+  it('turns the message box off, with the reason, once the session has ended', async () => {
+    const box = await renderWithStatus('finished')
+    expect(box).toBeDisabled()
+    expect(screen.getByText(/this session has ended and can't take messages/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /start a new session/i })).toHaveAttribute('href', '/setup/task-1')
+  })
+
+  it('tells you to resume a paused session instead of failing with a 409', async () => {
+    const box = await renderWithStatus('needs_human')
+    expect(box).toBeDisabled()
+    expect(screen.getByText(/resume it to send a message/i)).toBeInTheDocument()
+  })
 })
