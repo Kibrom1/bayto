@@ -45,7 +45,7 @@ from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
 from opentelemetry import trace
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
@@ -82,6 +82,8 @@ tracer = trace.get_tracer(__name__)
 
 STATUS_ACTIVE = "active"
 STATUS_NEEDS_HUMAN = "needs_human"
+_MAX_HUMAN_NOTES = 5  # most recent notes shown in one prompt
+_MAX_HUMAN_NOTE_CHARS = 2000
 STATUS_FINISHED = "finished"
 # M2.8's POST /sessions/{id}/stop writes one of these two (never "needs_human", which
 # means something different -- a pause, not a stop request). STATUS_STOPPING is the
@@ -172,6 +174,7 @@ class ModeratorRunner:
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
+        self._grant_notes = ""  # human notes this grant's prompt carries; set once per grant (see _human_notes_for)
         # M2.12: phase machine state
         self._current_phase_index = 0
         self._turns_in_phase = 0
@@ -576,6 +579,7 @@ class ModeratorRunner:
     async def _handle_grant(self, view: ConversationView, decision: Grant) -> None:
         participant = decision.participant
         self._retry_note = _RETRY_NOTES.get(decision.reason or "")
+        self._grant_notes = await self._human_notes_for(participant)
         context = await self._build_context(view)
         await self._conversation.send(sender=self._mode.moderator or "moderator", to=[participant],
                                        kind="assignment", body=context)
@@ -720,6 +724,38 @@ class ModeratorRunner:
                 lines.append(f"Test command: {ws['test_command']}")
         return "\n".join(lines)
 
+    async def _human_notes_for(self, participant: str) -> str:
+        """What the human said since `participant` was last given the floor, as a prompt block ('' if nothing).
+
+        Stateless on purpose: the anchor is the participant's own latest assignment, so a retried turn
+        sees the same notes again, a note sent while the participant is mid-turn shows up on its next
+        turn, and a resumed session needs no saved state. Computed once per grant (a streamed turn builds
+        its prompt a second time, after the assignment exists). A note sent only a moment before the grant
+        can miss it if the mirror has not recorded it yet; the next grant will not recover that note."""
+        async with self._sessionmaker() as session:
+            anchor = await session.scalar(
+                select(func.max(MessageRow.seq)).where(
+                    MessageRow.session_id == self._session_id,
+                    MessageRow.kind == "assignment",
+                    participant == any_(MessageRow.to)))
+            rows = (await session.execute(
+                select(MessageRow).where(
+                    MessageRow.session_id == self._session_id,
+                    MessageRow.from_ == "human",
+                    MessageRow.kind == "note",
+                    MessageRow.seq > (anchor or 0),
+                ).order_by(MessageRow.seq))).scalars().all()
+        notes = [r for r in rows if "*" in r.to or participant in r.to][-_MAX_HUMAN_NOTES:]
+        if not notes:
+            return ""
+        lines = ["MESSAGE FROM THE HUMAN running this session. They can see the discussion and are steering it. "
+                 "Follow what they say; where it conflicts with the plan so far, it wins, and say so in your reply."]
+        for r in notes:
+            target = "" if "*" in r.to else " (addressed to you)"
+            lines.append(f"> {r.body.strip()[:_MAX_HUMAN_NOTE_CHARS]}{target}")
+        lines.append("")
+        return "\n".join(lines)
+
     async def _build_context(self, view: ConversationView) -> str:
         task_text = await self._task_text()
         async with self._sessionmaker() as session:
@@ -752,6 +788,8 @@ class ModeratorRunner:
                          "working on; contribute your own view on it, building on what others have said.")
             lines.append(task_text)
             lines.append("")
+        if self._grant_notes:
+            lines.append(self._grant_notes)
         if prev_summaries:
             lines.append("Previous Session Context:")
             lines.extend(prev_summaries)
@@ -775,6 +813,8 @@ class ModeratorRunner:
         pipeline floor policy routes on. The role brief (system prompt) says what the role does."""
         lines = ["You are one step in a build pipeline with other agents. Do your role's job on this task, "
                  "in the shared workspace, and report what you did.", task_text, ""]
+        if self._grant_notes:
+            lines.append(self._grant_notes)
         if prev_summaries:
             lines += ["Previous Session Context:", *prev_summaries, ""]
         lines += [f"Rolling summary: {summary or '(none yet)'}", "", "Previous steps (full text):", *view.recent_transcript, ""]

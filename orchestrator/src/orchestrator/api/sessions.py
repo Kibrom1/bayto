@@ -221,8 +221,8 @@ class InterjectResponse(BaseModel):
 
 @router.post("/sessions/{session_id}/interject", response_model=InterjectResponse)
 async def interject_session(session_id: uuid.UUID, req: InterjectRequest, request: Request) -> InterjectResponse:
-    """Lands in the transcript like any other message -- no special transport-level
-    handling. Never wakes anyone (only ModeratorRunner's grant flow does that), so this
+    """Lands in the transcript like any other message. The text also goes into each agent's
+    next prompt (ModeratorRunner._human_notes_for), once per agent, marked as the human's. Never wakes anyone (only ModeratorRunner's grant flow does that), so this
     can never interrupt whoever currently holds the floor, same rule as Grant/wake-up.
     For raise-hand mode, a directed (non-broadcast) interject also becomes an
     addressed=ADDRESSED hand-raise the next time the runner collects hand-raises (see

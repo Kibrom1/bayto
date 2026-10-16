@@ -15,7 +15,7 @@ from acp import PermissionError_
 from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
 from acp.transport import FileTransport
-from sqlalchemy import select
+from sqlalchemy import any_, select
 
 from orchestrator.conversation import OrchestratorConversation
 from orchestrator.floor import RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
@@ -1136,3 +1136,69 @@ async def test_build_turn_prompt_includes_an_earlier_sessions_synthesis(tmp_path
     prompt = await runner._build_context(await runner._build_view())
 
     assert "Earlier synthesis" in prompt and "use a queue, not cron" in prompt
+
+
+# ---- A human message sent mid-session reaches the agents' prompts
+
+async def _human_says(runner, mirror, body, to=("*",)):
+    await runner._conversation.send(sender="human", to=list(to), kind="note", body=body)
+    await mirror.poll_once()
+
+
+async def _grant_prompt(live_sessionmaker, runner, role):
+    """Grants the floor to `role` and returns the prompt it was given (the assignment body)."""
+    from orchestrator.floor.types import Grant
+    from orchestrator.models import Message
+    await runner._handle_grant(await runner._build_view(), Grant(participant=role, reason="test"))
+    async with live_sessionmaker() as db:
+        rows = (await db.execute(select(Message).where(Message.kind == "assignment", role == any_(Message.to))
+                                 .order_by(Message.seq.desc()))).scalars().all()
+    return rows[0].body
+
+
+async def test_a_human_note_reaches_the_next_prompt_once_per_agent(tmp_path, live_sessionmaker):
+    reply = "did it\nVERDICT: planned"
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": [reply] * 3, "developer": ["ok\nVERDICT: implemented"]})
+    from orchestrator.mirror import MessageMirror
+    from orchestrator.pubsub import PubSub
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id)
+
+    first = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "MESSAGE FROM THE HUMAN" not in first
+
+    await _human_says(runner, mirror, "Use sqlite, not postgres.")
+    second = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "MESSAGE FROM THE HUMAN" in second and "Use sqlite, not postgres." in second
+
+    third = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "Use sqlite" not in third  # already delivered, not repeated
+
+    other = await _grant_prompt(live_sessionmaker, runner, "developer")
+    assert "Use sqlite, not postgres." in other  # a different agent has not seen it yet
+
+
+async def test_a_directed_note_goes_only_to_the_addressee(tmp_path, live_sessionmaker):
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": ["a\nVERDICT: planned"], "developer": ["d\nVERDICT: implemented"]})
+    from orchestrator.mirror import MessageMirror
+    from orchestrator.pubsub import PubSub
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id)
+    await _human_says(runner, mirror, "Architect: keep it to one file.", to=("architect",))
+    assert "keep it to one file" in await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "keep it to one file" not in await _grant_prompt(live_sessionmaker, runner, "developer")
+
+
+async def test_a_human_note_reaches_a_discussion_prompt_too(tmp_path, live_sessionmaker):
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "my view")
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mk_mode_config(), policy=RoundRobinFloorPolicy(), on_wake=on_wake)
+    await _human_says(runner, mirror, "Please focus on cost.")
+    prompt = await _grant_prompt(live_sessionmaker, runner, "a")
+    assert "MESSAGE FROM THE HUMAN" in prompt and "Please focus on cost." in prompt
