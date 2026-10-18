@@ -54,6 +54,10 @@ def api(method, path, body=None):
             return json.load(r)
     except urllib.error.HTTPError as e:
         raise SystemExit(f"{method} {path} failed: {e.code} {e.read().decode()[:400]}")
+    except urllib.error.URLError as e:
+        raise SystemExit(f"Cannot reach the Bayto API at {args.api} ({e.reason}).\n"
+                         "Start the stack first in another terminal: scripts/bayto-up.sh  (wait for 'API ready'), "
+                         "then run this again.")
 
 
 def git(repo, *a, check_=True):
