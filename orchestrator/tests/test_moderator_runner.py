@@ -20,7 +20,7 @@ from sqlalchemy import any_, select
 from orchestrator.conversation import OrchestratorConversation
 from orchestrator.floor import RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
 from orchestrator.mirror import MessageMirror
-from orchestrator.models import Agent, Artifact, Mode, Session, SessionAgent, Task, Turn
+from orchestrator.models import Agent, Artifact, Message as MessageRow, Mode, Session, SessionAgent, Task, Turn
 from orchestrator.moderator import (
     FakeSummarizer,
     FakeSynthesizer,
@@ -227,6 +227,12 @@ async def test_grant_times_out_retries_once_then_escalates_to_human(tmp_path, li
     async with live_sessionmaker() as session:
         row = await session.get(Session, session_id)
     assert row.status == "needs_human"
+    # the reason is in the transcript, not only in the server log
+    await mirror.poll_once()
+    async with live_sessionmaker() as session:
+        notes = (await session.execute(select(MessageRow).where(
+            MessageRow.session_id == session_id, MessageRow.kind == "note"))).scalars().all()
+    assert any(n.body.startswith("Paused: a did not respond") for n in notes)
 
 
 # ---------------------------------------------------------------- stop conditions

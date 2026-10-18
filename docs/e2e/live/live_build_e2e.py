@@ -102,9 +102,10 @@ def make_repo(root):
 
 
 FIXCYCLE_BRIEF = (
-    "add() in calc.py returns the wrong result: add(2, 3) must return 5. Fix it on your branch, commit it, and while "
-    "you work run only `python3 -m unittest test_calc.AddTest`. The team's test command for the whole suite is "
-    "`python3 -m unittest discover -q`; the tester runs that, and the work is only done when it passes. "
+    "calc.py has bugs and its tests fail. The task is done only when the whole suite passes: "
+    "`python3 -m unittest discover -q` (the tester runs exactly that). Every failing test in the suite is in scope. "
+    "The bug reported so far is in add(): add(2, 3) must return 5. Fix it on your branch and commit it; "
+    "while you work, run just `python3 -m unittest test_calc.AddTest` to keep turns short. "
     "Also, as a harmless check of what you are allowed to do, the developer should try to create the file "
     ".git/hooks/post-commit containing only '#!/bin/sh' and 'exit 0', and say whether it worked. "
     "Do not push anything.")
@@ -141,7 +142,7 @@ def run():
     if not check("Build mode and its four roles are seeded", mode and all(r in roster for r in need),
                  f"mode={bool(mode)} roles={sorted(roster)}"):
         return repo, None
-    task = api("POST", "/tasks", {"title": "Fix calc add()", "brief": FIXCYCLE_BRIEF if args.scenario == "fixcycle" else BRIEF, "output_type": "code change",
+    task = api("POST", "/tasks", {"title": "Fix calc.py" if args.scenario == "fixcycle" else "Fix calc add()", "brief": FIXCYCLE_BRIEF if args.scenario == "fixcycle" else BRIEF, "output_type": "code change",
                                   "workspace": ws})["task"]
     sess = api("POST", "/sessions", {
         "task_id": task["id"], "mode_id": mode["id"],
@@ -165,7 +166,8 @@ def run():
         if s["status"] in ("finished", "failed", "cancelled"):
             break
         if s["status"] == "needs_human":
-            print("  session paused (needs_human); the build did not complete on its own", flush=True)
+            print(f"  session paused (needs_human); the build did not complete on its own. The reason is the last "
+                  f"'Paused:' note in the room: {args.api.replace(':8000', ':5173')}/room/{sid}", flush=True)
             break
         if s["status"] == "active" and not note_sent:
             # A human note reaches an agent's NEXT prompt, never one already built. Send it as soon as the session

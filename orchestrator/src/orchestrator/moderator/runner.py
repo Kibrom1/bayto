@@ -989,6 +989,12 @@ class ModeratorRunner:
             row.status = STATUS_NEEDS_HUMAN
             await session.commit()
         log.warning("session %s needs human: %s", self._session_id, reason)
+        # Say why in the transcript too, so the person sees it in the room, not only in the server log.
+        try:
+            await self._conversation.send(sender=self._mode.moderator or "moderator", to=["*"], kind="note",
+                                          body=f"Paused: {reason}. The work done so far is kept.")
+        except Exception:
+            log.exception("session %s: could not post the pause reason to the transcript", self._session_id)
 
     async def _finish(self, view: ConversationView, reason: str) -> None:
         log.info("session %s finishing: %s", self._session_id, reason)
