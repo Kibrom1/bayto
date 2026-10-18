@@ -158,7 +158,7 @@ Design: [build-mode-design.md](build-mode-design.md). Four roles (architect, dev
 - [x] **B6** Evidence check: a tester "pass" needs a command and exit code 0.
 - [x] **B7** `change_set` artifact built from git facts plus the tester's and reviewer's reports.
 - [x] **B8** Web UI: Build toggle, repository fields, change-set view, "Continue as Build".
-- [ ] **B9** Live end-to-end run: scripted in `docs/e2e/live/` on a throwaway repo with a seeded failing test that the team fixes on the branch. Needs the Mac's `sbx`. Not yet verified live: whether `claude -p` honours the Bash prefix rules and the denylist, how reliably real models end with `VERDICT:`, and whether tests that need package installs work behind the sandbox network allowlist.
+- [ ] **B9** Live end-to-end run: script written (`docs/e2e/live/live_build_e2e.py`, run it on the Mac with the stack up: `python3 docs/e2e/live/live_build_e2e.py`); NOT yet run. Scripted on a throwaway repo with a seeded failing test that the team fixes on the branch. Needs the Mac's `sbx`. Not yet verified live: whether `claude -p` honours the Bash prefix rules and the denylist, how reliably real models end with `VERDICT:`, and whether tests that need package installs work behind the sandbox network allowlist.
 
 ## After M6 (added 2026-10-18)
 
@@ -179,8 +179,8 @@ Open (from the 2026-10-18 analysis, see [analysis-2026-10-18.md](analysis-2026-1
 - [x] Build agents writing into `.git` (hooks and config run on the host at the next git command): path denies added, and `git_guard.py` restores `.git/config`, `.git/config.worktree`, `.git/info/attributes` and non-sample hooks from a per-session baseline before the host runs any git command; a change blocks `ready_to_merge` and is reported in the change set. Tested with real temporary repos. Not verified live: whether `claude -p` honours the path denies (the restore does not depend on it).
 - [x] One running session per task: `start` and `resume` return 409 `task_busy` while another session of the task is starting, active, stopping or cancelling. A paused session does not block; resuming it puts the repo back on its own branch.
 - [x] The change-set view says the repository is still checked out on the build branch and shows `git switch <base>`.
-- [ ] Repair the Ollama fallback (M2.13, M2.15): narrow the trigger, apply it to streamed turns, check the network path.
-- [ ] Add CI (there is no `.github/workflows`): run both test suites on every PR.
+- [ ] Repair the Ollama fallback (M2.13, M2.15): trigger narrowed and streamed turns now skip Claude once the fallback is on (done, unit-tested); Build mode never triggers it. Still open: check the network path from a seat.
+- [x] Add CI: `.github/workflows/ci.yml` runs orchestrator (Postgres, `BAYTO_REQUIRE_DB=1`), agent-comms and web tests on every PR. Not yet seen running on GitHub.
 - [ ] Merge the three committed branches above, then run the MVP exit test.
 
 ## Working agreements
