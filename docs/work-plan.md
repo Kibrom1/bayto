@@ -4,7 +4,7 @@
 
 This plan turns the roadmap (M0–M6 in [product-design.md](product-design.md)) into concrete tasks. M0–M3 are broken down to the task level; M4–M6 stay at deliverable level and get detailed when M3 lands. Estimates assume one developer working part-time (about 15–20 hours a week) and are rough.
 
-**Status (2026-10-04):** M2–M6 are built and merged on `main` (M3.12 cost meter included). Floor-policy and acp/1 protocol direction confirmed 2026-10-04 (see Decisions section); only the pricing/billing decision remains open there. Open: M0.5/M0.6 and M1.10–M1.16, which need the host's `sbx` CLI. **Next up:** run M0.5 and the M1.11–M1.14 measurements on the Mac, then the live checks for M1.15 (see its note below), then the MVP exit test.
+**Status (2026-10-18):** M0–M6 are done and merged on `main`, plus the real-session fixes (PRs #100–#107), the UI redesign (#108) and Build mode B1–B8 (#109, #110). Committed but not yet merged: the interject fix (`a047dc6`), the message-box state fix (`d17ff84`) and the usage-report fix by the Build team (`6011c53`, replaces PR #111). **Open:** the Build live end-to-end run (B9) and verifying B2 against a repository other than Bayto's own; the MVP exit test (`docs/mvp-exit-test.md`); and the follow-ups in "After M6" below. Earlier status (2026-10-04): M2–M6 are built and merged on `main` (M3.12 cost meter included). Floor-policy and acp/1 protocol direction confirmed 2026-10-04 (see Decisions section); only the pricing/billing decision remains open there. Open: M0.5/M0.6 and M1.10–M1.16, which need the host's `sbx` CLI. **Next up:** run M0.5 and the M1.11–M1.14 measurements on the Mac, then the live checks for M1.15 (see its note below), then the MVP exit test.
 
 ## Timeline
 
@@ -109,9 +109,9 @@ Memory scales about 173 MB per agent; 8 agents peak at 1.8 GB, so the 8g spec is
 - [x] **M2.10** Budgets: token/cost cap per session; OpenTelemetry spans per turn (tokens, latency, cost). The token/cost cap enforcement mechanism was already fully built incrementally across M2.7 (the between-turns check against summed `Turn` rows) and M2.8 (the API-boundary `{tokens,dollars}` translation) -- this task's actual code contribution is narrower: `POST /sessions`'s `budget` fields now reject non-positive values (`Field(gt=0)`), and product-owner's confirmed decision that budget-exceeded uniquely skips final synthesis (unlike every other stop trigger), recorded via a new `Session.stop_reason` column (migration) set on every terminal path. New `orchestrator/src/orchestrator/telemetry.py` configures a global OTel `TracerProvider` (OTLP if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, else console; always-on sampling), called from `app.py`'s `lifespan`. A nested span hierarchy (`moderator.run_once` → `moderator.grant_wait` → `turn.process`, with `moderator.summarize`/`moderator.synthesize` as siblings under `run_once`) is created inline at each real call site -- deliberately no session-spanning umbrella span, since a session can outlive a process (M2.9); every span instead carries `bayto.session_id`. Real Anthropic API responses (scorer/summarizer/synthesizer) get reliable `gen_ai.usage.*` token counts; a participant's `turn.process` span only gets them if self-reported in envelope meta, never estimated. Mid-turn budget enforcement remains an accepted architecture limit (the orchestrator only ever observes a participant's finished, self-reported result), not a gap this task closes; no `GET /sessions/{id}` usage-viewing endpoint was built either (the OTel spans carry the same data to whatever observability backend consumes them). See docs/decisions.md for the full reasoning on all of the above, plus a real OTel `TracerProvider`-is-process-global test-ordering issue found and fixed along the way.
 - [x] **M2.11** Seed data: 6 agent templates, the 7 team roles, modes `open-chat`, `debate`, `brainstorm`. An idempotent script, not an Alembic data migration (same "config that changes independently of code shouldn't be frozen into migration history" reasoning as M2.5's mode files) -- `orchestrator/src/orchestrator/seed.py`, run via `python -m orchestrator.seed`, upserts by natural key (`Agent.name`/`Mode.name`) via `INSERT ... ON CONFLICT ... DO UPDATE`; needed a new migration adding a real unique constraint on both columns, since Postgres has no implicit one to use as the conflict target. The six agent templates (Architect/Security Reviewer/PM/Lawyer/Customer/Historian, product-owner-confirmed content, one uniform model tier) are seeded as `Agent` rows; `modes/{open-chat,debate,brainstorm}.yaml` are checked into git directly (never round-tripped from the DB) and `seed.py` only ensures a matching `Mode` row exists. All three modes needed a small `acp.modes.ModeConfig` addition: a `"*"` wildcard `roles` key for an open roster of ad hoc agent-template instances that can't enumerate every participant name up front (same precedent as `Roster.send`'s own "*" = anyone) -- `Roster.can_send`/`SendPolicy.check` both gained the matching fallback. Debate/brainstorm also needed a new optional `synthesis_prompt_hint` on `ModeConfig`/`Synthesizer.synthesize`, since there was no existing mechanism for mode-specific synthesis content: no dedicated judge/cluster-ranking role/agent was built -- both reuse the existing M2.7 `Synthesizer` step with a mode-specific prompt hint instead. Brainstorm is a known, product-owner-confirmed v1 approximation (round-robin, no diverge/cluster phase machine) -- see the deferred follow-up item below. The 7 team-role reference files (transcribed verbatim from docs/agent-communication-protocol.md's "Team roles" table) live in a new top-level `team-roles/` directory, not `roles/`: the repo-root `roles/` directory already is a real, different, load-bearing thing (M1.8/M1.9's `acp.roster` catalog, used to assemble this actual dev-team sandbox) with its own distinct schema -- see docs/decisions.md for why and how this was verified before writing anything. No runtime loader consumes these role files today (verified against the repo, not assumed). See docs/decisions.md for these and two smaller judgment calls (the `turn_policy`/`output_schema` DB-row mapping, and the agent-template `role` slug naming).
 - [x] **M2.12** Brainstorm mode: dedicated diverge/cluster phase machine (`Mode.phases_json` has sat unused since M2.2; M2.11's `brainstorm` mode approximates a diverge-then-cluster flow via plain round-robin plus a prompt-level "no criticism" instruction and a cluster-and-rank synthesis hint, a known v1 simplification product-owner explicitly accepted as the condition for shipping M2.11 now). Not required for M2's "Done when" bar below.
-- [x] **M2.13** (implied) Budget reactive fallback: if platform limits are hit, automatically switch to local Ollama.
+- [x] **M2.13** (implied) Budget reactive fallback: if platform limits are hit, automatically switch to local Ollama. Caveat 2026-10-18: the trigger also matches the words "rate limit" or "usage limit" in any agent reply, so a discussion about rate limiting can switch a session to Ollama for good (`fallback_active` is persisted). Tracked under "After M6".
 - [x] **M2.14** (implied) Budget proactive fallback: switch to local Ollama if spend exceeds the session cap.
-- [x] **M2.15** (implied) Local Ollama bridge: `crew-notify-fallback.py` implements the call to local Ollama API.
+- [ ] **M2.15** (implied) Local Ollama bridge: `crew-notify-fallback.py` implements the call to local Ollama API. Unticked 2026-10-18: it has only run against fakes. Not verified: that the sandbox network policy lets a seat reach `host.docker.internal:11434` (the team allowlist is `api.anthropic.com` only), and the bridge sends the last assignment as a bare text prompt to `/api/generate`, so a fallback seat has no tools and no history. Build mode cannot run on it.
 - [x] **M2.16** (implied) Persist fallback state in `Session.fallback_active`.
 
 **Done when:** a REST call starts a debate in a real team sandbox, messages stream over SSE, and the session survives an orchestrator restart.
@@ -145,6 +145,42 @@ Breakdown drafted by product-owner, reconciled with architect's feasibility/sequ
 | M4 Bayto MCP server | `mcp/bayto-mcp` with `get_task_context`, `request_human`, `cite_source`; attached through the SBX MCP gateway; per-participant identity |
 | M5 Human seat + memory | `decision-request` flow in the UI; pausing a session keeps the team sandbox running (it stops only on an explicit user stop or when the task ends, decided 2026-10-05); team sandbox kept for the task so each role resumes its own Claude session; second session support |
 | M6 Hardening + usage metering | Team sandbox sizing and agent cap from M1 measurements; cleanup of orphaned sandboxes on restart (`sbx ls` reconcile); token budgets per session; usage ledger and audit trail |
+
+## Build mode (added 2026-10-15)
+
+Design: [build-mode-design.md](build-mode-design.md). Four roles (architect, developer, tester, reviewer) work on a git branch of the task's repository; the human reviews and merges. Merged to `main` in PRs #109 and #110 unless noted.
+
+- [x] **B1** Task workspace: repository path, base branch, test command on `Task`; `POST /workspaces/preflight`; migration `a1b2c3d4e5f6`.
+- [x] **B2** Sandbox mount and branch: before the sandbox is created the orchestrator refuses a dirty tree and switches the repo to `bayto/build-<id8>`; `dev-team/run.sh` mounts it read-write (`BAYTO_WORKSPACE_REPO`). Live check: a session on Bayto's own repo made its commit on that branch (`61aa3b9`). **Not yet verified** with a repository other than Bayto's own: the `bayto-team` kit looks for `agent-comms` and `bayto-mcp` under the workspace and may not find them.
+- [x] **B3** Pipeline floor policy routed by the `VERDICT:` last line, with fix cycles and `needs_human` safety valves.
+- [x] **B4** Build mode (`modes/build.yaml`), four `build-*` roles, seed data.
+- [x] **B5** Per-role tool permissions and a denylist (no push, remotes, network).
+- [x] **B6** Evidence check: a tester "pass" needs a command and exit code 0.
+- [x] **B7** `change_set` artifact built from git facts plus the tester's and reviewer's reports.
+- [x] **B8** Web UI: Build toggle, repository fields, change-set view, "Continue as Build".
+- [ ] **B9** Live end-to-end run: scripted in `docs/e2e/live/` on a throwaway repo with a seeded failing test that the team fixes on the branch. Needs the Mac's `sbx`. Not yet verified live: whether `claude -p` honours the Bash prefix rules and the denylist, how reliably real models end with `VERDICT:`, and whether tests that need package installs work behind the sandbox network allowlist.
+
+## After M6 (added 2026-10-18)
+
+Done and merged:
+
+- [x] Real-session fixes and the runbook (PRs #100–#105): seats get the task, pause/resume mid-turn, schema type list.
+- [x] `stop_reason` on `GET /sessions/{id}` and in the room (#102, #106); fail fast on an expired Claude login; `scripts/bayto-up.sh` (#106, #107).
+- [x] "Council table" UI redesign with a landing page (#108).
+
+Done, committed, waiting for a push and PR:
+
+- [x] Human messages sent mid-session now reach the agents' next prompt, once per agent (`a047dc6`, 447 orchestrator tests). Before this, an interject was recorded but its text never reached any agent.
+- [x] The message box turns itself off for ended, paused and starting sessions instead of returning a 409 (`d17ff84`, 42 web tests).
+- [x] Usage-report returns 404 for unknown tasks and zero-fills sessionless ones (`6011c53`, made by the Build team; PR #111 had a merge conflict, resolved on `fix/usage-report-404`).
+
+Open (from the 2026-10-18 analysis, see [analysis-2026-10-18.md](analysis-2026-10-18.md)):
+
+- [ ] Stop a Build session's agents writing into `.git` (hooks and config run on the host at the next git command), or detect it afterwards.
+- [ ] Refuse a second active session on the same task and repository; today a second Build session switches the repo's branch under the first.
+- [ ] Repair the Ollama fallback (M2.13, M2.15): narrow the trigger, apply it to streamed turns, check the network path.
+- [ ] Add CI (there is no `.github/workflows`): run both test suites on every PR.
+- [ ] Merge the three committed branches above, then run the MVP exit test.
 
 ## Working agreements
 
