@@ -135,6 +135,17 @@ class RunOnceResult:
     quiet: bool = False  # True when this iteration made no grant (run() should sleep)
 
 
+_LIMIT_PHRASES = ("weekly limit", "usage limit", "rate limit", "limit reached", "hit your limit", "out of usage")
+_LIMIT_MAX_CHARS = 400  # a platform error is a line or two; a discussion about rate limiting is longer
+
+
+def looks_like_platform_limit(text: str | None) -> bool:
+    """True for a short message that is the platform telling the seat it is out of quota. A long answer that
+    merely mentions rate limiting (a debate topic) must not switch the whole session to the local model."""
+    t = (text or "").strip().lower()
+    return 0 < len(t) <= _LIMIT_MAX_CHARS and any(p in t for p in _LIMIT_PHRASES)
+
+
 class ModeratorRunner:
     def __init__(
         self,
@@ -617,7 +628,8 @@ class ModeratorRunner:
             queue = self._pubsub.subscribe(bounded=False)  # never drop the reply being awaited
             try:
                 streamed = False
-                if getattr(self._sandbox_provider, "supports_streaming", False):
+                # Once the fallback is on, the streamed path (which always uses Claude) is skipped.
+                if getattr(self._sandbox_provider, "supports_streaming", False) and not use_fallback:
                     try:
                         streamed = await self._stream_turn(view, participant)
                     except Exception:
@@ -628,7 +640,7 @@ class ModeratorRunner:
                         await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
                 except SandboxCommandError as e:
                     # Reactive Fallback: if we hit a platform limit (Weekly/Daily), switch to Ollama immediately
-                    if "limit" in e.stderr.lower() or "rate limit" in e.stderr.lower():
+                    if not self._pipeline and looks_like_platform_limit(e.stderr):
                         log.warning("session %s: platform limit hit in sandbox; triggering reactive fallback", self._session_id)
                         async with self._sessionmaker() as session:
                             row = await session.get(SessionRow, self._session_id)
@@ -643,8 +655,8 @@ class ModeratorRunner:
 
                 # Reactive Fallback (Content Level): if the agent's response body contains limit errors
                 if response and "body" in response:
-                    body_text = response["body"].lower()
-                    if "weekly limit" in body_text or "usage limit" in body_text or "rate limit" in body_text:
+                    # Build (pipeline) seats need tools and history; the text-only fallback cannot serve them.
+                    if not self._pipeline and looks_like_platform_limit(response["body"]):
                         log.warning("session %s: platform limit detected in response body; triggering reactive fallback", self._session_id)
                         async with self._sessionmaker() as session:
                             row = await session.get(SessionRow, self._session_id)

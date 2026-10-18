@@ -1240,3 +1240,14 @@ async def test_a_human_note_reaches_a_discussion_prompt_too(tmp_path, live_sessi
     await _human_says(runner, mirror, "Please focus on cost.")
     prompt = await _grant_prompt(live_sessionmaker, runner, "a")
     assert "MESSAGE FROM THE HUMAN" in prompt and "Please focus on cost." in prompt
+
+
+def test_platform_limit_detection_is_narrow():
+    from orchestrator.moderator.runner import looks_like_platform_limit as f
+    assert f("Claude usage limit reached. Your limit will reset at 5pm.")
+    assert f("You've hit your weekly limit")
+    assert not f("")
+    assert not f(None)
+    long_talk = "Should an API apply a rate limit per user or per key? " + "Consider fairness and abuse. " * 30
+    assert not f(long_talk)
+    assert not f("We should discuss the budget and the schedule.")
