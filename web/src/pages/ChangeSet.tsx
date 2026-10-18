@@ -18,6 +18,7 @@ interface ChangeSetContent {
   review: { verdict: string | null; notes: string } | null
   fix_cycles: number
   open_issues: string[]
+  git_guard?: { changed: string[]; restored: boolean }
   summary?: string | null
 }
 
@@ -60,6 +61,10 @@ export function ChangeSet({ artifacts }: { artifacts: ArtifactOut[] }) {
       </div>
       <p className="cs-sub">
         On branch <code>{cs.branch}</code>, based on <code>{cs.base_branch}</code>. Nothing was pushed; you merge it.
+      </p>
+      <p className="cs-sub" data-testid="repo-left-on">
+        Your repository is still checked out on <code>{cs.branch}</code>. When you have finished reviewing, go
+        back with <code>git switch {cs.base_branch}</code>.
       </p>
 
       {cs.open_issues.length > 0 && (

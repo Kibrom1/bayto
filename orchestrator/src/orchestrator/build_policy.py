@@ -24,6 +24,9 @@ BUILD_DENY = (
     "Bash(curl:*)", "Bash(wget:*)", "Bash(ssh:*)", "Bash(scp:*)", "Bash(nc:*)",
     "Bash(rm -rf:*)", "Bash(sudo:*)",
     "WebFetch", "WebSearch",
+    # Git runs hooks and config from .git on the host. These path rules are a first line only: a shell
+    # redirect writes the same files, so git_guard.py also restores them after the session.
+    "Write(.git/**)", "Edit(.git/**)", "Bash(git -c:*)",
 )
 
 # A test command may chain steps with `&&` ("cd web && npm test"). Anything that could smuggle in a

@@ -1121,6 +1121,44 @@ async def test_finished_build_session_gets_a_change_set_read_from_the_repo(tmp_p
     assert cs["tests"]["exit_code"] == 0 and cs["review"]["verdict"] == "approve"
 
 
+async def test_runner_undoes_tampering_with_git_settings_before_describing_the_result(tmp_path, live_sessionmaker):
+    import subprocess
+
+    from orchestrator.git_guard import save_baseline
+    from orchestrator.workspace import build_branch_name
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    g("init", "-q", "-b", "main"); g("config", "user.email", "t@e.com"); g("config", "user.name", "t")
+    (repo / "a.txt").write_text("a"); g("add", "."); g("commit", "-q", "-m", "init")
+    guard = tmp_path / "guard.json"
+    save_baseline(str(repo), guard)
+
+    (tmp_path / "f").mkdir()
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path / "f", {
+        "architect": ["Plan.\nVERDICT: planned"], "developer": ["ok\nVERDICT: implemented"],
+        "qa-tester": ["`pytest -q`\nexit code: 0\n1 passed\nVERDICT: pass"], "reviewer": ["ok\nVERDICT: approve"],
+    })
+    runner._git_guard_file = guard
+    g("switch", "-q", "-c", build_branch_name(session_id)); (repo / "new.py").write_text("1\n")
+    g("add", "."); g("commit", "-q", "-m", "feat: new"); g("switch", "-q", "main")
+    hook = repo / ".git" / "hooks" / "pre-commit"
+    hook.write_text("#!/bin/sh\nevil\n")  # what a seat could leave behind
+    async with live_sessionmaker() as db:
+        task = await db.get(Task, (await db.get(Session, session_id)).task_id)
+        task.workspace = {"repo_path": str(repo), "base_branch": "main", "test_command": "pytest -q"}
+        await db.commit()
+
+    await _run_to_stop(runner)
+
+    assert not hook.exists()
+    async with live_sessionmaker() as db:
+        arts = (await db.execute(select(Artifact).where(Artifact.session_id == session_id))).scalars().all()
+    cs = {a.type: a.content_json for a in arts}["change_set"]
+    assert cs["status"] == "needs_you" and cs["git_guard"]["changed"] == ["git hook 'pre-commit' was added"]
+
+
 async def test_build_turn_prompt_includes_an_earlier_sessions_synthesis(tmp_path, live_sessionmaker):
     session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {})
     async with live_sessionmaker() as db:

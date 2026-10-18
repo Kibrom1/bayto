@@ -66,4 +66,11 @@ describe('stop reason', () => {
   it('explains a completed build', () => {
     expect(stopReasonText('build_complete')).toMatch(/tests passed/)
   })
+
+  it('tells you the repository was left on the build branch, and how to get back', () => {
+    render(<ChangeSet artifacts={[art()]} />)
+    const note = screen.getByTestId('repo-left-on')
+    expect(note).toHaveTextContent('still checked out on bayto/build-12345678')
+    expect(note).toHaveTextContent('git switch main')
+  })
 })

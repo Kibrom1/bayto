@@ -820,3 +820,56 @@ async def test_retire_cancels_a_runner_that_does_not_stop_within_the_grace():
                         runner_task=asyncio.create_task(forever()))
     await asyncio.wait_for(_retire_runtime(rt, grace=0.2), timeout=5)
     assert rt.runner_task.cancelled() and rt.mirror_task.cancelled()
+
+
+# ---------------------------------------------------------------- one running session per task
+
+async def _two_sessions_on_one_task(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    ids = []
+    for _ in range(2):
+        resp = await client.post("/sessions", json={
+            "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0])}]})
+        ids.append(uuid.UUID(resp.json()["session"]["id"]))
+    return ids
+
+
+async def _set_status(sessionmaker, session_id, status):
+    async with sessionmaker() as db:
+        (await db.get(Session, session_id)).status = status
+        await db.commit()
+
+
+async def test_a_second_session_cannot_start_while_another_of_the_task_is_running(client, live_sessionmaker):
+    first, second = await _two_sessions_on_one_task(client, live_sessionmaker)
+    await _set_status(live_sessionmaker, first, "active")
+    _wire_fakes(FakeSandboxProvider())
+    resp = await client.post(f"/sessions/{second}/start")
+    assert resp.status_code == 409
+    err = resp.json()["detail"]["error"]
+    assert err["code"] == "task_busy" and str(first)[:8] in err["detail"]
+    async with live_sessionmaker() as db:
+        assert (await db.get(Session, second)).status == "created"  # untouched, can be started later
+
+
+async def test_a_paused_or_finished_session_does_not_block_a_new_one(client, live_sessionmaker):
+    first, second = await _two_sessions_on_one_task(client, live_sessionmaker)
+    _wire_fakes(FakeSandboxProvider())
+    for status in ("needs_human", "finished"):
+        await _set_status(live_sessionmaker, first, status)
+        async with live_sessionmaker() as db:
+            (await db.get(Session, second)).status = "created"
+            await db.commit()
+        resp = await client.post(f"/sessions/{second}/start")
+        assert resp.status_code == 202, status
+        await asyncio.sleep(0.05)
+        await _set_status(live_sessionmaker, second, "failed")  # stop the background start between rounds
+
+
+async def test_resuming_a_paused_session_is_refused_while_another_is_running(client, live_sessionmaker):
+    first, second = await _two_sessions_on_one_task(client, live_sessionmaker)
+    await _set_status(live_sessionmaker, first, "needs_human")
+    await _set_status(live_sessionmaker, second, "active")
+    _wire_fakes(FakeSandboxProvider())
+    resp = await client.post(f"/sessions/{first}/resume")
+    assert resp.status_code == 409 and resp.json()["detail"]["error"]["code"] == "task_busy"

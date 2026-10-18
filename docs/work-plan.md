@@ -176,8 +176,9 @@ Done, committed, waiting for a push and PR:
 
 Open (from the 2026-10-18 analysis, see [analysis-2026-10-18.md](analysis-2026-10-18.md)):
 
-- [ ] Stop a Build session's agents writing into `.git` (hooks and config run on the host at the next git command), or detect it afterwards.
-- [ ] Refuse a second active session on the same task and repository; today a second Build session switches the repo's branch under the first.
+- [x] Build agents writing into `.git` (hooks and config run on the host at the next git command): path denies added, and `git_guard.py` restores `.git/config`, `.git/config.worktree`, `.git/info/attributes` and non-sample hooks from a per-session baseline before the host runs any git command; a change blocks `ready_to_merge` and is reported in the change set. Tested with real temporary repos. Not verified live: whether `claude -p` honours the path denies (the restore does not depend on it).
+- [x] One running session per task: `start` and `resume` return 409 `task_busy` while another session of the task is starting, active, stopping or cancelling. A paused session does not block; resuming it puts the repo back on its own branch.
+- [x] The change-set view says the repository is still checked out on the build branch and shows `git switch <base>`.
 - [ ] Repair the Ollama fallback (M2.13, M2.15): narrow the trigger, apply it to streamed turns, check the network path.
 - [ ] Add CI (there is no `.github/workflows`): run both test suites on every PR.
 - [ ] Merge the three committed branches above, then run the MVP exit test.
