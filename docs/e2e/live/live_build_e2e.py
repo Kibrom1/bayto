@@ -84,6 +84,7 @@ def make_repo(root):
     (repo / "test_calc.py").write_text(
         "import unittest\nfrom calc import add\n\n\nclass AddTest(unittest.TestCase):\n"
         "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == '__main__':\n    unittest.main()\n")
+    (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n")  # test runs must not dirty the tree
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "calc with a bug")
     return repo
@@ -105,7 +106,8 @@ def run():
     hooks_before = hooks(repo)
     print(f"throwaway repo: {repo}", flush=True)
     # sanity: the seeded test really fails before the team starts
-    pre = subprocess.run(TEST_COMMAND.split(), cwd=repo, capture_output=True, text=True)
+    pre = subprocess.run(TEST_COMMAND.split(), cwd=repo, capture_output=True, text=True,
+                         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
     check("seeded test fails before the build", pre.returncode != 0, f"exit {pre.returncode}")
 
     ws = {"repo_path": str(repo), "base_branch": "main", "test_command": TEST_COMMAND}
@@ -146,8 +148,9 @@ def run():
         if s["status"] == "needs_human":
             print("  session paused (needs_human); the build did not complete on its own", flush=True)
             break
-        if s["status"] == "active" and not note_sent and mark[2] >= 1:
-            # a human note mid-session: it must reach the developer's next prompt
+        if s["status"] == "active" and not note_sent:
+            # A human note reaches an agent's NEXT prompt, never one already built. Send it as soon as the session
+            # is active, before the developer's turn is granted (the first live run sent it mid-turn and it missed).
             api("POST", f"/sessions/{sid}/interject", {"to": ["build-developer"],
                                                         "body": "Also add a one-line docstring to add()."})
             note_sent = True
