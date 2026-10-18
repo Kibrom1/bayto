@@ -165,7 +165,8 @@ def run():
         if s["status"] in ("finished", "failed", "cancelled"):
             break
         if s["status"] == "needs_human":
-            print("  session paused (needs_human); the build did not complete on its own", flush=True)
+            print(f"  session paused (needs_human); the build did not complete on its own. The reason is the last "
+                  f"'Paused:' note in the room: {args.api.replace(':8000', ':5173')}/room/{sid}", flush=True)
             break
         if s["status"] == "active" and not note_sent:
             # A human note reaches an agent's NEXT prompt, never one already built. Send it as soon as the session
