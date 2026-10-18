@@ -75,13 +75,6 @@ and `live_build_e2e.py` (Build, through the API; `--scenario fixcycle` forces a 
 | [research/pricing.md](research/pricing.md) | Pricing model options and recommendation |
 | [research/naming.md](research/naming.md) | Name exploration (English, Amharic, Tigrigna) and the choice of Bayto |
 
-## Live versions
-
-These files are snapshots (2026-09-28) of living docs on claude.ai:
-
-- Product design: https://claude.ai/code/artifact/765aedfd-2f81-4f54-9ad3-db7161a73404
-- Agent Communication Protocol: https://claude.ai/code/artifact/0c99203a-4ac7-4165-abd3-e9418220563b
-
 ## Reference implementation
 
-- https://github.com/Kibrom1/wad-sbx-workshop (fork of shelajev/wad-sbx-workshop)
+The sandbox team setup began from [shelajev/wad-sbx-workshop](https://github.com/shelajev/wad-sbx-workshop); how it maps to Bayto is in [research/wad-sbx-workshop-analysis.md](research/wad-sbx-workshop-analysis.md).
