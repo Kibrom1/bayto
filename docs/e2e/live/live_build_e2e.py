@@ -84,6 +84,7 @@ def make_repo(root):
     (repo / "test_calc.py").write_text(
         "import unittest\nfrom calc import add\n\n\nclass AddTest(unittest.TestCase):\n"
         "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == '__main__':\n    unittest.main()\n")
+    (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n")  # test runs must not dirty the tree
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "calc with a bug")
     return repo
@@ -105,7 +106,8 @@ def run():
     hooks_before = hooks(repo)
     print(f"throwaway repo: {repo}", flush=True)
     # sanity: the seeded test really fails before the team starts
-    pre = subprocess.run(TEST_COMMAND.split(), cwd=repo, capture_output=True, text=True)
+    pre = subprocess.run(TEST_COMMAND.split(), cwd=repo, capture_output=True, text=True,
+                         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
     check("seeded test fails before the build", pre.returncode != 0, f"exit {pre.returncode}")
 
     ws = {"repo_path": str(repo), "base_branch": "main", "test_command": TEST_COMMAND}
