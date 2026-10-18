@@ -169,6 +169,24 @@ async def create_session(
         )
 
 
+# Sessions of one task share a sandbox and, in Build mode, one repository whose checked-out branch the
+# session works on. A second running session would switch that branch under the first, so only one session
+# of a task may be running at a time. A paused (`needs_human`) session does not count: resuming it puts the
+# repository back on its own branch.
+BUSY_STATUSES = ("starting", "active", "stopping", "cancelling")
+
+
+async def _refuse_if_task_busy(db, row) -> None:
+    other = await db.scalar(
+        select(Session).where(Session.task_id == row.task_id, Session.id != row.id,
+                              Session.status.in_(BUSY_STATUSES)).limit(1))
+    if other is not None:
+        raise HTTPException(409, detail=_error(
+            "task_busy",
+            f"Another session of this task is already {other.status} ({str(other.id)[:8]}). Wait for it to "
+            "finish, or end it first: sessions of one task share a sandbox and a repository."))
+
+
 # ---------------------------------------------------------------- POST /sessions/{id}/start
 
 @router.post("/sessions/{session_id}/start", status_code=202)
@@ -190,6 +208,7 @@ async def start_session(
         if row.status != STATUS_CREATED:
             raise HTTPException(409, detail=_error("invalid_transition",
                                                      f"cannot start a session in status {row.status!r}"))
+        await _refuse_if_task_busy(db, row)
         row.status = STATUS_STARTING
         await db.commit()
 
@@ -339,6 +358,7 @@ async def resume_session(
             raise HTTPException(409, detail=_error(
                 "invalid_transition",
                 f"can only resume a paused (needs_human) session (current status: {row.status!r})"))
+        await _refuse_if_task_busy(db, row)
         # Flip status back to `starting` so launch_runner() follows its normal path:
         # it reads `starting`, creates the sandbox if needed, then flips to `active`.
         # This also prevents a double-tap of /resume from racing into two parallel runners

@@ -38,6 +38,7 @@ import asyncio
 import json
 import logging
 import uuid
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -151,10 +152,12 @@ class ModeratorRunner:
         synthesizer: Synthesizer,
         scorer: HandRaiseScorer | None = None,  # required only when mode.floor_policy == "raise-hand"
         config: ModeratorConfig = ModeratorConfig(),
+        git_guard_file: Path | None = None,  # Build mode: baseline of the repo's .git config and hooks (git_guard.py)
     ) -> None:
         if mode.floor_policy == "raise-hand" and scorer is None:
             raise ValueError("raise-hand mode needs a HandRaiseScorer")
         self._session_id = session_id
+        self._git_guard_file = git_guard_file
         self._sessionmaker = sessionmaker
         self._conversation = conversation
         self._sandbox_provider = sandbox_provider
@@ -1021,7 +1024,8 @@ class ModeratorRunner:
             content = await asyncio.to_thread(
                 build_change_set, workspace=task.workspace, session_id=self._session_id,
                 stop_reason=_STOP_REASON_VALUES.get(reason, reason), turns=turns,
-                summary=(synthesis or {}).get("summary") if isinstance(synthesis, dict) else None)
+                summary=(synthesis or {}).get("summary") if isinstance(synthesis, dict) else None,
+                guard_file=self._git_guard_file)
             if content is not None:
                 session.add(Artifact(session_id=self._session_id, type="change_set", content_json=content,
                                       source_turn_ids=[t.id for t in turn_rows]))

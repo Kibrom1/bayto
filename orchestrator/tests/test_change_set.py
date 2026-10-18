@@ -108,3 +108,29 @@ def test_complete_without_commits_is_not_ready(repo):
     git(repo, "branch", build_branch_name(sid))
     cs = build_change_set(workspace=_ws(repo), session_id=sid, stop_reason="build_complete", turns=TURNS)
     assert cs["status"] == "needs_you" and "No commits landed on the branch." in cs["open_issues"]
+
+
+def test_tampering_with_git_settings_is_undone_reported_and_blocks_ready_to_merge(repo, tmp_path):
+    from orchestrator.git_guard import save_baseline
+    sid = uuid.uuid4()
+    guard = tmp_path / "guard.json"
+    save_baseline(str(repo), guard)
+    commit_on(repo, build_branch_name(sid), "b.py", "1\n", "feat")
+    hook = repo / ".git" / "hooks" / "post-commit"
+    hook.write_text("#!/bin/sh\nevil\n")
+    cs = build_change_set(workspace=_ws(repo), session_id=sid, stop_reason="build_complete", turns=TURNS,
+                          guard_file=guard)
+    assert not hook.exists()  # undone before any host git command ran
+    assert cs["git_guard"] == {"changed": ["git hook 'post-commit' was added"], "restored": True}
+    assert cs["status"] == "needs_you" and "git's own settings" in cs["open_issues"][0]
+
+
+def test_a_clean_guard_does_not_change_the_outcome(repo, tmp_path):
+    from orchestrator.git_guard import save_baseline
+    sid = uuid.uuid4()
+    guard = tmp_path / "guard.json"
+    save_baseline(str(repo), guard)
+    commit_on(repo, build_branch_name(sid), "b.py", "1\n", "feat")
+    cs = build_change_set(workspace=_ws(repo), session_id=sid, stop_reason="build_complete", turns=TURNS,
+                          guard_file=guard)
+    assert cs["status"] == "ready_to_merge" and cs["git_guard"] == {"changed": [], "restored": False}

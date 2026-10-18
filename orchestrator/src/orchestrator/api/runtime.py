@@ -42,6 +42,7 @@ from ..floor import PipelineFloorPolicy, RaiseHandFloorPolicy, RoundRobinFloorPo
 from ..floor.scorer import HandRaiseScorer
 from ..mirror import MessageMirror
 from ..build_policy import build_seat_tools
+from ..git_guard import save_baseline
 from ..workspace import build_branch_name, prepare_branch
 from ..models import Agent, Mode, Session, SessionAgent, Task
 from ..moderator import ModeratorRunner, Summarizer, Synthesizer
@@ -196,13 +197,19 @@ async def launch_runner(
 
         session_stages[session_id] = "creating the sandbox (sbx env create)"
         log.info("session %s: %s", session_id, session_stages[session_id])
+        session_dir = (root or factory_root()) / str(session_id)
+        session_dir.mkdir(parents=True, exist_ok=True)
         repo_path = None
+        guard_file = None
         if mode_config.floor_policy == "pipeline" and workspace and workspace.get("repo_path"):
             # Build mode: put the repository on the session's branch before the sandbox mounts it.
             repo_path = workspace["repo_path"]
             session_stages[session_id] = "creating the build branch"
             await asyncio.to_thread(prepare_branch, repo_path, workspace.get("base_branch") or "main",
                                     build_branch_name(session_id))
+            # Baseline of git's own config and hooks, kept outside the repo; a resume keeps the first one.
+            guard_file = session_dir / "git-guard.json"
+            await asyncio.to_thread(save_baseline, repo_path, guard_file)
             session_stages[session_id] = "creating the sandbox (sbx env create)"
         sandbox = await sandbox_provider.create(
             task_id, name=f"sbx-{task_id}", seats=seats, **({"workspace": repo_path} if repo_path else {}))
@@ -211,8 +218,6 @@ async def launch_runner(
         await sandbox_provider.start_team(sandbox)
         session_stages.pop(session_id, None)
 
-        session_dir = (root or factory_root()) / str(session_id)
-        session_dir.mkdir(parents=True, exist_ok=True)
         transport = FileTransport(session_dir)
         pubsub = PubSub()
         conversation = OrchestratorConversation.create(conversation_id=str(session_id),
@@ -236,6 +241,7 @@ async def launch_runner(
             sandbox_provider=sandbox_provider, sandbox=sandbox, mode=mode_config, policy=policy,
             stop_rules=StopRulesConfig.from_mode(mode_config), pubsub=pubsub,
             summarizer=summarizer, synthesizer=synthesizer, scorer=scorer,
+            git_guard_file=guard_file,
         )
 
         async with sessionmaker() as db:
