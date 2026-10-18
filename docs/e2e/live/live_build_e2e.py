@@ -148,8 +148,9 @@ def run():
         if s["status"] == "needs_human":
             print("  session paused (needs_human); the build did not complete on its own", flush=True)
             break
-        if s["status"] == "active" and not note_sent and mark[2] >= 1:
-            # a human note mid-session: it must reach the developer's next prompt
+        if s["status"] == "active" and not note_sent:
+            # A human note reaches an agent's NEXT prompt, never one already built. Send it as soon as the session
+            # is active, before the developer's turn is granted (the first live run sent it mid-turn and it missed).
             api("POST", f"/sessions/{sid}/interject", {"to": ["build-developer"],
                                                         "body": "Also add a one-line docstring to add()."})
             note_sent = True
