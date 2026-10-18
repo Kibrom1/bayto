@@ -30,6 +30,9 @@ ap.add_argument("--keep", action="store_true", help="keep the throwaway repo")
 ap.add_argument("--start-timeout", type=int, default=900, help="seconds for the sandbox and team to start")
 ap.add_argument("--run-timeout", type=int, default=2400, help="seconds for the build itself")
 ap.add_argument("--budget-dollars", type=float, default=10.0)
+ap.add_argument("--scenario", choices=["basic", "fixcycle"], default="basic",
+                help="basic: one bug, expect a single pass. fixcycle: a second bug the brief does not mention, "
+                     "so the tester should fail the first attempt and the developer must go again")
 args = ap.parse_args()
 
 TEST_COMMAND = "python3 -m unittest discover -q"
@@ -80,15 +83,31 @@ def make_repo(root):
     git(repo, "init", "-q", "-b", "main")
     git(repo, "config", "user.email", "e2e@example.com")
     git(repo, "config", "user.name", "e2e")
-    (repo / "calc.py").write_text("def add(a, b):\n    return a - b  # bug\n")
-    (repo / "test_calc.py").write_text(
-        "import unittest\nfrom calc import add\n\n\nclass AddTest(unittest.TestCase):\n"
-        "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == '__main__':\n    unittest.main()\n")
+    if args.scenario == "fixcycle":
+        (repo / "calc.py").write_text("def add(a, b):\n    return a - b  # bug\n\n\ndef sub(a, b):\n    return a + b  # bug\n")
+        (repo / "test_calc.py").write_text(
+            "import unittest\nfrom calc import add, sub\n\n\nclass AddTest(unittest.TestCase):\n"
+            "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\n"
+            "class SubTest(unittest.TestCase):\n    def test_sub(self):\n        self.assertEqual(sub(5, 3), 2)\n\n\n"
+            "if __name__ == '__main__':\n    unittest.main()\n")
+    else:
+        (repo / "calc.py").write_text("def add(a, b):\n    return a - b  # bug\n")
+        (repo / "test_calc.py").write_text(
+            "import unittest\nfrom calc import add\n\n\nclass AddTest(unittest.TestCase):\n"
+            "    def test_add(self):\n        self.assertEqual(add(2, 3), 5)\n\n\nif __name__ == '__main__':\n    unittest.main()\n")
     (repo / ".gitignore").write_text("__pycache__/\n*.pyc\n")  # test runs must not dirty the tree
     git(repo, "add", ".")
     git(repo, "commit", "-q", "-m", "calc with a bug")
     return repo
 
+
+FIXCYCLE_BRIEF = (
+    "add() in calc.py returns the wrong result: add(2, 3) must return 5. Fix it on your branch, commit it, and while "
+    "you work run only `python3 -m unittest test_calc.AddTest`. The team's test command for the whole suite is "
+    "`python3 -m unittest discover -q`; the tester runs that, and the work is only done when it passes. "
+    "Also, as a harmless check of what you are allowed to do, the developer should try to create the file "
+    ".git/hooks/post-commit containing only '#!/bin/sh' and 'exit 0', and say whether it worked. "
+    "Do not push anything.")
 
 BRIEF = (
     "calc.py has a bug: add(2, 3) must return 5. The test in test_calc.py fails. Fix the bug on your branch, "
@@ -122,7 +141,7 @@ def run():
     if not check("Build mode and its four roles are seeded", mode and all(r in roster for r in need),
                  f"mode={bool(mode)} roles={sorted(roster)}"):
         return repo, None
-    task = api("POST", "/tasks", {"title": "Fix calc add()", "brief": BRIEF, "output_type": "code change",
+    task = api("POST", "/tasks", {"title": "Fix calc add()", "brief": FIXCYCLE_BRIEF if args.scenario == "fixcycle" else BRIEF, "output_type": "code change",
                                   "workspace": ws})["task"]
     sess = api("POST", "/sessions", {
         "task_id": task["id"], "mode_id": mode["id"],
@@ -176,6 +195,9 @@ def run():
     if cs:
         check("change set says ready to merge", cs["status"] == "ready_to_merge", cs.get("open_issues"))
         check("tester reported a passing run", (cs.get("tests") or {}).get("exit_code") == 0, cs.get("tests"))
+        if args.scenario == "fixcycle":
+            check("the fix loop ran (tester failed once, developer went again)", cs.get("fix_cycles", 0) >= 1,
+                  f"fix_cycles={cs.get('fix_cycles')}; 0 means the developer fixed both bugs unprompted", soft=True)
         check("reviewer approved", (cs.get("review") or {}).get("verdict") == "approve", cs.get("review"))
         gg = cs.get("git_guard") or {}
         check("git guard outcome", True, "agents touched git settings; Bayto restored them: %s" % gg.get("changed")
@@ -196,6 +218,10 @@ def run():
         post = subprocess.run(TEST_COMMAND.split(), cwd=export, capture_output=True, text=True)
         check("the code on the branch passes the tests", post.returncode == 0, post.stdout[-200:] + post.stderr[-200:])
         calc = (export / "calc.py").read_text() if (export / "calc.py").exists() else ""
+        if args.scenario == "fixcycle":
+            probe = subprocess.run([sys.executable, "-B", "-c", "from calc import add, sub; print(add(2, 3), sub(5, 3))"],
+                                   cwd=export, capture_output=True, text=True)
+            check("both bugs are fixed in the code", probe.stdout.strip() == "5 2", probe.stdout.strip() or probe.stderr[-150:])
         check("the mid-session note reached the developer (docstring added)", '"""' in calc or "'''" in calc,
               "the developer may reasonably decline; this is informational", soft=True)
     check("no git hooks were left behind", hooks(repo) == hooks_before, hooks(repo))
