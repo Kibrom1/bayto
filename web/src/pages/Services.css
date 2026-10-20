@@ -1,31 +1,11 @@
 /* The developer console is always dark: the whole page (header included) switches to the dark tokens. */
-:root:has(.svc-theme) {
-  color-scheme: dark;
-  --bg: #0e1020;
-  --surface: #171a33;
-  --surface-2: #222645;
-  --line: #2c3158;
-  --ink: #f1f2f8;
-  --ink-2: #c5c8e0;
-  --ink-3: #9ca1c4;
-  --accent: #f5b301;
-  --accent-ink: #12152e;
-  --accent-soft: #3a2c0b;
-  --accent-text: #f5b301;
-  --ok: #3dd68c;
-  --ok-soft: #10241d;
-  --warn: #f5b301;
-  --warn-soft: #3a2c0b;
-  --danger: #ff9aa8;
-  --danger-soft: #3d1a22;
-  --shadow: none;
-}
+/* The console follows the app theme like every other page. */
 .svc-theme { min-height: calc(100svh - var(--shell-h)); background: var(--bg); }
 
 .svc-page {
   max-width: 1100px;
   margin: 0 auto;
-  padding: 2.25rem 2rem 4rem;
+  padding: 1.75rem 2rem 4rem;
   color: var(--ink);
 }
 
@@ -36,8 +16,8 @@
   margin-bottom: var(--space-6);
 }
 
-.svc-header h1 { margin: 0; font-size: 2.3rem; line-height: 1.1; letter-spacing: -0.03em; }
-.svc-kicker { margin: 0; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-text); }
+.svc-header h1 { margin: 0; font-size: 1.75rem; line-height: 1.1; letter-spacing: -0.03em; }
+.svc-kicker { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--ink-3); }
 
 .svc-card {
   background: var(--surface);
@@ -71,7 +51,7 @@
 .svc-alert { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-radius: var(--radius); margin-bottom: var(--space-4); }
 .svc-alert.bad { background: var(--danger-soft); color: var(--danger); }
 
-.pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.15rem 0.65rem; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; background: var(--surface-2); color: var(--ink-2); }
+.pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.15rem 0.65rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; background: var(--surface-2); color: var(--ink-2); }
 .pill-dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
 .pill-ok { background: var(--ok-soft); color: var(--ok); }
 .pill-bad { background: var(--danger-soft); color: var(--danger); }
