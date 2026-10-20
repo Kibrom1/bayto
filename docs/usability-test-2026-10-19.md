@@ -57,3 +57,8 @@ Real model output quality and latency; real `sbx` sandboxes and the Services con
 
 ## Reproduce
 `docs/e2e/usability/reset.sh` (resets a scratch DB `bayto_ux` and starts `run_fake.py` on :8000), start Vite, then run `maya.py`, `daniel.py`, `rosa.py`, `rosa2.py`. The scripts assume `/tmp/tr/...` paths and Playwright; adjust before reuse.
+
+## Fix status (2026-10-20, branch `fix/usability-2026-10-19`)
+Fixed and re-tested live (axe now reports zero violations on board, room and setup; 52 web tests pass): #1 result shown when a live session ends, #2 and #8 `<main>` landmark, focusable transcript, brand-link name, #4 "Offline" removed (only "Reconnecting…" on a real drop), #5 Pause/End hidden when ended and one banner when archived, #6 VERDICT shown as a tag (summary text is stripped of it), #7 "Change ready" label for Build tasks, #9 44px touch targets on touch screens and a bordered "More", #10 presets show dollar values, #11 reason shown beside the disabled Create button, #12 "0" instead of "-0".
+Changed but not separately reproducible: #3 (dialogs are native `<dialog>`, so the Tab "leak" was probably a test artifact; focus now explicitly returns to the opener).
+Open: #6 summary truncation (came from the fake summarizer, check with a real model), #13 menu arrow-key navigation, #14 repository path check, Back/refresh mid-session.
