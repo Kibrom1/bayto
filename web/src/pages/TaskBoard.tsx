@@ -54,9 +54,20 @@ function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task
         {task.last_session_id ? 'New session' : 'Start session'}
       </Link>
       {task.last_session_id && !['active', 'starting', 'stopping'].includes(task.status ?? '') && (
-        <details className="row-menu">
+        <details
+          className="row-menu"
+          onKeyDown={(e) => {
+            const d = e.currentTarget
+            const items = [...d.querySelectorAll<HTMLButtonElement>('.row-menu-list button')]
+            const i = items.indexOf(document.activeElement as HTMLButtonElement)
+            if (e.key === 'Escape' && d.open) { e.preventDefault(); d.open = false; d.querySelector('summary')?.focus() }
+            else if (e.key === 'ArrowDown' && d.open) { e.preventDefault(); items[(i + 1) % items.length]?.focus() }
+            else if (e.key === 'ArrowUp' && d.open) { e.preventDefault(); items[(i <= 0 ? items.length : i) - 1]?.focus() }
+          }}
+          onToggle={(e) => { if (e.currentTarget.open) e.currentTarget.querySelector<HTMLButtonElement>('.row-menu-list button')?.focus() }}
+        >
           <summary className="btn ghost sm" aria-label={`More actions for ${task.title}`}>More</summary>
-          <div className="row-menu-list">
+          <div className="row-menu-list" role="group" aria-label="Task actions">
             <button type="button" onClick={() => onArchive(task)}>Archive</button>
             <button type="button" className="danger" onClick={() => onDelete(task)}>Delete</button>
           </div>
