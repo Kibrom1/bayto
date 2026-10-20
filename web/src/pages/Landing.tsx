@@ -11,6 +11,11 @@ function Cta({ staticSite, className }: { staticSite: boolean; className: string
     : <Link to="/" className={className}>Start a session</Link>
 }
 
+const VIDEOS = [
+  { file: 'debate.mp4', poster: 'debate-poster.webp', title: 'A debate', caption: 'Three agents argue a release-cadence question, you add a point, and the moderator ends with a decision.', fallback: 'A recording of a Bayto debate: creating a task, seating three agents, watching them argue and reading the synthesis.' },
+  { file: 'build.mp4', poster: 'build-poster.webp', title: 'A build', caption: 'The architect asks you a question, a developer, tester and reviewer work through two fix cycles, and you get a branch to merge.', fallback: 'A recording of a Bayto build: an architect, developer, tester and reviewer change code on a new git branch.' },
+]
+
 const SHOTS = [
   { file: 'setup.webp', title: 'Seat your agents', alt: 'Session setup: a mode, three agents in the roster and a spending cap.' },
   { file: 'synthesis.webp', title: 'Leave with a decision', alt: 'The final synthesis: a decision, key points, next steps and a minority report.' },
@@ -145,12 +150,19 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
 
         <section id="see" className="ld-section">
           <p className="eyebrow">See it in action</p>
-          <h2>A session, start to finish.</h2>
-          <video className="ld-video" controls muted playsInline preload="none" poster={asset('poster.webp')}>
-            <source src={asset('bayto-walkthrough.mp4')} type="video/mp4" />
-            A short walkthrough of a Bayto session: creating a task, seating agents, watching the debate and reading the synthesis.
-          </video>
-          <p className="ld-fine">A 30-second walkthrough with sample agents.</p>
+          <h2>Two sessions, start to finish.</h2>
+          <div className="ld-videos">
+            {VIDEOS.map((v) => (
+              <figure key={v.file}>
+                <video className="ld-video" controls muted playsInline preload="none" poster={asset(v.poster)} aria-label={v.title}>
+                  <source src={asset(v.file)} type="video/mp4" />
+                  {v.fallback}
+                </video>
+                <figcaption><strong>{v.title}</strong> {v.caption}</figcaption>
+              </figure>
+            ))}
+          </div>
+          <p className="ld-fine">Both recordings use sample agents.</p>
           <div className="ld-shots">
             {SHOTS.map((s) => (
               <figure key={s.file}>
