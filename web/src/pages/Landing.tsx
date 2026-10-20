@@ -1,3 +1,4 @@
+import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { BrandMark } from '../components/AppShell'
 import { TableRing } from '../components/TableRing'
@@ -9,6 +10,57 @@ function Cta({ staticSite, className }: { staticSite: boolean; className: string
   return staticSite
     ? <a href="#see" className={className}>Watch the walkthrough</a>
     : <Link to="/" className={className}>Start a session</Link>
+}
+
+const CONTACT_EMAIL = 'brightstepsdigitalllc@gmail.com'
+
+function ContactForm() {
+  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = e.currentTarget
+    const data = new FormData(form)
+    setState('sending')
+    try {
+      const res = await fetch(`https://formsubmit.co/ajax/${CONTACT_EMAIL}`, {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        body: data,
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      form.reset()
+      setState('sent')
+    } catch {
+      setState('error')
+    }
+  }
+  if (state === 'sent') {
+    return <p className="ld-contact-done" role="status">Thanks, we got it. We'll write back to the email you gave us.</p>
+  }
+  return (
+    <form className="ld-contact-form" onSubmit={submit}>
+      <input type="hidden" name="_subject" value="Bayto: someone wants to talk" />
+      <input type="hidden" name="_captcha" value="false" />
+      <input type="text" name="_honey" className="ld-honey" tabIndex={-1} autoComplete="off" aria-hidden="true" />
+      <label>
+        Your email
+        <input type="email" name="email" required autoComplete="email" />
+      </label>
+      <label>
+        What would you use Bayto for?
+        <textarea name="message" rows={4} required />
+      </label>
+      <button type="submit" className="btn primary lg" disabled={state === 'sending'}>
+        {state === 'sending' ? 'Sending…' : 'Send'}
+      </button>
+      {state === 'error' && (
+        <p className="ld-contact-error" role="alert">
+          That did not go through. Email us at <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> instead.
+        </p>
+      )}
+      <p className="ld-contact-note">We only use your email to reply to you.</p>
+    </form>
+  )
 }
 
 const VIDEOS = [
@@ -79,6 +131,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
           <a href="#agents">Agents</a>
           <a href="#see">See it</a>
           <a href="#local">Runs locally</a>
+          {staticSite && <a href="#contact">Talk to us</a>}
           {!staticSite && <Cta staticSite={staticSite} className="btn primary" />}
         </nav>
       </div>
@@ -232,6 +285,13 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
         <section className="ld-final">
           <h2>Bring the problem. Bayto brings the team.</h2>
           {!staticSite && <Cta staticSite={staticSite} className="btn primary lg" />}
+          {staticSite && (
+            <div id="contact" className="ld-contact">
+              <h3>Want to talk?</h3>
+              <p>Tell us what you'd use Bayto for, or ask for early access.</p>
+              <ContactForm />
+            </div>
+          )}
         </section>
       </main>
 
