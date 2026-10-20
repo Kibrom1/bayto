@@ -1,0 +1,51 @@
+import time, json, re
+from playwright.sync_api import sync_playwright
+OUT="/tmp/tr/ut/daniel"; t0=time.time()
+def note(k,t): print(f"[{time.time()-t0:6.1f}] {k}: {t}", flush=True)
+with sync_playwright() as p:
+    b=p.chromium.launch(); pg=b.new_page(viewport={"width":1280,"height":800}); pg.set_default_timeout(8000)
+    errs=[]; pg.on("pageerror", lambda e: errs.append(str(e))); pg.on("console", lambda m: errs.append(m.text) if m.type=="error" else None)
+    shot=lambda n: pg.screenshot(path=f"{OUT}/{n}.png")
+    def step(name, fn):
+        try: fn()
+        except Exception as e: note("FAIL", f"{name}: {str(e).splitlines()[0][:200]}"); shot("fail-"+name)
+    pg.goto("http://localhost:5173/"); pg.wait_for_timeout(800)
+    pg.get_by_role("button", name=re.compile("New task|Create your first task")).first.click(); pg.wait_for_timeout(300)
+    pg.get_by_placeholder("Weekly or biweekly releases?").fill("Add hello.py")
+    pg.get_by_placeholder("Context, constraints").fill("Add hello.py with a hello() function returning 'hi' and a pytest for it.")
+    pg.get_by_placeholder("Pick one or type your own").fill("A working change")
+    pg.get_by_label(re.compile("changes code")).check(); pg.wait_for_timeout(300); shot("01-build-form")
+    note("see","form now: "+str([(e.get_attribute("placeholder") or e.get_attribute("id")) for e in pg.locator("dialog input, dialog textarea, [role=dialog] input").all()]))
+    step("repo", lambda: pg.get_by_label("Repository path").fill("/tmp/tr/repo"))
+    step("test", lambda: pg.get_by_label("Test command").fill("python3 -m pytest -q"))
+    shot("02-build-form-filled")
+    pg.get_by_role("button", name="Create task").click(); pg.wait_for_timeout(1500); shot("03-board")
+    note("see","board: "+pg.locator("body").inner_text()[300:700].replace("\n"," | "))
+    pg.get_by_role("link", name=re.compile("Start")).first.click(); pg.wait_for_timeout(1200)
+    pg.locator(".mode-card", has_text="Build").click(); pg.wait_for_timeout(400); shot("04-setup-build")
+    names=[x.inner_text() for x in pg.locator(".agent-card strong").all()]; note("see","agents in build setup: %s"%names)
+    note("see","roster preselected: %s"%pg.locator(".roster-name").all_inner_texts())
+    pg.get_by_role("button", name="Start session").click(); pg.wait_for_timeout(3000)
+    note("see","room url=%s"%pg.url); shot("07-room")
+    # wait for pause (blocked)
+    for i in range(30):
+        h=pg.locator(".room-titlerow .chip").first.inner_text().strip().lower()
+        if h in("paused","finished","failed"): break
+        pg.wait_for_timeout(2000)
+    note("see","state=%s"%h); pg.wait_for_timeout(1500); shot("08-state"); pg.screenshot(path=f"{OUT}/08b-full.png", full_page=True)
+    note("see","notices=%s"%pg.locator(".notice").all_inner_texts())
+    note("see","header=%s"%pg.locator(".room-header").inner_text().replace("\n"," | "))
+    note("see","transcript tail=%s"%pg.locator(".transcript-inner").inner_text()[-700:].replace("\n"," | "))
+    note("see","panels=%s"%[x.inner_text() for x in pg.locator(".rail h2, .rail-block h2").all()])
+    if h=="paused":
+        pg.get_by_label("Interject").fill("Put hello() in hello.py at repo root, return 'hi'."); pg.get_by_label("Interject").press("Enter"); pg.wait_for_timeout(800)
+        pg.get_by_role("button", name="Resume").click(); pg.wait_for_timeout(1500); shot("09-resumed")
+        for i in range(40):
+            h=pg.locator(".room-titlerow .chip").first.inner_text().strip().lower()
+            if h in("paused","finished","failed"): break
+            pg.wait_for_timeout(2000)
+        pg.wait_for_timeout(2500); note("see","after resume state=%s"%h); shot("10-end"); pg.screenshot(path=f"{OUT}/10b-end-full.png", full_page=True)
+        note("see","notices=%s"%pg.locator(".notice").all_inner_texts())
+        note("see","header=%s"%pg.locator(".room-header").inner_text().replace("\n"," | "))
+        note("see","rail=%s"%pg.locator(".rail").inner_text()[:900].replace("\n"," | "))
+    note("see","js errors=%s"%errs[:5]); b.close()

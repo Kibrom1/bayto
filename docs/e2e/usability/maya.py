@@ -1,0 +1,55 @@
+import time, json, re
+from playwright.sync_api import sync_playwright
+OUT="/tmp/tr/ut/maya"; log=[]; t0=time.time()
+def note(k,t): log.append({"t":round(time.time()-t0,1),"k":k,"x":t}); print(f"[{log[-1]['t']:6}] {k}: {t}", flush=True)
+with sync_playwright() as p:
+    b=p.chromium.launch(); pg=b.new_page(viewport={"width":1280,"height":800}); pg.set_default_timeout(8000)
+    errs=[]; pg.on("pageerror", lambda e: errs.append(str(e))); pg.on("console", lambda m: errs.append(m.text) if m.type=="error" else None)
+    shot=lambda n: pg.screenshot(path=f"{OUT}/{n}.png")
+    def step(name, fn):
+        try: fn()
+        except Exception as e: note("FAIL", f"{name}: {str(e).splitlines()[0][:200]}"); shot("fail-"+name)
+    pg.goto("http://localhost:5173/"); pg.wait_for_timeout(800)
+    # T1 create task
+    pg.get_by_role("button", name="Create your first task").click(); pg.wait_for_timeout(300)
+    pg.get_by_placeholder("Weekly or biweekly releases?").fill("Should we release weekly or biweekly?")
+    pg.get_by_placeholder("Context, constraints").fill("Our team ships every two weeks. Support wants predictability, engineering wants weekly. Decide.")
+    pg.get_by_placeholder("Pick one or type your own").fill("A decision"); shot("03-form-filled")
+    pg.get_by_role("button", name="Create task").click(); pg.wait_for_timeout(1200); shot("04-after-create")
+    note("see","after create url=%s body=%s"%(pg.url, pg.locator("body").inner_text()[:300].replace("\n"," | ")))
+    note("T1","task created at t=%.0fs"%(time.time()-t0))
+    # T2 start session
+    t1=time.time()
+    step("open-setup", lambda: (pg.get_by_role("link", name=re.compile("Start|session|Set up",re.I)).first.click(), pg.wait_for_timeout(1200)))
+    shot("05-setup"); note("see","setup url=%s"%pg.url)
+    pg.screenshot(path=f"{OUT}/05b-setup-full.png", full_page=True)
+    pg.get_by_role("button", name="Start session").click(); pg.wait_for_timeout(500); shot("06-start-empty")
+    note("see","empty start -> alerts: %s | url=%s"%(pg.locator("[role=alert]").all_inner_texts(), pg.url))
+    note("see","modes preselected: %s"%[ (x.get_attribute("value"), x.is_checked()) for x in pg.locator("input[name=mode]").all()])
+    step("pick-debate", lambda: pg.locator(".mode-card", has_text="Debate").click())
+    names=[x.inner_text() for x in pg.locator(".agent-card strong").all()]; note("see","agents offered: %s"%names)
+    for n in names[:3]:
+        step("add-"+n, lambda n=n: pg.locator(".agent-card", has_text=n).get_by_role("button", name="Add to roster").click())
+    shot("07-chosen"); note("see","estimate %s ; cap=%s"%(pg.locator(".estimate-figure").inner_text(), pg.locator("#b-dollars").input_value()))
+    pg.get_by_role("button", name="Start session").click(); pg.wait_for_timeout(2500); shot("08-room-start")
+    note("T2","session started after %.0fs in setup; url=%s"%(time.time()-t1, pg.url))
+    note("see","header: %s"%pg.locator(".room-header").inner_text().replace("\n"," | "))
+    pg.wait_for_timeout(9000); shot("09-room-running")
+    note("see","msgs=%d roster=%s"%(pg.locator(".msg").count(), pg.locator(".roster-name, .rail-block li").all_inner_texts()[:6]))
+    note("see","header now: %s"%pg.locator(".room-header").inner_text().replace("\n"," | "))
+    box=pg.get_by_label("Interject"); step("type", lambda: box.fill("What about the cost of release management?")); shot("10-typed")
+    step("send", lambda: box.press("Enter")); pg.wait_for_timeout(1500); shot("11-after-send")
+    note("T3","note shown in transcript: %d"%pg.get_by_text("What about the cost of release management?").count())
+    st=""
+    for i in range(45):
+        st=pg.locator(".room-titlerow .chip").first.inner_text().strip().lower()
+        if st in ("finished","failed","stopped"): break
+        pg.wait_for_timeout(2000)
+    pg.wait_for_timeout(4000); shot("12-end"); pg.screenshot(path=f"{OUT}/12b-end-full.png", full_page=True)
+    note("see","end status=%s; header=%s"%(st, pg.locator(".room-header").inner_text().replace("\n"," | ")))
+    note("see","notices=%s"%pg.locator(".notice").all_inner_texts())
+    note("see","body tail=%s"%pg.locator(".transcript-inner").inner_text()[-900:].replace("\n"," | "))
+    step("back", lambda: (pg.get_by_role("link", name="Tasks").first.click(), pg.wait_for_timeout(1000))); shot("13-board")
+    note("see","board=%s"%pg.locator("body").inner_text()[:500].replace("\n"," | "))
+    note("see","js errors=%s"%errs[:5]); b.close()
+json.dump(log, open(f"{OUT}/log.json","w"), indent=1)
