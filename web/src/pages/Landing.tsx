@@ -16,6 +16,11 @@ const VIDEOS = [
   { file: 'build.mp4', poster: 'build-poster.webp', title: 'A build', caption: 'The architect asks you a question, a developer, tester and reviewer work through two fix cycles, and you get a branch to merge.', fallback: 'A recording of a Bayto build: an architect, developer, tester and reviewer change code on a new git branch.' },
 ]
 
+const SPECIALISTS = [
+  'Architect', 'Security Reviewer', 'PM', 'Lawyer', 'Customer', 'Historian', 'Developer',
+  'QA Tester', 'E2E Tester', 'UX Designer', 'Researcher', 'CFO', 'Technical Writer',
+]
+
 const SHOTS = [
   { file: 'setup.webp', title: 'Seat your agents', alt: 'Session setup: a mode, three agents in the roster and a spending cap.' },
   { file: 'synthesis.webp', title: 'Leave with a decision', alt: 'The final synthesis: a decision, key points, next steps and a minority report.' },
@@ -69,6 +74,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
         )}
         <nav aria-label="Main" className="ld-links">
           <a href="#how">How it works</a>
+          <a href="#agents">Agents</a>
           <a href="#see">See it</a>
           <a href="#modes">Modes</a>
           <a href="#local">Runs locally</a>
@@ -145,6 +151,22 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
                 <p>{f.body}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section id="agents" className="ld-section">
+          <p className="eyebrow">Specialist agents</p>
+          <h2>The right expert for the question.</h2>
+          <p className="ld-lede">Every agent has a role, a stance and its own instructions. Seat the ones your question needs, and order them as you want them to speak.</p>
+          <ul className="ld-roles" aria-label="Agents in the catalogue">
+            {SPECIALISTS.map((name) => <li key={name}>{name}</li>)}
+          </ul>
+          <div className="ld-custom">
+            <div>
+              <h3>Need a specialist we don't have?</h3>
+              <p>Add your own: give it a role, a stance and instructions, such as a compliance officer, a data engineer or a customer from your own market. It joins the catalogue, and you seat it like any other agent.</p>
+            </div>
+            <span className="chip accent">Custom agents: coming soon</span>
           </div>
         </section>
 
