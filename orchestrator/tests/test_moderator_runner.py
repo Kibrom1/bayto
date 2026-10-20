@@ -1257,3 +1257,21 @@ def test_platform_limit_detection_is_narrow():
     long_talk = "Should an API apply a rate limit per user or per key? " + "Consider fairness and abuse. " * 30
     assert not f(long_talk)
     assert not f("We should discuss the budget and the schedule.")
+
+
+async def test_a_note_not_yet_mirrored_is_still_in_the_next_prompt(tmp_path, live_sessionmaker):
+    """The race: the human's note is in the message log but the mirror has not polled yet. The grant syncs the
+    mirror first, so the agent still gets the note."""
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {"architect": ["ok\nVERDICT: planned"] * 2})
+    from orchestrator.mirror import MessageMirror
+    from orchestrator.pubsub import PubSub
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id)
+    await runner._conversation.send(sender="human", to=["*"], kind="note", body="Use sqlite, not postgres.")  # no poll
+
+    without_sync = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "Use sqlite" not in without_sync  # the old behaviour: the note was missed
+
+    runner._mirror_sync = mirror.poll_once
+    await runner._conversation.send(sender="human", to=["*"], kind="note", body="Also: keep it to one file.")  # no poll
+    with_sync = await _grant_prompt(live_sessionmaker, runner, "architect")
+    assert "keep it to one file" in with_sync
