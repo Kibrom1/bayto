@@ -76,7 +76,7 @@
 .svc-page a:not(.btn) { color: var(--accent); }
 
 .svc-tabs { display: flex; gap: var(--space-1); }
-.svc-tab { font: inherit; font-size: 0.82rem; padding: 0.3rem 0.85rem; border-radius: 999px; border: 1px solid var(--line); background: none; color: var(--ink-2); cursor: pointer; }
+.svc-tab { font: inherit; font-size: 0.82rem; padding: 0.25rem 0.75rem; border-radius: 6px; border: 1px solid var(--line); background: none; color: var(--ink-2); cursor: pointer; }
 .svc-tab.on { background: var(--saffron); color: #12152e; border-color: transparent; font-weight: 600; }
 
 .svc-console {
