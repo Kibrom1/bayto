@@ -17,6 +17,9 @@ skip decision):
   - whether `start-team` needs an explicit `exec` call or fires automatically as a
     post-create hook from team.sbxenv.yaml
   - the exact stdout of `env create` (how it surfaces the sandbox id/name to persist)
+Update 2026-10-18: creating the sandbox (through dev-team/run.sh), starting the team and the seat turns are proven
+by live Build sessions (docs/e2e/live/live_build_e2e.py). Still unconfirmed: the `ls --json` schema used by
+reconcile, and the `env stop` spelling.
 Verify all of the above from a host with the real `sbx` CLI before relying on this in
 production; until then, treat `SubprocessSbxRunner` as unverified glue and `LocalSbxSandboxProvider`
 as verified only at the DB/argv-shape level (see tests/test_local_sandbox.py).

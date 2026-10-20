@@ -4,7 +4,8 @@ The sandbox mounts the user's repository read-write, `.git` included. Git runs h
 `core.fsmonitor` / `core.sshCommand` / `diff.external` settings and similar from `.git/config` and
 `.git/hooks` on the HOST, the next time anyone runs a git command there. A seat that can write files can
 therefore make its output run on the developer's machine. Path denies on the file tools are not enough
-(a shell redirect writes the same file, and whether `claude -p` honours path rules is unverified), so this
+(a shell redirect writes the same file; a `Write(.git/**)` deny was refused in live runs on 2026-10-18, but a shell
+redirect has not been tried live), so this
 module works from the other end:
 
 1. before the sandbox starts, `save_baseline` records the guarded files (once per session; a resume keeps

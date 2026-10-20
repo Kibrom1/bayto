@@ -10,7 +10,8 @@ response. The three classes take it through their existing `client=` parameter, 
 ANTHROPIC_API_KEY is removed from the child's environment on purpose: if it were present the CLI
 would bill the API key instead of using the subscription login.
 
-UNVERIFIED against a live `claude` login until `spikes/m1-checks/moderator-cli-live.sh` is run.
+Verified live 2026-10-18: real Build sessions (docs/e2e/live/live_build_e2e.py, BAYTO_LLM_BACKEND=cli) produced a
+synthesis artifact through this backend on a Claude subscription login.
 """
 from __future__ import annotations
 
