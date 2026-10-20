@@ -6,7 +6,7 @@ Build turn ends with one line, `VERDICT: <word>`; the mode's `route` table maps
 it needs is on the ConversationView.
 
 Safety valves, all of which stop the pipeline with `AskHuman` (a pause that keeps the work, never
-a failure): a verdict the route table does not know (for example `blocked`), a role that has used
+a failure): a verdict the route table does not know (for example `blocked`) that no person has answered yet (once they do, the same role goes again), a role that has used
 up its turns (`max_fix_cycles` extra turns for any role), a next role that is not seated, and a
 speaker who keeps omitting the verdict line.
 """
@@ -64,6 +64,10 @@ class PipelineFloorPolicy:
             return AskHuman(reason=f"{view.last_speaker} reported '{view.last_verdict}' twice without showing the "
                                    "command it ran and an exit code of 0")
         target = self._route.get(key)
+        if target is None and view.human_replied_since_last_turn:
+            # The speaker is stuck (for example 'blocked') and a person has answered: give the same role another
+            # turn, which carries the person's note. Still bounded by the per-role turn cap.
+            return self._go(view, view.last_speaker, f"{key}+human")
         if target is None:
             return AskHuman(reason=f"{view.last_speaker} reported '{view.last_verdict}', which this pipeline "
                                    "does not route; a person needs to decide the next step")

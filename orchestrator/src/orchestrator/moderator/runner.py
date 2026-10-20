@@ -367,6 +367,12 @@ class ModeratorRunner:
     # ---------------------------------------------------------------- view building
 
     async def _build_view(self) -> ConversationView:
+        if self._pipeline and self._mirror_sync is not None:
+            # A relaunched runner (Resume) builds its first view at once; the person's answer may still be only in the log.
+            try:
+                await self._mirror_sync()
+            except Exception:
+                log.exception("session %s: mirror sync before building the view failed; continuing", self._session_id)
         async with self._sessionmaker() as session:
             rows = (await session.execute(
                 select(SessionAgent, Agent.role)
@@ -412,6 +418,17 @@ class ModeratorRunner:
                         break
                     consecutive_same_speaker += 1
 
+            human_replied = False
+            if self._pipeline and last_speaker is not None:
+                last_reply_seq = await session.scalar(
+                    select(func.max(MessageRow.seq)).where(MessageRow.session_id == self._session_id,
+                                                           MessageRow.from_ == last_speaker,
+                                                           MessageRow.kind != "assignment"))
+                human_replied = bool(await session.scalar(
+                    select(func.count()).select_from(MessageRow).where(
+                        MessageRow.session_id == self._session_id, MessageRow.from_ == "human",
+                        MessageRow.kind == "note", MessageRow.seq > (last_reply_seq or 0))))
+
             grants_this_window = await self._grants_this_window(session)
             recent_transcript = await self._recent_transcript_lines(session)
 
@@ -434,6 +451,7 @@ class ModeratorRunner:
             turns_by_role=turns_by_role,
             consecutive_same_speaker=consecutive_same_speaker,
             last_evidence_ok=last_evidence_ok,
+            human_replied_since_last_turn=human_replied,
         )
 
     async def _grants_this_window(self, session) -> dict[str, int]:

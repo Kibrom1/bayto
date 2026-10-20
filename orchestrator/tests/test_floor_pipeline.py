@@ -132,3 +132,22 @@ def test_a_pass_with_evidence_moves_on():
 
 def test_a_fail_needs_no_evidence_check():
     assert pol().next(view("qa-tester", "fail", turns={"developer": 1}), []).participant == "developer"
+
+
+def test_a_blocked_speaker_goes_again_once_a_person_has_answered():
+    v = view("architect", "blocked", turns={"architect": 1})
+    assert isinstance(nxt(v), AskHuman)
+    answered = v.model_copy(update={"human_replied_since_last_turn": True})
+    d = nxt(answered)
+    assert isinstance(d, Grant) and d.participant == "architect" and d.reason.endswith("+human")
+
+
+def test_a_human_answer_does_not_get_past_the_turn_cap():
+    v = view("architect", "blocked", turns={"architect": 4}).model_copy(update={"human_replied_since_last_turn": True})
+    assert isinstance(nxt(v, max_fix_cycles=3), AskHuman)
+
+
+def test_a_human_answer_does_not_change_a_routable_verdict():
+    v = view("architect", "planned", turns={"architect": 1}).model_copy(update={"human_replied_since_last_turn": True})
+    d = nxt(v)
+    assert isinstance(d, Grant) and d.participant == "developer"
