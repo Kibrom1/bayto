@@ -49,7 +49,16 @@ def _report_out(rep: WorkspaceReport) -> WorkspacePreflightOut:
 async def preflight(ws: WorkspaceIn) -> WorkspacePreflightOut:
     """Check a repo path before a task uses it. Local-only service with no auth (see module
     docstring): it reveals whether a path is a git repo, which is fine on the developer's machine."""
-    return _report_out(await asyncio.to_thread(preflight_workspace, ws.repo_path, ws.base_branch))
+    out = _report_out(await asyncio.to_thread(preflight_workspace, ws.repo_path, ws.base_branch))
+    if ws.test_command:
+        # Creating the task refuses a bad test command (see _validated_workspace); say so here too, so the form
+        # does not report "ready" for something the Create button will then reject.
+        try:
+            parse_test_command(ws.test_command)
+        except ValueError as exc:
+            out.ok = False
+            out.problems = [{"code": "bad_test_command", "detail": str(exc)}, *out.problems]
+    return out
 
 
 async def _validated_workspace(ws: WorkspaceIn) -> dict:

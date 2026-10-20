@@ -80,6 +80,14 @@ async def test_preflight_endpoint(repo):
     assert body["ok"] and body["current_branch"] == "main" and body["dirty"] is False
 
 
+async def test_preflight_reports_a_bad_test_command_like_task_creation_does(repo):
+    for cmd in ("pytest; rm -rf /", "pytest | tee x", "pytest $(id)"):
+        body = (await _post("/workspaces/preflight", {"repo_path": str(repo), "test_command": cmd})).json()
+        assert body["ok"] is False and body["problems"][0]["code"] == "bad_test_command", cmd
+    good = (await _post("/workspaces/preflight", {"repo_path": str(repo), "test_command": "pytest -q && npm test"})).json()
+    assert good["ok"] is True
+
+
 async def test_task_with_workspace_is_stored(live_sessionmaker, repo):
     resp = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "code",
                                   "workspace": {"repo_path": str(repo), "test_command": "pytest -q"}})
