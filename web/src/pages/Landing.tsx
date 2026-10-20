@@ -3,6 +3,24 @@ import { BrandMark } from '../components/AppShell'
 import { TableRing } from '../components/TableRing'
 import './Landing.css'
 
+// The public landing page is a static site (see web/landing). There the "Start a session" buttons point
+// at the repository, because the app itself only runs on the person's own machine.
+const REPO_URL = 'https://github.com/Kibrom1/bayto'
+
+function Cta({ staticSite, className }: { staticSite: boolean; className: string }) {
+  return staticSite
+    ? <a href={REPO_URL} className={className}>Get Bayto on GitHub</a>
+    : <Link to="/" className={className}>Start a session</Link>
+}
+
+const SHOTS = [
+  { file: 'setup.webp', title: 'Seat your agents', alt: 'Session setup: a mode, three agents in the roster and a spending cap.' },
+  { file: 'synthesis.webp', title: 'Leave with a decision', alt: 'The final synthesis: a decision, key points, next steps and a minority report.' },
+  { file: 'build.webp', title: 'Or leave with a change', alt: 'Build mode: a reviewed git branch with test results and diff statistics, ready to merge.' },
+  { file: 'board.webp', title: 'Every task in one place', alt: 'The task board listing finished tasks with their results.' },
+]
+const asset = (name: string) => `${import.meta.env.BASE_URL}walkthrough/${name}`
+
 const STEPS = [
   { title: 'Put the question on the table', body: 'Write a title and a brief, and say what you want back: a decision, a plan, a list of options.' },
   { title: 'Seat your agents', body: 'Choose a mode and a roster. Every agent has a role and a stance, such as pragmatist, adversarial or risk-averse.' },
@@ -31,19 +49,27 @@ const DEMO_SEATS = [
   { key: 'p', initials: 'PM', hue: 348 },
 ]
 
-export function Landing() {
+export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
   return (
-    <div className="landing">
+    <div className="landing" id="top">
       <header className="ld-nav">
-        <Link to="/welcome" className="brand" aria-label="Bayto home">
-          <BrandMark size={32} />
-          Bayto
-        </Link>
+        {staticSite ? (
+          <a href="#top" className="brand" aria-label="Bayto home">
+            <BrandMark size={32} />
+            Bayto
+          </a>
+        ) : (
+          <Link to="/welcome" className="brand" aria-label="Bayto home">
+            <BrandMark size={32} />
+            Bayto
+          </Link>
+        )}
         <nav aria-label="Main" className="ld-links">
           <a href="#how">How it works</a>
+          <a href="#see">See it</a>
           <a href="#modes">Modes</a>
           <a href="#local">Runs locally</a>
-          <Link to="/" className="btn primary">Start a session</Link>
+          <Cta staticSite={staticSite} className="btn primary" />
         </nav>
       </header>
 
@@ -54,7 +80,7 @@ export function Landing() {
             <h1>Convene a team of AI agents.</h1>
             <p className="ld-lede">Put a hard question to a table of Claude agents that hold different positions. They debate it live, a moderator keeps it fair, you steer. You leave with a decision and the strongest dissent.</p>
             <div className="ld-cta">
-              <Link to="/" className="btn primary lg">Start a session</Link>
+              <Cta staticSite={staticSite} className="btn primary lg" />
               <a href="#how" className="btn lg">See how it works</a>
             </div>
             <p className="ld-fine">Runs on your own Claude subscription. No API key to manage.</p>
@@ -119,6 +145,24 @@ export function Landing() {
           </div>
         </section>
 
+        <section id="see" className="ld-section">
+          <p className="eyebrow">See it in action</p>
+          <h2>A session, start to finish.</h2>
+          <video className="ld-video" controls muted playsInline preload="none" poster={asset('poster.webp')}>
+            <source src={asset('bayto-walkthrough.mp4')} type="video/mp4" />
+            A short walkthrough of a Bayto session: creating a task, seating agents, watching the debate and reading the synthesis.
+          </video>
+          <p className="ld-fine">A 30-second walkthrough with sample agents.</p>
+          <div className="ld-shots">
+            {SHOTS.map((s) => (
+              <figure key={s.file}>
+                <img src={asset(s.file)} alt={s.alt} loading="lazy" width="1280" height="800" />
+                <figcaption>{s.title}</figcaption>
+              </figure>
+            ))}
+          </div>
+        </section>
+
         <section id="local" className="ld-section">
           <div className="ld-band">
             <div>
@@ -135,7 +179,7 @@ export function Landing() {
 
         <section className="ld-final">
           <h2>Bring the question. Bayto brings the table.</h2>
-          <Link to="/" className="btn primary lg">Start a session</Link>
+          <Cta staticSite={staticSite} className="btn primary lg" />
         </section>
       </main>
 
