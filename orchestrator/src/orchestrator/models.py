@@ -117,6 +117,9 @@ class Session(Base):
     # same "status-adjacent value" pattern as M2.9's "orphaned" status.
     stop_reason: Mapped[str | None] = mapped_column(String)
     fallback_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False) # M2.12: reactive fallback flag
+    # Archived: hidden from the task board and left out of the context later sessions on the task are given.
+    # The record (transcript, cost) is kept; delete removes it.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SessionAgent(Base):

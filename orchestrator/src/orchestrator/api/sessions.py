@@ -10,22 +10,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from ..models import Agent, Artifact, Message, Mode, Session, SessionAgent, Task, Turn
+from ..models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_login_check, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
-from .runtime import launch_runner, session_failures, session_stages
+from .runtime import _retire_runtime, factory_root, launch_runner, session_failures, session_stages
 from .types import LABEL_MAX, MESSAGE_MAX, REASON_MAX, text
 
 log = logging.getLogger(__name__)
@@ -537,6 +538,7 @@ class SessionDetailOut(BaseModel):
     stage: str | None = None
     # Why a finished session ended (max_rounds, no_new_arguments, user_stop, ...); null while it runs.
     stop_reason: str | None = None
+    archived_at: datetime | None = None
 
 
 class SessionDetailResponse(BaseModel):
@@ -568,7 +570,7 @@ async def get_session(
     usage = await session_usage(sessionmaker, session_id)
     return SessionDetailResponse(session=SessionDetailOut(
         id=row.id, task_id=row.task_id, mode_id=row.mode_id, status=row.status,
-        started_at=row.started_at, ended_at=row.ended_at, round=max_round or 0, budget=row.budget,
+        started_at=row.started_at, ended_at=row.ended_at, round=max_round or 0, budget=row.budget, archived_at=row.archived_at,
         usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
         turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
                      for role, agent_id, count in turn_counts_rows],
@@ -744,3 +746,75 @@ async def session_events(
                 runtime.pubsub.unsubscribe(queue)
 
     return EventSourceResponse(event_stream())
+
+
+# ---------------------------------------------------------------- archive / unarchive / delete
+
+# A session in one of these states has a runner, a mirror or a sandbox call in flight.
+_BUSY_STATUSES = {STATUS_STARTING, STATUS_ACTIVE, STATUS_STOPPING, STATUS_CANCELLING}
+
+
+async def _load_idle_session(db, session_id: uuid.UUID, action: str) -> Session:
+    row = await db.get(Session, session_id)
+    if row is None:
+        raise HTTPException(404, detail=_error("not_found", "session not found"))
+    if row.status in _BUSY_STATUSES:
+        raise HTTPException(409, detail=_error(
+            "session_busy", f"can't {action} a session that is {row.status}; pause or end it first"))
+    return row
+
+
+@router.post("/sessions/{session_id}/archive")
+async def archive_session(session_id: uuid.UUID,
+                          sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> dict:
+    """Take a session out of use without deleting it: it leaves the task board, and its summary and synthesis are no
+    longer given to later sessions on the task as context. The transcript and the cost record stay. Idempotent."""
+    async with sessionmaker() as db:
+        row = await _load_idle_session(db, session_id, "archive")
+        if row.archived_at is None:
+            row.archived_at = datetime.now(timezone.utc)
+            await db.commit()
+        return {"session": {"id": str(session_id), "archived_at": row.archived_at.isoformat()}}
+
+
+@router.post("/sessions/{session_id}/unarchive")
+async def unarchive_session(session_id: uuid.UUID,
+                            sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> dict:
+    async with sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        if row is None:
+            raise HTTPException(404, detail=_error("not_found", "session not found"))
+        row.archived_at = None
+        await db.commit()
+        return {"session": {"id": str(session_id), "archived_at": None}}
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id: uuid.UUID, request: Request,
+                         sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> None:
+    """Permanently remove a session: its turns, messages, reports, artifacts, usage records and the transcript files.
+    Refused while the session is starting, running or ending. A paused session is fine: its runtime is retired first.
+    The task, its sandbox and a Build branch in the repository are not touched."""
+    async with sessionmaker() as db:
+        await _load_idle_session(db, session_id, "delete")
+
+    runtime = request.app.state.session_runtimes.pop(session_id, None)
+    if runtime is not None:
+        await _retire_runtime(runtime)
+    request.app.state.running_sessions.pop(session_id, None)
+    session_failures.pop(session_id, None)
+    session_stages.pop(session_id, None)
+
+    async with sessionmaker() as db:
+        # Children first: usage and artifacts point at turns, reports at messages.
+        for model in (Report, UsageLedger, Artifact):
+            await db.execute(delete(model).where(model.session_id == session_id))
+        for model in (Message, Turn, SessionAgent):
+            await db.execute(delete(model).where(model.session_id == session_id))
+        await db.execute(delete(Session).where(Session.id == session_id))
+        await db.commit()
+
+    root = factory_root().resolve()
+    folder = (root / str(session_id)).resolve()
+    if folder.parent == root and folder.is_dir():
+        await asyncio.to_thread(shutil.rmtree, folder, True)

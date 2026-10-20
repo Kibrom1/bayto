@@ -160,7 +160,7 @@ async def list_tasks(sessionmaker: async_sessionmaker = Depends(get_db_sessionma
             # last among several, but it's still the one and only row when there's just
             # one). See docs/decisions.md if this ever needs a real created_at tiebreak.
             last_session = (await db.execute(
-                select(Session).where(Session.task_id == task.id)
+                select(Session).where(Session.task_id == task.id, Session.archived_at.is_(None))
                 .order_by(Session.started_at.desc().nullslast())
                 .limit(1)
             )).scalar_one_or_none()
