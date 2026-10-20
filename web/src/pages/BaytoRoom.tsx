@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog } from '../components/Dialog'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   getAgentTemplates,
   getModes,
@@ -8,6 +8,8 @@ import {
   getSessionDetail,
   interjectSession,
   listTasks,
+  archiveSession,
+  deleteSession,
   pauseSession,
   startSession,
   resumeSession,
@@ -68,6 +70,8 @@ export function BaytoRoom() {
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [confirmStop, setConfirmStop] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const navigate = useNavigate()
   const [artifacts, setArtifacts] = useState<ArtifactOut[]>([])
   const [atBottom, setAtBottom] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -189,6 +193,8 @@ export function BaytoRoom() {
   const finished = FINISHED.includes(status)
   // Only a running session has a runtime that can take a message (the server answers 409 otherwise).
   const canSend = status === 'active' || status === 'running'
+  // Archive and Delete are for a session nothing is running in; the server refuses the others too.
+  const removable = !['starting', 'active', 'running', 'stopping', 'cancelling'].includes(status)
   // A paused session still accepts a message: it waits in the log and the agents see it after Resume.
   const canType = canSend || paused
   const sendBlocked = finished ? 'ended' : paused ? 'paused' : canSend ? null : 'starting'
@@ -229,9 +235,39 @@ export function BaytoRoom() {
             <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
           )}
           <button type="button" className="btn danger" disabled={finished} onClick={() => setConfirmStop(true)}>End &amp; synthesize</button>
+          {removable && (
+            <>
+              <button type="button" className="btn" onClick={() => run(() => archiveSession(sessionId!, !session.archived_at), session.archived_at ? 'Session restored' : 'Session archived')}>
+                {session.archived_at ? 'Unarchive' : 'Archive'}
+              </button>
+              <button type="button" className="btn danger" onClick={() => setConfirmDelete(true)}>Delete</button>
+            </>
+          )}
         </div>
       </header>
 
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Delete this session?"
+          message="Its conversation, results and cost record are removed for good. The task stays. To keep the record but stop it from shaping later sessions, archive it instead."
+          confirmLabel="Delete session"
+          cancelLabel="Keep it"
+          danger
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={async () => {
+            setConfirmDelete(false)
+            try {
+              await deleteSession(sessionId!)
+              navigate('/')
+            } catch (err) {
+              flash(err instanceof Error ? err.message : 'Could not delete the session', true)
+            }
+          }}
+        />
+      )}
+      {session.archived_at && (
+        <div className="notice" role="status">Archived. It is hidden from the task board, and the agents no longer see it as context for new sessions.</div>
+      )}
       {confirmStop && (
         <ConfirmDialog
           title="End session and synthesize?"
