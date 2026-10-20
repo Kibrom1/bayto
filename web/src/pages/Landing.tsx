@@ -3,13 +3,11 @@ import { BrandMark } from '../components/AppShell'
 import { TableRing } from '../components/TableRing'
 import './Landing.css'
 
-// The public landing page is a static site (see web/landing). There the "Start a session" buttons point
-// at the repository, because the app itself only runs on the person's own machine.
-const REPO_URL = 'https://github.com/Kibrom1/bayto'
-
+// The public landing page is a static site (see web/landing). The app only runs on the person's own
+// machine, so there the main button leads to the walkthrough, and the nav and closing buttons are left out.
 function Cta({ staticSite, className }: { staticSite: boolean; className: string }) {
   return staticSite
-    ? <a href={REPO_URL} className={className}>Get Bayto on GitHub</a>
+    ? <a href="#see" className={className}>Watch the walkthrough</a>
     : <Link to="/" className={className}>Start a session</Link>
 }
 
@@ -69,7 +67,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
           <a href="#see">See it</a>
           <a href="#modes">Modes</a>
           <a href="#local">Runs locally</a>
-          <Cta staticSite={staticSite} className="btn primary" />
+          {!staticSite && <Cta staticSite={staticSite} className="btn primary" />}
         </nav>
       </header>
 
@@ -179,7 +177,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
 
         <section className="ld-final">
           <h2>Bring the question. Bayto brings the table.</h2>
-          <Cta staticSite={staticSite} className="btn primary lg" />
+          {!staticSite && <Cta staticSite={staticSite} className="btn primary lg" />}
         </section>
       </main>
 
