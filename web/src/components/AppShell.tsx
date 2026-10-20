@@ -17,7 +17,7 @@ export function AppShell() {
     <>
       <a className="skip-link" href="#main">Skip to content</a>
       <header className="shell-header">
-        <NavLink to="/" className="brand" aria-label="Bayto home">
+        <NavLink to="/" className="brand">
           <BrandMark />
           Bayto
           <span className="brand-ge" lang="ti" aria-hidden="true">ባይቶ</span>
@@ -27,9 +27,9 @@ export function AppShell() {
           <NavLink to="/services">Services</NavLink>
         </nav>
       </header>
-      <div id="main">
+      <main id="main" tabIndex={-1}>
         <Outlet />
-      </div>
+      </main>
     </>
   )
 }

@@ -13,10 +13,12 @@ export function Modal({ label, onClose, children }: ModalProps) {
   useEffect(() => {
     const dialog = ref.current
     if (!dialog || dialog.open) return
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     if (typeof dialog.showModal === 'function') dialog.showModal()
     else dialog.setAttribute('open', '') // jsdom and very old browsers
     return () => {
       if (dialog.open && typeof dialog.close === 'function') dialog.close()
+      if (opener?.isConnected) opener.focus()
     }
   }, [])
 

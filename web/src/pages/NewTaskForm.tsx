@@ -95,8 +95,9 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
           {error && <p role="alert" className="alert bad" style={{ margin: 0 }}>{error}</p>}
         </div>
         <div className="modal-actions">
+          {!canSubmit && !submitting && <span className="hint" id="create-hint">Fill in the title, brief and output type (and the repository path for code changes).</span>}
           <button type="button" className="btn" onClick={onCancel} disabled={submitting}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={!canSubmit || submitting}>
+          <button type="submit" className="btn primary" disabled={!canSubmit || submitting} aria-describedby={canSubmit ? undefined : 'create-hint'}>
             {submitting ? 'Creating…' : 'Create task'}
           </button>
         </div>

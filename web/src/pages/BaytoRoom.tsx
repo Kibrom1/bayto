@@ -53,6 +53,13 @@ export function friendlyFailure(reason?: string | null): string {
 }
 
 const PAUSED = ['needs_human', 'paused']
+// Agents end Build replies with a "VERDICT: x" protocol line. People get it as a small tag, not as text.
+export function splitVerdict(body: string): { text: string; verdict: string | null } {
+  const m = body.match(/\n*^[ \t]*VERDICT:[ \t]*([^\n]+?)[ \t]*$/im)
+  if (!m) return { text: body, verdict: null }
+  return { text: body.replace(m[0], '').trimEnd(), verdict: m[1] }
+}
+
 const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'ended']
 
 export function BaytoRoom() {
@@ -137,6 +144,18 @@ export function BaytoRoom() {
     if (atBottom) endRef.current?.scrollIntoView({ block: 'end' })
   }, [messages.length, liveKey, atBottom])
 
+  // When a session ends while the person is watching, show the result (synthesis or change set) at the top.
+  const wasLive = useRef(false)
+  useEffect(() => {
+    if (!sessionStatus) return
+    if (!FINISHED.includes(sessionStatus)) { wasLive.current = true; return }
+    if (wasLive.current && artifacts.length > 0) {
+      wasLive.current = false
+      scrollRef.current?.scrollTo({ top: 0 })
+      setAtBottom(false)
+    }
+  }, [sessionStatus, artifacts.length])
+
   function onScroll() {
     const el = scrollRef.current
     if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
@@ -217,9 +236,11 @@ export function BaytoRoom() {
           <div className="room-meta">
             {modeName && <span>{titleCase(modeName)}</span>}
             <span>Round {session.round}</span>
-            <span title={connected ? 'Live updates connected' : 'Reconnecting…'} className={connected ? 'live-on' : 'live-off'}>
-              <span className="live-dot" aria-hidden="true" />{connected ? 'Live' : 'Offline'}
-            </span>
+            {canSend && (
+              <span title={connected ? 'Live updates connected' : 'Reconnecting…'} className={connected ? 'live-on' : 'live-off'}>
+                <span className="live-dot" aria-hidden="true" />{connected ? 'Live' : 'Reconnecting…'}
+              </span>
+            )}
             <span className="num">${session.usage.cost.toFixed(2)}{costCap ? ` of $${costCap.toFixed(2)}` : ''}</span>
           </div>
         </div>
@@ -228,13 +249,13 @@ export function BaytoRoom() {
             <button type="button" className="btn primary" onClick={() => run(() => resumeSession(sessionId!), 'Session resumed')}>Resume</button>
           ) : status === 'created' ? (
             <button type="button" className="btn primary" onClick={() => run(() => startSession(sessionId!), 'Session starting')}>Start</button>
-          ) : (
-            <button type="button" className="btn" disabled={finished || !canSend} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
+          ) : !finished && (
+            <button type="button" className="btn" disabled={!canSend} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
           )}
           {status === 'finished' && modeName && modeName !== 'build' && (
             <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
           )}
-          <button type="button" className="btn danger" disabled={finished} onClick={() => setConfirmStop(true)}>End &amp; synthesize</button>
+          {!finished && <button type="button" className="btn danger" onClick={() => setConfirmStop(true)}>End &amp; synthesize</button>}
           {removable && (
             <>
               <button type="button" className="btn" onClick={() => run(() => archiveSession(sessionId!, !session.archived_at), session.archived_at ? 'Session restored' : 'Session archived')}>
@@ -266,7 +287,10 @@ export function BaytoRoom() {
         />
       )}
       {session.archived_at && (
-        <div className="notice" role="status">Archived. It is hidden from the task board, and the agents no longer see it as context for new sessions.</div>
+        <div className="notice" role="status">
+          Archived. It is hidden from the task board, and the agents no longer see it as context for new sessions.
+          {session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && <> It ended because {stopReasonText(session.stop_reason)}.</>}
+        </div>
       )}
       {confirmStop && (
         <ConfirmDialog
@@ -291,7 +315,7 @@ export function BaytoRoom() {
           )}
         </div>
       )}
-      {session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
+      {!session.archived_at && session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
         <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.</div>
       )}
       {paused && (
@@ -305,8 +329,8 @@ export function BaytoRoom() {
       {notice && <div className={`notice${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</div>}
 
       <div className="room-body">
-        <main className="transcript">
-          <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="transcript">
+          <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll} tabIndex={0} role="region" aria-label="Conversation">
             <h2 className="sr-only">Transcript</h2>
             <ChangeSet artifacts={artifacts} />
             <Synthesis title={taskTitle ?? 'Discussion'} artifacts={artifacts} />
@@ -326,7 +350,8 @@ export function BaytoRoom() {
                         <span className="msg-name">{known ? info.name : titleCase(m.from)}</span>
                         {known && info.stance && <span className="msg-stance">{info.stance}</span>}
                       </div>
-                      <div className="msg-body">{m.body}</div>
+                      <div className="msg-body">{splitVerdict(m.body).text}</div>
+                      {splitVerdict(m.body).verdict && <span className="chip verdict">Verdict: {splitVerdict(m.body).verdict}</span>}
                     </div>
                   </article>
                 )
@@ -377,7 +402,7 @@ export function BaytoRoom() {
               <p className="composer-hint">Enter to send, Shift+Enter for a new line</p>
             )}
           </form>
-        </main>
+        </div>
 
         <aside className="rail" aria-label="Moderator panel">
         <section className="rail-block" aria-label="Roster">
@@ -413,7 +438,7 @@ export function BaytoRoom() {
           <div className="rail-block">
           <div className="mod-card">
             <h2>Moderator summary</h2>
-            <p className="summary">{rollingSummary || 'The summary appears after the first turns.'}</p>
+            <p className="summary">{(rollingSummary && splitVerdict(rollingSummary).text) || 'The summary appears after the first turns.'}</p>
           </div>
           <h2>Usage vs budget</h2>
           {pct !== null && (
