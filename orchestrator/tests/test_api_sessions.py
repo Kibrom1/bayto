@@ -456,14 +456,18 @@ async def test_stop_with_no_live_runtime_still_updates_status_and_warns(client, 
     _wire_fakes(FakeSandboxProvider(on_wake=on_wake))
     await client.post(f"/sessions/{session_id}/start")
     await _wait_for_status(live_sessionmaker, session_id, "active")
-    del app.state.session_runtimes[session_id]  # simulate the no-live-runtime edge case
-
-    import logging
-    with caplog.at_level(logging.WARNING):
-        resp = await client.post(f"/sessions/{session_id}/stop", json={"synthesize": True})
-    assert resp.status_code == 202
-    assert resp.json()["session"]["status"] == "stopping"
-    assert any("no live runtime" in r.message for r in caplog.records)
+    hidden = app.state.session_runtimes.pop(session_id)  # simulate the no-live-runtime edge case
+    try:
+        import logging
+        with caplog.at_level(logging.WARNING):
+            resp = await client.post(f"/sessions/{session_id}/stop", json={"synthesize": True})
+        assert resp.status_code == 202
+        assert resp.json()["session"]["status"] == "stopping"
+        assert any("no live runtime" in r.message for r in caplog.records)
+    finally:
+        # Put it back so the fixture's teardown can cancel its mirror/runner tasks. Left out, they keep running
+        # and polling, hold a transaction, and the next test's `DROP TABLE` waits on them forever.
+        app.state.session_runtimes[session_id] = hidden
 
     async with live_sessionmaker() as db:
         row = await db.get(Session, session_id)

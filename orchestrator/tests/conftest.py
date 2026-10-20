@@ -68,6 +68,22 @@ def pytest_terminal_summary(terminalreporter):
                  "(set BAYTO_REQUIRE_DB=1 to fail instead of skip)", yellow=True)
 
 
+def _end_other_connections() -> None:
+    """Terminates every other connection to the test database. A task left running by a test can hold a
+    transaction open; `alembic downgrade` (DROP TABLE) then waits on its lock indefinitely, and the whole suite
+    sits there. Ending those connections turns that hang into an error in the offending test."""
+    import sqlalchemy as sa
+    engine = sa.create_engine(database_url().replace("+psycopg_async", "+psycopg"))
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text("select pg_terminate_backend(pid) from pg_stat_activity "
+                                 "where datname = current_database() and pid <> pg_backend_pid()"))
+    except Exception:
+        pass  # best effort; never mask the real teardown
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture
 def live_schema():
     """Skips if unreachable; otherwise yields an Alembic Config already migrated to head,
@@ -82,6 +98,7 @@ def live_schema():
     cfg = Config(ALEMBIC_INI)
     command.upgrade(cfg, "head")
     yield cfg
+    _end_other_connections()  # a leaked background task must fail loudly, not hang the downgrade on its lock
     command.downgrade(cfg, "base")
 
 
