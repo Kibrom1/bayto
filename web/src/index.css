@@ -5,12 +5,13 @@
 @import '@fontsource-variable/noto-sans-ethiopic/index.css';
 
 /* Design tokens shared by all screens. Pages use these instead of hard-coded colors.
-   Direction: the council table. Deep ink for structure, saffron for whoever has the floor. */
+   Direction: calm, dense work tool (Linear-like). Ink for structure, saffron only for what is live or needs you,
+   and each agent keeps one hue wherever it appears. */
 :root {
-  --bg: #f5f6fa;
+  --bg: #f6f6f9;
   --surface: #ffffff;
-  --surface-2: #eceef5;
-  --line: #e2e4ee;
+  --surface-2: #eeeff4;
+  --line: #e3e4ec;
   --ink: #12152e;
   --ink-2: #4a4f6a;
   --ink-3: #5c6180;
@@ -26,23 +27,24 @@
   --danger: #a82a40;
   --danger-soft: #fde5e9;
 
-  --radius: 18px;
-  --radius-sm: 12px;
+  --radius: 10px;
+  --radius-sm: 8px;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.25rem;
   --space-6: 1.5rem;
-  --shadow: 0 1px 2px rgb(18 21 46 / 0.04);
+  --shadow: 0 1px 2px rgb(18 21 46 / 0.05);
+  --ring: 0 0 0 3px color-mix(in srgb, var(--saffron) 45%, transparent);
 
   --sans: 'Instrument Sans Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
   --display: 'Bricolage Grotesque Variable', 'Instrument Sans Variable', system-ui, sans-serif;
   --mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
   --ethiopic: 'Noto Sans Ethiopic Variable', 'Noto Sans Ethiopic', sans-serif;
 
-  --shell-h: 3.75rem;
-  font: 16px/1.5 var(--sans);
+  --shell-h: 3rem;
+  font: 15px/1.5 var(--sans);
   color-scheme: light dark;
   color: var(--ink-2);
   background: var(--bg);

@@ -21,8 +21,8 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: var(--space-6);
-  padding: 0 var(--space-6);
+  gap: var(--space-5);
+  padding: 0 var(--space-5);
   background: var(--surface);
   border-bottom: 1px solid var(--line);
 }
@@ -33,7 +33,7 @@
   gap: 0.6rem;
   font-family: var(--display);
   font-weight: 700;
-  font-size: 1.3rem;
+  font-size: 1.1rem;
   letter-spacing: -0.02em;
   color: var(--ink);
   text-decoration: none;
@@ -43,22 +43,22 @@
 
 .shell-nav { display: flex; gap: var(--space-1); }
 .shell-nav a {
-  padding: 0.45rem 0.95rem;
-  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  border-radius: 6px;
   text-decoration: none;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 500;
   color: var(--ink-2);
 }
 .shell-nav a:hover { background: var(--surface-2); }
-.shell-nav a[aria-current='page'] { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.shell-nav a[aria-current='page'] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 
 /* ---- page ---- */
-.page { max-width: 77.5rem; margin: 0 auto; padding: 2.25rem 2rem 4rem; }
+.page { max-width: 77.5rem; margin: 0 auto; padding: 1.75rem 2rem 4rem; }
 .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
-.page-head h1 { margin: 0; font-size: 2.4rem; line-height: 1.1; letter-spacing: -0.03em; }
+.page-head h1 { margin: 0; font-size: 1.75rem; line-height: 1.1; letter-spacing: -0.03em; }
 .page-sub { margin: 0.5rem 0 0; color: var(--ink-2); max-width: 60ch; }
-.eyebrow { margin: 0 0 var(--space-1); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent-text); }
+.eyebrow { margin: 0 0 var(--space-1); font-size: 0.85rem; font-weight: 600; color: var(--ink-3); }
 
 /* ---- buttons ---- */
 .btn {
@@ -67,14 +67,15 @@
   justify-content: center;
   gap: var(--space-2);
   font: inherit;
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-size: 0.875rem;
+  font-weight: 550;
   line-height: 1.2;
-  min-height: 2.5rem;
-  padding: 0.55rem 1.2rem;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.85rem;
   box-sizing: border-box;
-  border-radius: 999px;
-  border: 1.5px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  transition: background-color 0.12s, border-color 0.12s;
   background: transparent;
   color: var(--ink);
   text-decoration: none;
@@ -86,14 +87,14 @@
 .btn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.15); }
 .btn.accent { background: var(--saffron); border-color: var(--saffron); color: #12152e; }
 .btn.accent:hover:not(:disabled) { background: var(--saffron); filter: brightness(1.05); }
-.btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+.btn.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); background: transparent; }
 .btn.danger.solid { background: var(--danger); color: #fff; }
 .btn.ghost { border-color: transparent; background: transparent; }
-.btn.sm { min-height: 2.25rem; padding: 0.35rem 0.9rem; font-size: 0.85rem; }
-.btn.lg { min-height: 3.25rem; padding: 0.8rem 1.75rem; font-size: 1.05rem; }
+.btn.sm { min-height: 1.875rem; padding: 0.25rem 0.65rem; font-size: 0.8rem; }
+.btn.lg { min-height: 2.75rem; padding: 0.6rem 1.25rem; font-size: 1rem; }
 
 /* ---- chips ---- */
-.chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.1rem 0.5rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
 .chip .dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
 .chip.ok, .chip.status-active { background: var(--ok-soft); color: var(--ok); }
 .chip.warn, .chip.status-needs_human, .chip.status-paused, .chip.status-stopping { background: var(--warn-soft); color: var(--warn); }
@@ -169,7 +170,7 @@
 .hint { font-size: 0.82rem; color: var(--ink-3); }
 .field input:not([type='checkbox']):not([type='radio']), .field textarea, .field select, .input {
   font: inherit; color: var(--ink); background: var(--bg);
-  border: 1.5px solid color-mix(in srgb, var(--ink) 22%, transparent); border-radius: var(--radius-sm); padding: 0.65rem 0.85rem; min-width: 0; min-height: 2.75rem; box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent); border-radius: var(--radius-sm); padding: 0.5rem 0.7rem; min-width: 0; min-height: 2.5rem; box-sizing: border-box;
 }
 .field textarea { resize: vertical; }
 .field input:user-invalid, .field textarea:user-invalid { border-color: var(--danger); }
@@ -181,7 +182,7 @@ dialog.modal {
   width: min(32rem, calc(100vw - 2rem));
   padding: 0;
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 14px;
   background: var(--surface);
   color: var(--ink-2);
   box-shadow: 0 24px 60px rgb(0 0 0 / 0.3);

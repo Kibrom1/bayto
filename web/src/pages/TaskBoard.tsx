@@ -16,9 +16,9 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 function statusChip(status: string | null) {
-  if (!status) return <span className="chip">Not started</span>
-  const tone = status === 'active' ? 'ok' : status === 'failed' ? 'bad' : status === 'needs_human' || status === 'stopping' ? 'warn' : status === 'finished' || status === 'completed' ? 'accent' : ''
-  return <span className={`chip ${tone}`}>{STATUS_LABEL[status] ?? status}</span>
+  if (!status) return <span className="chip"><span className="dot" />Not started</span>
+  const tone = status === 'active' ? 'ok' : status === 'failed' ? 'bad' : status === 'needs_human' || status === 'stopping' ? 'warn' : ''
+  return <span className={`chip ${tone}`}><span className="dot" />{STATUS_LABEL[status] ?? status}</span>
 }
 
 type Filter = 'all' | 'live' | 'finished' | 'ready'
@@ -60,6 +60,7 @@ export function TaskBoard() {
   const [error, setError] = useState<string | null>(null)
   const [formOpen, setFormOpen] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
+  const [query, setQuery] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -84,6 +85,9 @@ export function TaskBoard() {
       setSubmitting(false)
     }
   }
+
+  const q = query.trim().toLowerCase()
+  const visible = (tasks ?? []).filter((t) => matches(t, filter) && (!q || `${t.title} ${t.brief ?? ''}`.toLowerCase().includes(q)))
 
   return (
     <section className="page">
@@ -118,29 +122,32 @@ export function TaskBoard() {
 
       {tasks !== null && tasks.length > 0 && (
         <>
-          <div className="task-filters" role="group" aria-label="Filter tasks">
-            {FILTERS.map((f) => (
-              <button key={f.id} type="button" className="filter-pill" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>
-            ))}
+          <div className="task-toolbar">
+            <div className="task-filters" role="group" aria-label="Filter tasks">
+              {FILTERS.map((f) => (
+                <button key={f.id} type="button" className="filter-pill" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>
+              ))}
+            </div>
+            <input type="search" className="input task-search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
           <ul className="task-list">
-            {tasks.filter((t) => matches(t, filter)).map((task) => (
-              <li key={task.id} className="task-card card">
-                <div className="task-top">
-                  {statusChip(task.status)}
-                  <span className="task-output">{task.output_type}</span>
-                </div>
+            {visible.map((task) => (
+              <li key={task.id} className="task-row">
+                <div className="task-status">{statusChip(task.status)}</div>
                 <div className="task-main">
                   <h2 className="task-title">{task.title.trim() || '(untitled task)'}</h2>
                   {task.brief && <p className="task-brief">{task.brief}</p>}
+                </div>
+                <div className="task-meta">
+                  <span className="task-output">{task.output_type}</span>
                   {task.output_artifact_id && <span className="chip accent">Synthesis ready</span>}
                 </div>
                 <div className="task-actions">{actionsFor(task)}</div>
               </li>
             ))}
           </ul>
-          {tasks.filter((t) => matches(t, filter)).length === 0 && (
-            <p className="empty-note">Nothing here yet. Try another filter.</p>
+          {visible.length === 0 && (
+            <p className="empty-note">Nothing matches. Try another filter or search.</p>
           )}
         </>
       )}
