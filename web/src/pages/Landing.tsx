@@ -188,7 +188,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
         </section>
 
         <section className="ld-final">
-          <h2>Bring the question. Bayto brings the table.</h2>
+          <h2>Bring the question. Bayto brings the team.</h2>
           {!staticSite && <Cta staticSite={staticSite} className="btn primary lg" />}
         </section>
       </main>
