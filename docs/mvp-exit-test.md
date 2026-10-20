@@ -1,6 +1,6 @@
 # MVP exit test (proposed)
 
-Status: draft for Kibrom to adjust, 2026-10-04. Source of the exit criterion: [work-plan.md](work-plan.md) ("5 real tasks run end to end, artifacts kept, judged better than single-agent answers") and the M6 "done when" in [product-design.md](product-design.md) ("5 real tasks run end to end locally without manual cleanup; cost per session is reported"). Numbers marked *proposed* are suggestions, not decisions.
+Status: draft for Kibrom to adjust, 2026-10-04. The run sheet to work through is [mvp-exit-checklist.md](mvp-exit-checklist.md). Source of the exit criterion: [work-plan.md](work-plan.md) ("5 real tasks run end to end, artifacts kept, judged better than single-agent answers") and the M6 "done when" in [product-design.md](product-design.md) ("5 real tasks run end to end locally without manual cleanup; cost per session is reported"). Numbers marked *proposed* are suggestions, not decisions.
 
 ## What it proves
 
