@@ -85,7 +85,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
       <main>
         <section className="ld-hero">
           <div className="ld-hero-copy">
-            <p className="ld-badge"><span>Bayto</span> an assembly of agents</p>
+            <p className="ld-badge"><span>Bayto</span> Debate it. Decide it. Build it.</p>
             <h1>Convene a team of AI agents.</h1>
             <p className="ld-lede">Put a hard question to a table of Claude agents that hold different positions. They debate it live, a moderator keeps it fair, you steer. You leave with a decision and the strongest dissent.</p>
             <div className="ld-cta">
