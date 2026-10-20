@@ -9,6 +9,7 @@ import {
   interjectSession,
   listTasks,
   pauseSession,
+  startSession,
   resumeSession,
   stopSession,
   type ArtifactOut,
@@ -206,8 +207,10 @@ export function BaytoRoom() {
         <div className="room-actions">
           {paused ? (
             <button type="button" className="btn primary" onClick={() => run(() => resumeSession(sessionId!), 'Session resumed')}>Resume</button>
+          ) : status === 'created' ? (
+            <button type="button" className="btn primary" onClick={() => run(() => startSession(sessionId!), 'Session starting')}>Start</button>
           ) : (
-            <button type="button" className="btn" disabled={finished} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
+            <button type="button" className="btn" disabled={finished || !canSend} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
           )}
           {status === 'finished' && modeName && modeName !== 'build' && (
             <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
