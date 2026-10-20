@@ -20,7 +20,6 @@ export function AppShell() {
         <NavLink to="/" className="brand">
           <BrandMark />
           Bayto
-          <span className="brand-ge" lang="ti" aria-hidden="true">ባይቶ</span>
         </NavLink>
         <nav className="shell-nav" aria-label="Main">
           <NavLink to="/" end>Tasks</NavLink>

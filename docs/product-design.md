@@ -6,7 +6,7 @@ Snapshot: 2026-09-28 · Author: Kibrom · Live doc: https://claude.ai/code/artif
 
 Bayto lets a user pose a task or topic, seat a panel of AI agents around it, and watch them chat, collaborate, debate and converge on an output. The user acts as convener: they pick who is in the room, set the rules of engagement, and can step in at any point.
 
-**The name:** *Bayto* (ባይቶ) is the traditional Tigrigna village assembly, where the community gathers, debates an issue openly and decides together. The product recreates that council with AI agents.
+**The name:** *Bayto* (ባይቶ) is the traditional Tigrigna village assembly, where the community gathers, debates an issue openly and decides together. The product recreates that gathering with a team of AI agents.
 
 - **Problem:** a single model answer hides the trade-offs. Real decisions benefit from multiple viewpoints, adversarial pressure and structured synthesis.
 - **Promise:** "a meeting of experts on demand" — a security reviewer, a product manager and a skeptical CFO debating your architecture in minutes, with a clear summary at the end.

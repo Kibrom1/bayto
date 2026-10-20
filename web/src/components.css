@@ -39,7 +39,6 @@
   text-decoration: none;
 }
 .brand-mark { display: block; flex: none; }
-.brand-ge { font-family: var(--ethiopic); font-weight: 500; font-size: 0.85rem; letter-spacing: 0; color: var(--ink-3); }
 
 .shell-nav { display: flex; gap: var(--space-1); }
 .shell-nav a {
@@ -196,7 +195,6 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
   .shell-header { padding: 0 var(--space-4); gap: var(--space-3); }
   .page { padding: var(--space-5) var(--space-4) 3rem; }
   .page-head h1 { font-size: 1.9rem; }
-  .brand-ge { display: none; }
 }
 
 /* ---- Build mode: repository fields in the new-task form ---- */
