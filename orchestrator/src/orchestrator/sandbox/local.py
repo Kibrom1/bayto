@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -49,6 +50,8 @@ from .provider import (
     SandboxProviderError,
 )
 from .turns import TextDelta, ToolUse, TurnEvent, TurnResult, parse_stream_line
+
+log = logging.getLogger(__name__)
 
 PROVIDER_NAME = "local-sbx"
 
@@ -334,15 +337,30 @@ class LocalSbxSandboxProvider(SandboxProvider):
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
             if row is None or row.status not in ("running", "creating"):
-                if self._provisioner is not None and seats:
-                    if workspace:
-                        await self._provisioner(name, seats, workspace=workspace)
+                async def build() -> None:
+                    if self._provisioner is not None and seats:
+                        if workspace:
+                            await self._provisioner(name, seats, workspace=workspace)
+                        else:
+                            await self._provisioner(name, seats)
                     else:
-                        await self._provisioner(name, seats)
-                else:
-                    await self._run([
-                        "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
-                    ], timeout=self._create_timeout)
+                        await self._run([
+                            "env", "create", str(self._sbxenv_path), "--env-arg", f"name={name}", "--auto-approve",
+                        ], timeout=self._create_timeout)
+
+                try:
+                    await build()
+                except Exception as exc:
+                    # One sandbox per task. After a stop, a failed start or an orchestrator restart the Postgres row
+                    # can say "not running" while the sandbox still exists in sbx, so a plain create collides with
+                    # it. The sandbox is ours (named for this task and not live), so remove it and create it again.
+                    # The "remove it with `sbx env rm`" wording is sbx's own message (2026-10-19 live run).
+                    if "already exists" not in str(exc):
+                        raise
+                    log.warning("sandbox %s already exists but is not live; removing it and creating it again", name)
+                    self._drop_client(name)
+                    await self._run(["env", "rm", name, "--auto-approve"])
+                    await build()
                 if row is None:
                     row = Sandbox(
                         task_id=task_id, provider=PROVIDER_NAME, name=name,

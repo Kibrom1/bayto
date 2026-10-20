@@ -44,6 +44,8 @@ class ConversationView(BaseModel):
     turns_by_role: dict[str, int] = Field(default_factory=dict)
     consecutive_same_speaker: int = 0
     last_evidence_ok: bool = False  # the last turn showed a command, and every exit code it showed was 0
+    # A person wrote a note after the last speaker's reply, so a stuck pipeline has an answer to act on.
+    human_replied_since_last_turn: bool = False
 
 
 class Grant(BaseModel):

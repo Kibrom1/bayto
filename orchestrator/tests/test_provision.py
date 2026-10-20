@@ -123,3 +123,51 @@ async def test_create_passes_the_workspace_only_when_there_is_one(live_sessionma
     await provider.create(ids[0], name="sbx-w1", seats=SEATS, workspace="/work/proj")
     await provider.create(ids[1], name="sbx-w2", seats=SEATS)
     assert calls == [{"workspace": "/work/proj"}, {}]
+
+
+async def test_create_removes_a_stale_sandbox_of_the_same_name_and_tries_again(live_sessionmaker):
+    """A row that is not running while sbx still has the sandbox made every second session on a task fail with
+    'sandbox ... already exists'. The stale one is removed and the create retried once."""
+    from orchestrator.models import Task
+    from orchestrator.sandbox.provider import SandboxProviderError
+    from test_local_sandbox import FakeSbxRunner
+
+    attempts = []
+
+    async def provisioner(name, seats, **kw):
+        attempts.append(name)
+        if len(attempts) == 1:
+            raise SandboxProviderError(f'error: sandbox "{name}" already exists; remove it with `sbx env rm`')
+
+    runner = FakeSbxRunner()
+    async with live_sessionmaker() as db:
+        task = Task(title="t", brief="b", output_type="analysis")
+        db.add(task)
+        await db.commit()
+        task_id = task.id
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner, provisioner=provisioner)
+    info = await provider.create(task_id, name="sbx-stale", seats=SEATS)
+    assert attempts == ["sbx-stale", "sbx-stale"]
+    assert ["env", "rm", "sbx-stale", "--auto-approve"] in runner.calls
+    assert info.status == "running"
+
+
+async def test_create_does_not_retry_for_other_errors(live_sessionmaker):
+    import pytest
+    from orchestrator.models import Task
+    from orchestrator.sandbox.provider import SandboxProviderError
+    from test_local_sandbox import FakeSbxRunner
+
+    async def provisioner(name, seats, **kw):
+        raise SandboxProviderError("docker is not running")
+
+    runner = FakeSbxRunner()
+    async with live_sessionmaker() as db:
+        task = Task(title="t", brief="b", output_type="analysis")
+        db.add(task)
+        await db.commit()
+        task_id = task.id
+    provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner, provisioner=provisioner)
+    with pytest.raises(SandboxProviderError, match="docker"):
+        await provider.create(task_id, name="sbx-other", seats=SEATS)
+    assert runner.calls == []

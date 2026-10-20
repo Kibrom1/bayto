@@ -1307,3 +1307,37 @@ async def test_a_costly_turn_posts_a_cost_check_note(tmp_path, live_sessionmaker
         notes = (await session.execute(select(MessageRow).where(
             MessageRow.session_id == session_id, MessageRow.kind == "note"))).scalars().all()
     assert any(n.body.startswith("Cost check:") and "$3.00" in n.body for n in notes)
+
+
+async def test_blocked_architect_goes_again_with_the_humans_answer_after_resume(tmp_path, live_sessionmaker):
+    """The 2026-10-19 live session: the architect said 'blocked' (no scope), the person could only press Resume, and
+    every Resume paused again. Now an answer in the room sends the same role back in, with the answer in its prompt."""
+    from orchestrator.mirror import MessageMirror
+    from orchestrator.pubsub import PubSub
+
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": ["I need the scope.\nVERDICT: blocked", "Plan: add hello().\nVERDICT: planned"],
+        "developer": ["Done.\nVERDICT: implemented"],
+        "qa-tester": ["```\npytest\n```\nexit 0\nVERDICT: pass"],
+        "reviewer": ["Fine.\nVERDICT: approve"],
+    })
+    runner._mirror_sync = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id).poll_once
+
+    first = await _run_to_stop(runner)
+    assert first.reason == "needs_human" and sandbox.woken == ["architect"]
+
+    # Resume without an answer: it pauses again at once and does not wake anyone.
+    async with live_sessionmaker() as db:
+        (await db.get(Session, session_id)).status = "active"
+        await db.commit()
+    again = await _run_to_stop(runner)
+    assert again.reason == "needs_human" and sandbox.woken == ["architect"]
+
+    # The person answers (no mirror poll by hand), then resumes: the architect goes again and the build carries on.
+    await runner._conversation.send(sender="human", to=["*"], kind="note", body="Scope: add a hello() function.")
+    async with live_sessionmaker() as db:
+        (await db.get(Session, session_id)).status = "active"
+        await db.commit()
+    final = await _run_to_stop(runner)
+    assert sandbox.woken == ["architect", "architect", "developer", "qa-tester", "reviewer"]
+    assert final.reason == "build-complete"
