@@ -4,7 +4,7 @@ A full test pass over Bayto on commit `cc4cc66` (plus the two fixes this pass pr
 
 ## Summary
 
-- **Everything that could run in the cloud copy passed**, after two defects were fixed (below). 469 orchestrator tests, 162 agent-comms tests, 43 web tests, type check, build, and dependency audits are clean. A black-box API test (61 checks) and a headless-browser UI test (44 checks) pass, apart from three API expectations I judged to be my own mistakes, not defects.
+- **Everything that could run in the cloud copy passed**, after two defects were fixed (below). 470 orchestrator tests, 162 agent-comms tests, 43 web tests, type check, build, and dependency audits are clean. A black-box API test (61 checks) and a headless-browser UI test (44 checks) pass, apart from three API expectations I judged to be my own mistakes, not defects.
 - **Two real defects found and fixed:** the test suite hung in about 3 of 8 full runs (a test-isolation bug), and the workspace "Check repository" step said "ready" for a test command that Create would then refuse.
 - **Not covered here:** anything that needs `sbx`, a real model, or your Mac: live agent sessions, Build runs, sandbox stop and resume, the control script on your machine. Build was run live on 2026-10-18 (B9, three runs, see `work-plan.md`). The Services-page 502 you reported on your Mac is not explained yet (see Open items).
 
@@ -16,7 +16,7 @@ Cloud container, Linux, Python 3.13, Node 22, Postgres 16, headless Chromium (Pl
 
 | Check | Result |
 | --- | --- |
-| Orchestrator `pytest` (Postgres, `BAYTO_REQUIRE_DB=1`) | 469 passed. Three full runs in a row after the hang fix, 114 to 121 s each |
+| Orchestrator `pytest` (Postgres, `BAYTO_REQUIRE_DB=1`) | 470 passed (469 plus the new preflight test). Three consecutive full runs of 469 passed after the hang fix, then 470 on the final run, about 110 s each |
 | agent-comms `pytest` | 162 passed, 1 xpassed |
 | Web `vitest` | 43 tests in 8 files passed |
 | Web `tsc -b` (type check) | clean |
