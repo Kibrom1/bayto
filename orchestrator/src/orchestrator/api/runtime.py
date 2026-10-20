@@ -242,6 +242,7 @@ async def launch_runner(
             stop_rules=StopRulesConfig.from_mode(mode_config), pubsub=pubsub,
             summarizer=summarizer, synthesizer=synthesizer, scorer=scorer,
             git_guard_file=guard_file,
+            mirror_sync=mirror.poll_once,
         )
 
         async with sessionmaker() as db:

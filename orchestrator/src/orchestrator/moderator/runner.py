@@ -38,6 +38,8 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -164,11 +166,13 @@ class ModeratorRunner:
         scorer: HandRaiseScorer | None = None,  # required only when mode.floor_policy == "raise-hand"
         config: ModeratorConfig = ModeratorConfig(),
         git_guard_file: Path | None = None,  # Build mode: baseline of the repo's .git config and hooks (git_guard.py)
+        mirror_sync: Callable[[], Awaitable[Any]] | None = None,  # brings the database up to date with the message log
     ) -> None:
         if mode.floor_policy == "raise-hand" and scorer is None:
             raise ValueError("raise-hand mode needs a HandRaiseScorer")
         self._session_id = session_id
         self._git_guard_file = git_guard_file
+        self._mirror_sync = mirror_sync
         self._sessionmaker = sessionmaker
         self._conversation = conversation
         self._sandbox_provider = sandbox_provider
@@ -593,6 +597,12 @@ class ModeratorRunner:
     async def _handle_grant(self, view: ConversationView, decision: Grant) -> None:
         participant = decision.participant
         self._retry_note = _RETRY_NOTES.get(decision.reason or "")
+        if self._mirror_sync is not None:
+            # A note the human sent a moment ago may still be only in the message log; the mirror polls on a timer.
+            try:
+                await self._mirror_sync()
+            except Exception:
+                log.exception("session %s: mirror sync before a grant failed; continuing", self._session_id)
         self._grant_notes = await self._human_notes_for(participant)
         context = await self._build_context(view)
         await self._conversation.send(sender=self._mode.moderator or "moderator", to=[participant],
@@ -745,8 +755,8 @@ class ModeratorRunner:
         Stateless on purpose: the anchor is the participant's own latest assignment, so a retried turn
         sees the same notes again, a note sent while the participant is mid-turn shows up on its next
         turn, and a resumed session needs no saved state. Computed once per grant (a streamed turn builds
-        its prompt a second time, after the assignment exists). A note sent only a moment before the grant
-        can miss it if the mirror has not recorded it yet; the next grant will not recover that note."""
+        its prompt a second time, after the assignment exists). The mirror is synced
+        first (`mirror_sync`), so a note sent only a moment before the grant is not missed."""
         async with self._sessionmaker() as session:
             anchor = await session.scalar(
                 select(func.max(MessageRow.seq)).where(
