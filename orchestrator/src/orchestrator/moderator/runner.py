@@ -148,6 +148,25 @@ def looks_like_platform_limit(text: str | None) -> bool:
     return 0 < len(t) <= _LIMIT_MAX_CHARS and any(p in t for p in _LIMIT_PHRASES)
 
 
+_TURN_SHARE_WARN = 0.25   # one turn that used this share of the dollar budget is worth saying so
+_TOTAL_SHARE_WARN = 0.80  # the running total reaching this share is worth saying so, once
+
+
+def cost_warnings(turn_cost: float | None, total_cost: float, max_cost: float | None,
+                  total_already_warned: bool) -> list[str]:
+    """Plain sentences for the room when spend is high. The budget is only checked between turns, so one long turn
+    can pass the cap; this makes that visible while it is happening. [] when there is no dollar budget."""
+    if not max_cost or max_cost <= 0:
+        return []
+    out: list[str] = []
+    if turn_cost and turn_cost >= _TURN_SHARE_WARN * max_cost:
+        out.append(f"That turn cost ${turn_cost:.2f}, {turn_cost / max_cost:.0%} of the ${max_cost:.2f} budget.")
+    if not total_already_warned and total_cost >= _TOTAL_SHARE_WARN * max_cost:
+        out.append(f"The session has used ${total_cost:.2f} of its ${max_cost:.2f} budget "
+                   f"({total_cost / max_cost:.0%}). It stops when the budget is reached.")
+    return out
+
+
 class ModeratorRunner:
     def __init__(
         self,
@@ -173,6 +192,7 @@ class ModeratorRunner:
         self._session_id = session_id
         self._git_guard_file = git_guard_file
         self._mirror_sync = mirror_sync
+        self._total_cost_warned = False
         self._sessionmaker = sessionmaker
         self._conversation = conversation
         self._sandbox_provider = sandbox_provider
@@ -926,8 +946,27 @@ class ModeratorRunner:
             if cost is not None:
                 span.set_attribute("bayto.cost_usd", cost)
 
+        await self._warn_about_cost(cost)
         await self._advance_phase()
 
+
+    async def _warn_about_cost(self, turn_cost: float | None) -> None:
+        """Posts a short moderator note when a turn, or the running total, is a large share of the dollar budget."""
+        try:
+            async with self._sessionmaker() as session:
+                row = await session.get(SessionRow, self._session_id)
+                max_cost = (row.budget or {}).get("max_cost") if row else None
+            if not max_cost:
+                return
+            usage = await session_usage(self._sessionmaker, self._session_id)
+            lines = cost_warnings(turn_cost, usage.cost, max_cost, self._total_cost_warned)
+            if usage.cost >= _TOTAL_SHARE_WARN * max_cost:
+                self._total_cost_warned = True
+            if lines:
+                await self._conversation.send(sender=self._mode.moderator or "moderator", to=["*"], kind="note",
+                                              body="Cost check: " + " ".join(lines))
+        except Exception:
+            log.exception("session %s: cost warning failed; continuing", self._session_id)
 
     async def _advance_phase(self) -> None:
         """M2.12: update phase machine state. If all phases complete, the session ends."""

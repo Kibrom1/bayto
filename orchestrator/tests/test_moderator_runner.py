@@ -1275,3 +1275,35 @@ async def test_a_note_not_yet_mirrored_is_still_in_the_next_prompt(tmp_path, liv
     await runner._conversation.send(sender="human", to=["*"], kind="note", body="Also: keep it to one file.")  # no poll
     with_sync = await _grant_prompt(live_sessionmaker, runner, "architect")
     assert "keep it to one file" in with_sync
+
+
+def test_cost_warnings_only_fire_when_spend_is_high():
+    from orchestrator.moderator.runner import cost_warnings as w
+    assert w(0.5, 1.0, None, False) == []                       # no dollar budget: nothing to compare with
+    assert w(0.5, 1.0, 15.0, False) == []                       # small turn, small total
+    big_turn = w(4.0, 5.0, 15.0, False)
+    assert len(big_turn) == 1 and "$4.00" in big_turn[0] and "27%" in big_turn[0]
+    total = w(0.2, 12.5, 15.0, False)
+    assert len(total) == 1 and "83%" in total[0] and "stops when the budget is reached" in total[0]
+    assert w(0.2, 13.0, 15.0, True) == []                       # the running-total warning is given once
+    assert len(w(5.0, 14.0, 15.0, False)) == 2                   # both can apply to one turn
+
+
+async def test_a_costly_turn_posts_a_cost_check_note(tmp_path, live_sessionmaker):
+    """End to end: a budgeted session, a turn that cost 30% of the cap -> a moderator note appears."""
+    session_id = await _make_session(live_sessionmaker, budget={"max_cost": 10.0})
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config(roles={"moderator": None, "a": None})
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "my view", meta={"tokens_in": 10, "tokens_out": 10, "cost": 3.0})
+
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id, mode=mode,
+        policy=RoundRobinFloorPolicy(), on_wake=on_wake)
+    await runner.run_once()
+    await mirror.poll_once()
+    async with live_sessionmaker() as session:
+        notes = (await session.execute(select(MessageRow).where(
+            MessageRow.session_id == session_id, MessageRow.kind == "note"))).scalars().all()
+    assert any(n.body.startswith("Cost check:") and "$3.00" in n.body for n in notes)
