@@ -155,7 +155,7 @@ export function BaytoRoom() {
 
   async function send() {
     const body = draft.trim()
-    if (!body || sending || !sessionId || !canSend) return
+    if (!body || sending || !sessionId || !canType) return
     setSending(true)
     try {
       await interjectSession(sessionId, body, target === '*' ? undefined : [target])
@@ -189,6 +189,8 @@ export function BaytoRoom() {
   const finished = FINISHED.includes(status)
   // Only a running session has a runtime that can take a message (the server answers 409 otherwise).
   const canSend = status === 'active' || status === 'running'
+  // A paused session still accepts a message: it waits in the log and the agents see it after Resume.
+  const canType = canSend || paused
   const sendBlocked = finished ? 'ended' : paused ? 'paused' : canSend ? null : 'starting'
   const tokens = session.usage.tokens_in + session.usage.tokens_out
   const budgetTokens: number | null = session.budget?.tokens ?? session.budget?.max_tokens ?? null
@@ -256,6 +258,9 @@ export function BaytoRoom() {
       {session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
         <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.</div>
       )}
+      {paused && (
+        <div className="notice" role="status">Paused. If an agent asked you something, answer below, then press Resume.</div>
+      )}
       {session.status === 'starting' && (
         <div className="notice" role="status">
           Starting: {session.stage ?? 'waiting to launch'}. Creating a sandbox can take a few minutes.
@@ -309,7 +314,7 @@ export function BaytoRoom() {
 
           <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <div className="composer-row">
-              <select aria-label="Send to" disabled={!canSend} value={target} onChange={(e) => setTarget(e.target.value)}>
+              <select aria-label="Send to" disabled={!canType} value={target} onChange={(e) => setTarget(e.target.value)}>
                 <option value="*">Everyone</option>
                 {roster.map((tc) => (
                   <option key={tc.agent_id} value={tc.participant ?? ''}>{display(tc.participant ?? 'unknown').name}</option>
@@ -318,20 +323,20 @@ export function BaytoRoom() {
               <textarea
                 aria-label="Interject"
                 rows={1}
-                disabled={!canSend}
-                placeholder={sendBlocked === 'ended' ? 'This session has ended' : sendBlocked === 'paused' ? 'Paused: resume to send a message' : sendBlocked === 'starting' ? 'Waiting for the session to start…' : 'Add your view or steer the discussion…'}
+                disabled={!canType}
+                placeholder={sendBlocked === 'ended' ? 'This session has ended' : sendBlocked === 'paused' ? 'Answer or steer, then press Resume' : sendBlocked === 'starting' ? 'Waiting for the session to start…' : 'Add your view or steer the discussion…'}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
                 }}
               />
-              <button type="submit" className="btn primary" disabled={!draft.trim() || sending || !canSend}>Send</button>
+              <button type="submit" className="btn primary" disabled={!draft.trim() || sending || !canType}>Send</button>
             </div>
             {sendBlocked === 'ended' ? (
               <p className="composer-hint">This session has ended and can't take messages. <Link to={`/setup/${session.task_id}`}>Start a new session</Link> on this task to keep going.</p>
             ) : sendBlocked === 'paused' ? (
-              <p className="composer-hint">The session is paused. Resume it to send a message.</p>
+              <p className="composer-hint">Paused. Your message is saved and the agents see it when you press Resume.</p>
             ) : (
               <p className="composer-hint">Enter to send, Shift+Enter for a new line</p>
             )}

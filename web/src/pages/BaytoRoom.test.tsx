@@ -123,6 +123,24 @@ describe('BaytoRoom', () => {
     expect(screen.getByText(/exec format error/)).toBeInTheDocument()
   })
 
+  it('lets you write a message while the session is paused', async () => {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 't', mode_id: 'build', status: 'needs_human', started_at: null, ended_at: null,
+      round: 1, budget: null, usage: { tokens_in: 1, tokens_out: 1, cost: 0 }, turn_counts: [] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('button', { name: 'Resume' }, { timeout: 5000 })).toBeEnabled()
+    expect(screen.getByLabelText('Interject')).toBeEnabled()
+    expect(screen.getByText(/answer below, then press resume/i)).toBeInTheDocument()
+  })
+
   it('has plain wording for each stop reason and passes unknown ones through', () => {
     expect(stopReasonText('staleness')).toMatch(/new arguments/)
     expect(stopReasonText('user_stop')).toMatch(/stopped/)
@@ -158,9 +176,9 @@ describe('BaytoRoom', () => {
     expect(screen.getByRole('link', { name: /start a new session/i })).toHaveAttribute('href', '/setup/task-1')
   })
 
-  it('tells you to resume a paused session instead of failing with a 409', async () => {
+  it('lets you answer a paused session and says the message waits for Resume', async () => {
     const box = await renderWithStatus('needs_human')
-    expect(box).toBeDisabled()
-    expect(screen.getByText(/resume it to send a message/i)).toBeInTheDocument()
+    expect(box).toBeEnabled()
+    expect(screen.getByText(/the agents see it when you press resume/i)).toBeInTheDocument()
   })
 })
