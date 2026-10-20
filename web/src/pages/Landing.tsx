@@ -51,8 +51,8 @@ export function Landing() {
       <main>
         <section className="ld-hero">
           <div className="ld-hero-copy">
-            <p className="ld-badge"><span lang="ti">ባይቶ</span> an assembly, a council</p>
-            <h1>Convene a council of AI agents.</h1>
+            <p className="ld-badge"><span lang="ti">ባይቶ</span> an assembly, a team</p>
+            <h1>Convene a team of AI agents.</h1>
             <p className="ld-lede">Put a hard question to a table of Claude agents that hold different positions. They debate it live, a moderator keeps it fair, you steer. You leave with a decision and the strongest dissent.</p>
             <div className="ld-cta">
               <Link to="/" className="btn primary lg">Start a session</Link>
@@ -141,7 +141,7 @@ export function Landing() {
       </main>
 
       <footer className="ld-footer">
-        <span>Bayto <span lang="ti">ባይቶ</span> · a council of AI agents</span>
+        <span>Bayto <span lang="ti">ባይቶ</span> · a team of AI agents</span>
       </footer>
     </div>
   )
