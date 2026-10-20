@@ -40,3 +40,15 @@
   .task-actions .btn { flex: 1; }
   .task-search { width: 100%; }
 }
+
+/* Row menu: the rare actions (archive, delete) stay out of the way. */
+.row-menu { position: relative; }
+.row-menu summary { list-style: none; cursor: pointer; }
+.row-menu summary::-webkit-details-marker { display: none; }
+.row-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; min-width: 11rem; display: flex; flex-direction: column; padding: 0.25rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: 0 8px 24px rgb(0 0 0 / 0.14); }
+.row-menu-list button { font: inherit; font-size: 0.875rem; text-align: left; padding: 0.45rem 0.65rem; border: 0; border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+.row-menu-list button:hover { background: var(--surface-2); }
+.row-menu-list button.danger { color: var(--danger); }
+.task-list { overflow: visible; }
+.task-row:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+.task-row:last-child { border-radius: 0 0 var(--radius) var(--radius); }

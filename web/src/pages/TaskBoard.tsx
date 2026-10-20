@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { archiveSession, deleteSession } from '../api/sessions'
+import { ConfirmDialog } from '../components/Dialog'
 import { createTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
 import { NewTaskForm } from './NewTaskForm'
 import './TaskBoard.css'
@@ -38,7 +40,7 @@ function matches(task: Task, f: Filter): boolean {
   return !task.status
 }
 
-function actionsFor(task: Task) {
+function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task) => void) {
   const live = ['active', 'needs_human', 'starting', 'stopping'].includes(task.status ?? '')
   const done = ['finished', 'completed'].includes(task.status ?? '')
   return (
@@ -51,6 +53,15 @@ function actionsFor(task: Task) {
       <Link className={`btn ${task.last_session_id ? 'ghost' : 'primary'}`} to={`/setup/${task.id}`}>
         {task.last_session_id ? 'New session' : 'Start session'}
       </Link>
+      {task.last_session_id && !['active', 'starting', 'stopping'].includes(task.status ?? '') && (
+        <details className="row-menu">
+          <summary className="btn ghost sm" aria-label={`More actions for ${task.title}`}>More</summary>
+          <div className="row-menu-list">
+            <button type="button" onClick={() => onArchive(task)}>Archive</button>
+            <button type="button" className="danger" onClick={() => onDelete(task)}>Delete</button>
+          </div>
+        </details>
+      )}
     </>
   )
 }
@@ -61,6 +72,8 @@ export function TaskBoard() {
   const [formOpen, setFormOpen] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
+  const [toDelete, setToDelete] = useState<Task | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
@@ -71,6 +84,27 @@ export function TaskBoard() {
   }
 
   useEffect(refresh, [])
+
+  async function archive(task: Task) {
+    setActionError(null)
+    try {
+      await archiveSession(task.last_session_id!)
+      refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function remove(task: Task) {
+    setToDelete(null)
+    setActionError(null)
+    try {
+      await deleteSession(task.last_session_id!)
+      refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   async function handleCreate(req: TaskCreateRequest) {
     setSubmitting(true)
@@ -105,6 +139,8 @@ export function TaskBoard() {
           <button type="button" className="btn sm" style={{ marginLeft: 'var(--space-3)' }} onClick={() => { setError(null); refresh() }}>Retry</button>
         </p>
       )}
+
+      {actionError && <p role="alert" className="alert bad">{actionError}</p>}
 
       {tasks === null && !error && (
         <div aria-busy="true" aria-label="Loading tasks">
@@ -142,7 +178,7 @@ export function TaskBoard() {
                   <span className="task-output">{task.output_type}</span>
                   {task.output_artifact_id && <span className="chip accent">Synthesis ready</span>}
                 </div>
-                <div className="task-actions">{actionsFor(task)}</div>
+                <div className="task-actions">{actionsFor(task, archive, setToDelete)}</div>
               </li>
             ))}
           </ul>
@@ -150,6 +186,18 @@ export function TaskBoard() {
             <p className="empty-note">Nothing matches. Try another filter or search.</p>
           )}
         </>
+      )}
+
+      {toDelete && (
+        <ConfirmDialog
+          title="Delete this session?"
+          message="Its conversation, results and cost record are removed for good. The task stays. To keep the record but stop it from shaping later sessions, archive it instead."
+          confirmLabel="Delete session"
+          cancelLabel="Keep it"
+          danger
+          onCancel={() => setToDelete(null)}
+          onConfirm={() => remove(toDelete)}
+        />
       )}
 
       {formOpen && (
