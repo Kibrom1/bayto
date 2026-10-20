@@ -92,3 +92,15 @@ html { scroll-behavior: smooth; }
 .ld-traits > div { background: var(--surface, #fff); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.25rem; }
 .ld-traits h3 { margin: 0 0 0.4rem; font-size: 1.05rem; }
 .ld-traits p { margin: 0; color: var(--ink-2, var(--ink)); line-height: 1.55; }
+
+.ld-contact { max-width: 34rem; margin: 3rem auto 0; text-align: left; }
+.ld-contact h3 { margin: 0 0 0.35rem; font-size: 1.4rem; text-align: center; }
+.ld-contact > p { margin: 0 0 1.25rem; text-align: center; color: var(--ink-2, var(--ink)); }
+.ld-contact-form { display: grid; gap: 1rem; }
+.ld-contact-form label { display: grid; gap: 0.35rem; font-weight: 500; }
+.ld-contact-form input[type='email'], .ld-contact-form textarea { font: inherit; padding: 0.7rem 0.85rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface, #fff); color: var(--ink); box-sizing: border-box; width: 100%; }
+.ld-contact-form .btn { justify-self: start; }
+.ld-honey { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.ld-contact-note { margin: 0; font-size: 0.88rem; color: var(--ink-3); }
+.ld-contact-error { margin: 0; color: var(--danger, #b42318); }
+.ld-contact-done { text-align: center; font-weight: 500; }
