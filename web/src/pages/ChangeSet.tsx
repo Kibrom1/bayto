@@ -77,7 +77,7 @@ export function ChangeSet({ artifacts }: { artifacts: ArtifactOut[] }) {
         <div><dt>Commits</dt><dd>{cs.commits.length}</dd></div>
         <div><dt>Files</dt><dd>{cs.files_changed}</dd></div>
         <div><dt>Added</dt><dd className="plus">+{cs.insertions}</dd></div>
-        <div><dt>Removed</dt><dd className="minus">−{cs.deletions}</dd></div>
+        <div><dt>Removed</dt><dd className="minus">{cs.deletions ? `−${cs.deletions}` : '0'}</dd></div>
         <div><dt>Fix cycles</dt><dd>{cs.fix_cycles}</dd></div>
       </dl>
 

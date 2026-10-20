@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BaytoRoom, friendlyFailure, stopReasonText } from './BaytoRoom'
+import { BaytoRoom, friendlyFailure, splitVerdict, stopReasonText } from './BaytoRoom'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -203,5 +203,21 @@ describe('BaytoRoom', () => {
     const box = await renderWithStatus('needs_human')
     expect(box).toBeEnabled()
     expect(screen.getByText(/the agents see it when you press resume/i)).toBeInTheDocument()
+  })
+
+  it('hides Pause and End once the session has ended', async () => {
+    await renderWithStatus('finished')
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /end & synthesize/i })).toBeNull()
+    expect(screen.queryByText('Offline')).toBeNull()
+  })
+})
+
+describe('splitVerdict', () => {
+  it('takes the VERDICT protocol line out of the text', () => {
+    expect(splitVerdict('Plan done.\n\nVERDICT: planned')).toEqual({ text: 'Plan done.', verdict: 'planned' })
+  })
+  it('leaves text without a verdict alone', () => {
+    expect(splitVerdict('Just talk')).toEqual({ text: 'Just talk', verdict: null })
   })
 })

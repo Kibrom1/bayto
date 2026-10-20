@@ -324,7 +324,7 @@ export function SessionSetup() {
             <h2 id="budget-h">Budget</h2>
             <div className="preset-row" role="group" aria-label="Budget presets">
               {BUDGET_PRESETS.map((p) => (
-                <button key={p.label} type="button" className="btn sm" onClick={() => preset(p)}>{p.label}</button>
+                <button key={p.label} type="button" className="btn sm" onClick={() => preset(p)}>{p.label} · ${p.dollars}</button>
               ))}
             </div>
             <div className="field">

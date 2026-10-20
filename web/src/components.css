@@ -207,3 +207,12 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
 .build-fields .alert { margin: var(--space-2) 0 0; }
 .build-fields .check-btn { align-self: flex-start; }
 .build-fields:not(:has(legend)) { border: 0; padding: 0; margin: 0; }
+
+/* Touch screens: controls are at least 44px tall. */
+@media (pointer: coarse) {
+  .btn.sm, .shell-nav a, .row-menu summary { min-height: 2.75rem; display: inline-flex; align-items: center; }
+  .btn.sm { padding-inline: 0.9rem; }
+  .shell-nav a { padding-inline: 0.75rem; }
+  .row-menu summary { border: 1px solid var(--line); }
+}
+.chip.verdict { margin-top: 0.35rem; background: var(--surface-2); color: var(--ink-2); text-transform: none; }

@@ -176,7 +176,7 @@ export function TaskBoard() {
                 </div>
                 <div className="task-meta">
                   <span className="task-output">{task.output_type}</span>
-                  {task.output_artifact_id && <span className="chip accent">Synthesis ready</span>}
+                  {task.output_artifact_id && <span className="chip accent">{task.workspace ? 'Change ready' : 'Synthesis ready'}</span>}
                 </div>
                 <div className="task-actions">{actionsFor(task, archive, setToDelete)}</div>
               </li>
