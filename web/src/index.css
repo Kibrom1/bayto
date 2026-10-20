@@ -2,7 +2,6 @@
 @import '@fontsource-variable/bricolage-grotesque/index.css';
 @import '@fontsource-variable/instrument-sans/index.css';
 @import '@fontsource-variable/jetbrains-mono/index.css';
-@import '@fontsource-variable/noto-sans-ethiopic/index.css';
 
 /* Design tokens shared by all screens. Pages use these instead of hard-coded colors.
    Direction: calm, dense work tool (Linear-like). Ink for structure, saffron only for what is live or needs you,
@@ -41,7 +40,6 @@
   --sans: 'Instrument Sans Variable', system-ui, 'Segoe UI', Roboto, sans-serif;
   --display: 'Bricolage Grotesque Variable', 'Instrument Sans Variable', system-ui, sans-serif;
   --mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
-  --ethiopic: 'Noto Sans Ethiopic Variable', 'Noto Sans Ethiopic', sans-serif;
 
   --shell-h: 3rem;
   font: 15px/1.5 var(--sans);

@@ -8,7 +8,7 @@
 .ld-hero { display: flex; flex-wrap: wrap; align-items: center; gap: 3.5rem; padding-top: 3.5rem; padding-bottom: 6rem; }
 .ld-hero-copy { flex: 1 1 32rem; min-width: 0; }
 .ld-badge { display: inline-flex; align-items: center; gap: 0.6rem; margin: 0; padding: 0.35rem 0.9rem 0.35rem 0.4rem; background: var(--accent-soft); color: var(--accent-text); border-radius: 8px; font-size: 0.88rem; font-weight: 600; }
-.ld-badge span { font-family: var(--ethiopic); background: var(--saffron); color: #12152e; padding: 0.1rem 0.65rem; border-radius: 6px; }
+.ld-badge span { background: var(--saffron); color: #12152e; padding: 0.1rem 0.65rem; border-radius: 6px; }
 .landing h1 { margin: 1.5rem 0 0; font-size: clamp(2.6rem, 5.6vw, 4.25rem); line-height: 1.02; letter-spacing: -0.035em; }
 .landing h2 { margin: 0.5rem 0 0; font-size: clamp(2rem, 3.6vw, 2.75rem); line-height: 1.08; letter-spacing: -0.03em; max-width: 44rem; }
 .ld-lede { font-size: 1.3rem; line-height: 1.5; margin: 1.5rem 0 0; max-width: 36rem; }

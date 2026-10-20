@@ -38,7 +38,6 @@ export function Landing() {
         <Link to="/welcome" className="brand" aria-label="Bayto home">
           <BrandMark size={32} />
           Bayto
-          <span className="brand-ge" lang="ti" aria-hidden="true">ባይቶ</span>
         </Link>
         <nav aria-label="Main" className="ld-links">
           <a href="#how">How it works</a>
@@ -51,7 +50,7 @@ export function Landing() {
       <main>
         <section className="ld-hero">
           <div className="ld-hero-copy">
-            <p className="ld-badge"><span lang="ti">ባይቶ</span> an assembly, a team</p>
+            <p className="ld-badge"><span>Bayto</span> an assembly of agents</p>
             <h1>Convene a team of AI agents.</h1>
             <p className="ld-lede">Put a hard question to a table of Claude agents that hold different positions. They debate it live, a moderator keeps it fair, you steer. You leave with a decision and the strongest dissent.</p>
             <div className="ld-cta">
@@ -141,7 +140,7 @@ export function Landing() {
       </main>
 
       <footer className="ld-footer">
-        <span>Bayto <span lang="ti">ባይቶ</span> · a team of AI agents</span>
+        <span>Bayto · a team of AI agents</span>
       </footer>
     </div>
   )
