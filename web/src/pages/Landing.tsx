@@ -160,6 +160,20 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
           <p className="eyebrow">Specialist agents</p>
           <h2>The right expert for the question.</h2>
           <p className="ld-lede">Every agent has a role, a stance and its own instructions. Seat the ones your question needs, and order them as you want them to speak.</p>
+          <div className="ld-traits">
+            <div>
+              <h3>Different roles</h3>
+              <p>An architect weighs structure, a lawyer weighs risk, a customer speaks for the user. Each one argues from its own seat, so you hear the disagreement instead of one blended answer.</p>
+            </div>
+            <div>
+              <h3>Different stances</h3>
+              <p>Pragmatist, adversarial, risk-averse, cost-conscious. The stance sets how an agent pushes back, so a security reviewer attacks the plan while a PM defends the scope.</p>
+            </div>
+            <div>
+              <h3>Different permissions</h3>
+              <p>In a discussion, agents only talk: no files, no shell. In Build, each role gets only what its job needs: the architect plans without editing, the developer edits and commits, the tester and reviewer only read. No agent is allowed to push or use the network.</p>
+            </div>
+          </div>
           <ul className="ld-roles" aria-label="Agents in the catalogue">
             {SPECIALISTS.map((name) => <li key={name}>{name}</li>)}
           </ul>
