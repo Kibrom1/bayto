@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BaytoRoom, friendlyFailure, stopReasonText } from './BaytoRoom'
@@ -163,6 +164,28 @@ describe('BaytoRoom', () => {
     )
     return screen.findByLabelText('Interject', undefined, { timeout: 5000 })
   }
+
+  it('offers Archive and Delete for an ended session but not a running one', async () => {
+    await renderWithStatus('failed')
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+    cleanup()
+    await renderWithStatus('active')
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+  })
+
+  it('asks before deleting a session, then deletes it', async () => {
+    await renderWithStatus('finished')
+    const fetchMock = vi.mocked(fetch)
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(screen.getByText(/removed for good/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')
+      expect(call?.[0]).toBe('/sessions/session-123')
+    })
+  })
 
   it('lets you message a running session', async () => {
     const box = await renderWithStatus('active')
