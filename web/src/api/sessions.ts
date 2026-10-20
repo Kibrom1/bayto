@@ -83,6 +83,7 @@ export interface SessionDetailOut {
   turn_counts: TurnCountOut[]
   failure_reason?: string | null
   stop_reason?: string | null
+  archived_at?: string | null
   stage?: string | null
 }
 
@@ -195,6 +196,22 @@ export async function resumeSession(sessionId: string) {
     throw new ApiError(res.status, `POST /sessions/${sessionId}/resume failed: ${res.status} ${await parseError(res)}`)
   }
   return res.json()
+}
+
+export async function archiveSession(sessionId: string, archive: boolean = true) {
+  const op = archive ? 'archive' : 'unarchive'
+  const res = await fetch(`/sessions/${sessionId}/${op}`, { method: 'POST' })
+  if (!res.ok) {
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/${op} failed: ${res.status} ${await parseError(res)}`)
+  }
+  return res.json()
+}
+
+export async function deleteSession(sessionId: string) {
+  const res = await fetch(`/sessions/${sessionId}`, { method: 'DELETE' })
+  if (!res.ok) {
+    throw new ApiError(res.status, `DELETE /sessions/${sessionId} failed: ${res.status} ${await parseError(res)}`)
+  }
 }
 
 export interface ArtifactOut {

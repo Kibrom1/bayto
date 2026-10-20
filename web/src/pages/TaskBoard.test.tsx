@@ -57,6 +57,27 @@ describe('TaskBoard', () => {
     expect(fetch).toHaveBeenCalledWith('/tasks')
   })
 
+  it('archives or deletes a task\'s last session from the row menu, asking before it deletes', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (url, init) => {
+      if (url === '/tasks') return jsonResponse(TASKS)
+      return jsonResponse({}, { status: (init as RequestInit | undefined)?.method === 'DELETE' ? 204 : 200 })
+    })
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByText('Write a launch memo')
+    expect(screen.getAllByText('More')).toHaveLength(1)  // only the task that has a session
+
+    await userEvent.click(screen.getByText('More'))
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1/archive', { method: 'POST' }))
+
+    await userEvent.click(screen.getByText('More'))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')).toBe(false)
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete session' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1', { method: 'DELETE' }))
+  })
+
   it('shows an empty state when there are no tasks', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]))
 

@@ -1,4 +1,5 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BaytoRoom, friendlyFailure, stopReasonText } from './BaytoRoom'
@@ -123,6 +124,24 @@ describe('BaytoRoom', () => {
     expect(screen.getByText(/exec format error/)).toBeInTheDocument()
   })
 
+  it('lets you write a message while the session is paused', async () => {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 't', mode_id: 'build', status: 'needs_human', started_at: null, ended_at: null,
+      round: 1, budget: null, usage: { tokens_in: 1, tokens_out: 1, cost: 0 }, turn_counts: [] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('button', { name: 'Resume' }, { timeout: 5000 })).toBeEnabled()
+    expect(screen.getByLabelText('Interject')).toBeEnabled()
+    expect(screen.getByText(/answer below, then press resume/i)).toBeInTheDocument()
+  })
+
   it('has plain wording for each stop reason and passes unknown ones through', () => {
     expect(stopReasonText('staleness')).toMatch(/new arguments/)
     expect(stopReasonText('user_stop')).toMatch(/stopped/)
@@ -146,6 +165,28 @@ describe('BaytoRoom', () => {
     return screen.findByLabelText('Interject', undefined, { timeout: 5000 })
   }
 
+  it('offers Archive and Delete for an ended session but not a running one', async () => {
+    await renderWithStatus('failed')
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
+    cleanup()
+    await renderWithStatus('active')
+    expect(screen.queryByRole('button', { name: 'Archive' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+  })
+
+  it('asks before deleting a session, then deletes it', async () => {
+    await renderWithStatus('finished')
+    const fetchMock = vi.mocked(fetch)
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(screen.getByText(/removed for good/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')
+      expect(call?.[0]).toBe('/sessions/session-123')
+    })
+  })
+
   it('lets you message a running session', async () => {
     const box = await renderWithStatus('active')
     expect(box).toBeEnabled()
@@ -158,9 +199,9 @@ describe('BaytoRoom', () => {
     expect(screen.getByRole('link', { name: /start a new session/i })).toHaveAttribute('href', '/setup/task-1')
   })
 
-  it('tells you to resume a paused session instead of failing with a 409', async () => {
+  it('lets you answer a paused session and says the message waits for Resume', async () => {
     const box = await renderWithStatus('needs_human')
-    expect(box).toBeDisabled()
-    expect(screen.getByText(/resume it to send a message/i)).toBeInTheDocument()
+    expect(box).toBeEnabled()
+    expect(screen.getByText(/the agents see it when you press resume/i)).toBeInTheDocument()
   })
 })
