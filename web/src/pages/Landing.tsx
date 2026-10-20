@@ -173,6 +173,10 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
               <h3>Different permissions</h3>
               <p>In a discussion, agents only talk: no files, no shell. In Build, each role gets only what its job needs: the architect plans without editing, the developer edits and commits, the tester and reviewer only read. No agent is allowed to push or use the network.</p>
             </div>
+            <div>
+              <h3>Isolated from your machine</h3>
+              <p>Agents run inside local sandboxes, not on your computer. They can't see your other files, apps or accounts. In Build, the only thing shared is the project folder you pick, worked on in its own branch, with no git credentials. You review and merge it yourself.</p>
+            </div>
           </div>
           <ul className="ld-roles" aria-label="Agents in the catalogue">
             {SPECIALISTS.map((name) => <li key={name}>{name}</li>)}
@@ -215,10 +219,10 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
           <div className="ld-band">
             <div>
               <h2>Your machine. Your Claude subscription.</h2>
-              <p>Agents work in local Docker sandboxes on your own computer and the moderator signs in with your own Claude login. There is no API key to create, store or leak.</p>
+              <p>Agents work in isolated local Docker sandboxes on your own computer, away from the rest of it, and the moderator signs in with your own Claude login. There is no API key to create, store or leak.</p>
             </div>
             <ul>
-              <li>Local Docker sandboxes</li>
+              <li>Isolated local sandboxes</li>
               <li>Claude subscription, no API key</li>
               <li>Dollar cap as the hard stop</li>
             </ul>
