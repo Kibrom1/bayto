@@ -60,7 +60,8 @@ const DEMO_SEATS = [
 export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
   return (
     <div className="landing" id="top">
-      <header className="ld-nav">
+      <header className="ld-header">
+      <div className="ld-nav">
         {staticSite ? (
           <a href="#top" className="brand" aria-label="Bayto home">
             <BrandMark size={32} />
@@ -74,12 +75,13 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
         )}
         <nav aria-label="Main" className="ld-links">
           <a href="#how">How it works</a>
+          <a href="#modes">Modes</a>
           <a href="#agents">Agents</a>
           <a href="#see">See it</a>
-          <a href="#modes">Modes</a>
           <a href="#local">Runs locally</a>
           {!staticSite && <Cta staticSite={staticSite} className="btn primary" />}
         </nav>
+      </div>
       </header>
 
       <main>
