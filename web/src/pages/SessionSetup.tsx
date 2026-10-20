@@ -230,7 +230,6 @@ export function SessionSetup() {
     <div className="page setup">
       <header className="page-head">
         <div>
-          <p className="eyebrow">New session</p>
           <h1>Session setup</h1>
           <p className="muted">{isBuild
             ? 'Pick who builds, and how much the build may spend. The team works on a new branch in your repository.'
@@ -284,8 +283,7 @@ export function SessionSetup() {
                       <strong>{t.name}</strong>
                       <span className="muted">{t.role ?? t.stance}</span>
                       <span className="agent-tags">
-                        <span className="chip">{t.model}</span>
-                        {t.stance && <span className="chip">{t.stance}</span>}
+                        {t.stance && <span className="chip" title={`Model: ${t.model}`}>{t.stance}</span>}
                       </span>
                     </div>
                     <button type="button" className={`btn sm${on ? '' : ' primary'}`} aria-pressed={on} onClick={() => toggle(t.id)}>
@@ -302,7 +300,7 @@ export function SessionSetup() {
           <section className="card card-pad" aria-labelledby="roster-h">
             <h2 id="roster-h">Selected roster</h2>
             {roster.length > 0 && (
-              <TableRing size={200} seats={roster.map((t) => ({ key: t.id, initials: initials(t.name), hue: agentHue(t.role ?? t.name), label: t.name }))}>
+              <TableRing size={150} seats={roster.map((t) => ({ key: t.id, initials: initials(t.name), hue: agentHue(t.role ?? t.name), label: t.name }))}>
                 {titleCase(modes.find((m) => m.id === modeId)?.name ?? 'Choose a mode')}
               </TableRing>
             )}
@@ -331,12 +329,12 @@ export function SessionSetup() {
             </div>
             <div className="field">
               <label htmlFor="b-dollars">Dollar cap (hard limit)</label>
-              <input id="b-dollars" type="number" min="0.01" step="0.01" inputMode="decimal" value={dollars} onChange={(e) => setDollars(e.target.value)} />
+              <span className="affix"><span className="affix-mark" aria-hidden="true">$</span><input id="b-dollars" type="number" min="0.01" step="0.01" inputMode="decimal" value={dollars} onChange={(e) => setDollars(e.target.value)} /></span>
             </div>
             <div className="field">
               <label htmlFor="b-tokens">Token budget (suggested)</label>
               <input id="b-tokens" type="number" min="1000" step="1000" inputMode="numeric" value={tokens} onChange={(e) => setTokens(e.target.value)} aria-describedby="b-tokens-hint" />
-              <span id="b-tokens-hint" className="hint">A guide only. The session keeps going past it. The dollar cap is the hard stop.</span>
+              <span id="b-tokens-hint" className="hint">{tokens && Number(tokens) > 0 ? `${Number(tokens).toLocaleString('en-US')} tokens. ` : ''}A guide only. The session keeps going past it. The dollar cap is the hard stop.</span>
             </div>
             <div className="estimate">
               <h3>Estimated cost</h3>
