@@ -85,6 +85,23 @@ describe('BaytoRoom', () => {
     expect(await screen.findByText(/ended because it reached its round limit/i, undefined, { timeout: 5000 })).toBeInTheDocument()
   })
 
+  it('offers Start, not Pause, for a session that was never started', async () => {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 't', mode_id: 'debate', status: 'created', started_at: null, ended_at: null,
+      round: 0, budget: null, usage: { tokens_in: 0, tokens_out: 0, cost: 0 }, turn_counts: [] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('button', { name: 'Start' }, { timeout: 5000 })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
+  })
+
   it('has plain wording for each stop reason and passes unknown ones through', () => {
     expect(stopReasonText('staleness')).toMatch(/new arguments/)
     expect(stopReasonText('user_stop')).toMatch(/stopped/)
