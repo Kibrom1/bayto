@@ -825,10 +825,12 @@ class ModeratorRunner:
             row = await session.get(SessionRow, self._session_id)
             summary = row.rolling_summary
 
-            # M5: include summaries of previous sessions for the same task
+            # M5: include summaries of previous sessions for the same task. An archived session is out of the
+            # picture on purpose: the person archived it to keep it from steering later sessions.
             prev_sessions = (await session.execute(
                 select(SessionRow.id, SessionRow.rolling_summary)
-                .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id)
+                .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id,
+                       SessionRow.archived_at.is_(None))
                 .order_by(SessionRow.started_at.desc())
             )).all()
             prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
@@ -838,7 +840,7 @@ class ModeratorRunner:
                 earlier = (await session.execute(
                     select(Artifact.content_json).join(SessionRow, SessionRow.id == Artifact.session_id)
                     .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id,
-                           Artifact.type == "synthesis").order_by(SessionRow.started_at.desc())
+                           SessionRow.archived_at.is_(None), Artifact.type == "synthesis").order_by(SessionRow.started_at.desc())
                 )).scalars().all()
                 prev_summaries += [f"Earlier synthesis: {json.dumps(c)[:6000]}" for c in earlier]
 

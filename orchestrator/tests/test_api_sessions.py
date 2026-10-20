@@ -877,3 +877,62 @@ async def test_resuming_a_paused_session_is_refused_while_another_is_running(cli
     _wire_fakes(FakeSandboxProvider())
     resp = await client.post(f"/sessions/{first}/resume")
     assert resp.status_code == 409 and resp.json()["detail"]["error"]["code"] == "task_busy"
+
+
+# ---- archive, unarchive and delete
+
+async def _created_session(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    return task_id, uuid.UUID(resp.json()["session"]["id"])
+
+
+async def test_archive_hides_a_session_from_the_task_board_and_unarchive_brings_it_back(client, live_sessionmaker):
+    task_id, session_id = await _created_session(client, live_sessionmaker)
+
+    def board_row(tasks):
+        return next(t for t in tasks if t["id"] == str(task_id))
+
+    assert board_row((await client.get("/tasks")).json())["last_session_id"] == str(session_id)
+
+    assert (await client.post(f"/sessions/{session_id}/archive")).status_code == 200
+    assert board_row((await client.get("/tasks")).json())["last_session_id"] is None
+    detail = (await client.get(f"/sessions/{session_id}")).json()["session"]
+    assert detail["archived_at"] is not None  # still there, just hidden
+
+    assert (await client.post(f"/sessions/{session_id}/unarchive")).status_code == 200
+    assert board_row((await client.get("/tasks")).json())["last_session_id"] == str(session_id)
+
+
+async def test_delete_removes_the_session_and_what_belongs_to_it(client, live_sessionmaker, tmp_path):
+    task_id, session_id = await _created_session(client, live_sessionmaker)
+    folder = tmp_path / "sessions" / str(session_id)
+    folder.mkdir(parents=True)
+    (folder / "x.json").write_text("{}")
+
+    resp = await client.delete(f"/sessions/{session_id}")
+    assert resp.status_code == 204
+
+    assert (await client.get(f"/sessions/{session_id}")).status_code == 404
+    assert not folder.exists()
+    async with live_sessionmaker() as db:
+        assert await db.get(Session, session_id) is None
+        assert await db.scalar(select(SessionAgent).where(SessionAgent.session_id == session_id)) is None
+        assert await db.get(Task, task_id) is not None  # the task stays
+    assert (await client.delete(f"/sessions/{session_id}")).status_code == 404
+
+
+async def test_a_running_session_cannot_be_archived_or_deleted(client, live_sessionmaker):
+    task_id, session_id = await _created_session(client, live_sessionmaker)
+    async with live_sessionmaker() as db:
+        (await db.get(Session, session_id)).status = "active"
+        await db.commit()
+    for call in (client.post(f"/sessions/{session_id}/archive"), client.delete(f"/sessions/{session_id}")):
+        resp = await call
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["error"]["code"] == "session_busy"
+    async with live_sessionmaker() as db:
+        assert await db.get(Session, session_id) is not None

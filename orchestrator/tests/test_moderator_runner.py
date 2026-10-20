@@ -1341,3 +1341,35 @@ async def test_blocked_architect_goes_again_with_the_humans_answer_after_resume(
     final = await _run_to_stop(runner)
     assert sandbox.woken == ["architect", "architect", "developer", "qa-tester", "reviewer"]
     assert final.reason == "build-complete"
+
+
+async def test_an_archived_session_is_left_out_of_the_agents_context(tmp_path, live_sessionmaker):
+    """Archive means 'don't let this steer later sessions': neither its rolling summary nor its synthesis is given to
+    the next session on the task. Unarchiving puts it back."""
+    from datetime import datetime, timezone
+
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {})
+    async with live_sessionmaker() as db:
+        first = await db.get(Session, session_id)
+        old = Session(task_id=first.task_id, mode_id=first.mode_id, status="finished",
+                      rolling_summary="They agreed on SQLITE-ONLY storage.")
+        db.add(old)
+        await db.flush()
+        db.add(Artifact(session_id=old.id, type="synthesis", content_json={"decision": "use a queue, not cron"},
+                        source_turn_ids=[]))
+        await db.commit()
+        old_id = old.id
+
+    before = await runner._build_context(await runner._build_view())
+    assert "SQLITE-ONLY" in before and "use a queue, not cron" in before
+
+    async with live_sessionmaker() as db:
+        (await db.get(Session, old_id)).archived_at = datetime.now(timezone.utc)
+        await db.commit()
+    archived = await runner._build_context(await runner._build_view())
+    assert "SQLITE-ONLY" not in archived and "use a queue, not cron" not in archived
+
+    async with live_sessionmaker() as db:
+        (await db.get(Session, old_id)).archived_at = None
+        await db.commit()
+    assert "SQLITE-ONLY" in await runner._build_context(await runner._build_view())
