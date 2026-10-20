@@ -15,7 +15,7 @@
 
 ## Earlier rounds
 
-- **Amharic:** Shengo (ሸንጎ, traditional council of elders — first recommendation), Gubae (ጉባኤ, conference/assembly), Mikir (ምክር, counsel), Debo (ደቦ, communal work).
+- **Amharic:** Shengo (ሸንጎ, traditional assembly of elders — first recommendation), Gubae (ጉባኤ, conference/assembly), Mikir (ምክር, counsel), Debo (ደቦ, communal work).
 - **English:** Quorum, Conclave, Parley, Agora, Moot.
 
 Domain and trademark availability were not checked.

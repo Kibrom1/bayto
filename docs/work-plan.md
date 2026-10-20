@@ -166,7 +166,7 @@ Done and merged:
 
 - [x] Real-session fixes and the runbook (PRs #100–#105): seats get the task, pause/resume mid-turn, schema type list.
 - [x] `stop_reason` on `GET /sessions/{id}` and in the room (#102, #106); fail fast on an expired Claude login; `scripts/bayto-up.sh` (#106, #107).
-- [x] "Council table" UI redesign with a landing page (#108).
+- [x] "Team table" UI redesign with a landing page (#108).
 
 Done, committed, waiting for a push and PR:
 
