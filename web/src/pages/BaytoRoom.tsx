@@ -42,6 +42,14 @@ const STOP_REASONS: Record<string, string> = {
 export const stopReasonText = (r?: string | null) => (r ? STOP_REASONS[r] ?? r.replace(/[-_]+/g, ' ') : null)
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
+// Raw sandbox output is for the Details toggle; the banner says what happened in one plain line.
+export function friendlyFailure(reason?: string | null): string {
+  if (!reason) return 'It stopped before it could start.'
+  if (/sbx env create|SandboxProviderError/i.test(reason)) return "The sandbox for the agents couldn't be created."
+  if (/budget|cost cap/i.test(reason)) return 'It reached its budget.'
+  return "Something went wrong while it was running."
+}
+
 const PAUSED = ['needs_human', 'paused']
 const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'ended']
 
@@ -192,16 +200,19 @@ export function BaytoRoom() {
   return (
     <section className="room" aria-label="Bayto room">
       <header className="room-header">
-        <div>
-          <p className="room-kicker">Bayto room</p>
-          <h1 className="room-title">{taskTitle ?? 'Discussion'}</h1>
-          <div className="room-meta">
+        <div className="room-id">
+          <p className="room-kicker"><Link to="/">Tasks</Link><span aria-hidden="true"> / </span><span>Bayto room</span></p>
+          <div className="room-titlerow">
+            <h1 className="room-title">{taskTitle ?? 'Discussion'}</h1>
             <span className={`chip status-${status}`}><span className="dot" />{paused ? 'Paused' : titleCase(status)}</span>
-            {modeName && <span className="chip">{titleCase(modeName)}</span>}
-            <span className="chip">Round {session.round}</span>
-            <span className="chip" title={connected ? 'Live updates connected' : 'Reconnecting…'}>
-              {connected ? 'Live' : 'Offline'}
+          </div>
+          <div className="room-meta">
+            {modeName && <span>{titleCase(modeName)}</span>}
+            <span>Round {session.round}</span>
+            <span title={connected ? 'Live updates connected' : 'Reconnecting…'} className={connected ? 'live-on' : 'live-off'}>
+              <span className="live-dot" aria-hidden="true" />{connected ? 'Live' : 'Offline'}
             </span>
+            <span className="num">${session.usage.cost.toFixed(2)}{costCap ? ` of $${costCap.toFixed(2)}` : ''}</span>
           </div>
         </div>
         <div className="room-actions">
@@ -232,8 +243,14 @@ export function BaytoRoom() {
       )}
       {session.status === 'failed' && (
         <div className="notice error" role="alert">
-          This session failed{session.failure_reason ? `: ${session.failure_reason}` : ' before it could start.'}
-          {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}
+          <p className="notice-line"><strong>This session failed.</strong> {friendlyFailure(session.failure_reason)}
+            {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}</p>
+          {session.failure_reason && (
+            <details className="notice-details">
+              <summary>Technical details</summary>
+              <pre>{session.failure_reason}</pre>
+            </details>
+          )}
         </div>
       )}
       {session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
@@ -247,35 +264,6 @@ export function BaytoRoom() {
       {notice && <div className={`notice${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</div>}
 
       <div className="room-body">
-        <aside className="panel side-left" aria-label="Roster panel">
-          <h2>Roster</h2>
-          {roster.length > 0 && (
-            <TableRing
-              size={200}
-              seats={roster.map((tc) => {
-                const role = tc.participant ?? 'unknown'
-                return { key: tc.agent_id, initials: initials(display(role).name), hue: hue(role), active: role in live, label: display(role).name }
-              })}
-            >
-              {liveEntries.length > 0 ? `${display(liveEntries[0][0]).name} has the floor` : `Round ${session.round}`}
-            </TableRing>
-          )}
-          {roster.map((tc) => {
-            const role = tc.participant ?? 'unknown'
-            const info = display(role)
-            return (
-              <div className="roster-item" key={tc.agent_id} style={{ ['--agent-h' as string]: hue(role) }}>
-                <span className="avatar" aria-hidden="true">{initials(info.name)}</span>
-                <div>
-                  <div className="roster-name">{info.name}</div>
-                  <div className="roster-sub">{info.stance ? `${info.stance} · ` : ''}{tc.turns} {tc.turns === 1 ? 'turn' : 'turns'}</div>
-                </div>
-                {role in live && <span className="speaking" role="img" aria-label="Speaking now" />}
-              </div>
-            )
-          })}
-        </aside>
-
         <main className="transcript">
           <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll}>
             <h2 className="sr-only">Transcript</h2>
@@ -350,7 +338,38 @@ export function BaytoRoom() {
           </form>
         </main>
 
-        <aside className="panel side-right" aria-label="Moderator panel">
+        <aside className="rail" aria-label="Moderator panel">
+        <section className="rail-block" aria-label="Roster">
+          <h2>Roster</h2>
+          {roster.length === 0 && <p className="hint">Agents appear here once the session starts.</p>}
+          {roster.length > 0 && (
+            <TableRing
+              size={132}
+              seats={roster.map((tc) => {
+                const role = tc.participant ?? 'unknown'
+                return { key: tc.agent_id, initials: initials(display(role).name), hue: hue(role), active: role in live, label: display(role).name }
+              })}
+            >
+              {liveEntries.length > 0 ? `${display(liveEntries[0][0]).name} has the floor` : `Round ${session.round}`}
+            </TableRing>
+          )}
+          {roster.map((tc) => {
+            const role = tc.participant ?? 'unknown'
+            const info = display(role)
+            return (
+              <div className="roster-item" key={tc.agent_id} style={{ ['--agent-h' as string]: hue(role) }}>
+                <span className="avatar" aria-hidden="true">{initials(info.name)}</span>
+                <div>
+                  <div className="roster-name">{info.name}</div>
+                  <div className="roster-sub">{info.stance ? `${info.stance} · ` : ''}{tc.turns} {tc.turns === 1 ? 'turn' : 'turns'}</div>
+                </div>
+                {role in live && <span className="speaking" role="img" aria-label="Speaking now" />}
+              </div>
+            )
+          })}
+        </section>
+
+          <div className="rail-block">
           <div className="mod-card">
             <h2>Moderator summary</h2>
             <p className="summary">{rollingSummary || 'The summary appears after the first turns.'}</p>
@@ -369,6 +388,7 @@ export function BaytoRoom() {
               <div className={`meter-fill cost${costPct >= 100 ? ' over' : costPct >= 80 ? ' warn' : ''}`} style={{ width: `${costPct}%` }} />
             </div>
           )}
+          </div>
         </aside>
       </div>
     </section>

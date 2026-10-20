@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BaytoRoom, stopReasonText } from './BaytoRoom'
+import { BaytoRoom, friendlyFailure, stopReasonText } from './BaytoRoom'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
@@ -100,6 +100,27 @@ describe('BaytoRoom', () => {
     )
     expect(await screen.findByRole('button', { name: 'Start' }, { timeout: 5000 })).toBeEnabled()
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
+  })
+
+  it('explains a failed start in one plain line and keeps the raw output behind Technical details', async () => {
+    expect(friendlyFailure('while creating the sandbox (sbx env create): SandboxProviderError: boom')).toMatch(/sandbox/)
+    expect(friendlyFailure(null)).toMatch(/before it could start/)
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 't', mode_id: 'debate', status: 'failed', started_at: null, ended_at: null,
+      round: 0, budget: null, usage: { tokens_in: 0, tokens_out: 0, cost: 0 }, turn_counts: [],
+      failure_reason: 'sbx env create: SandboxProviderError: exec format error' } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText(/couldn't be created/i, undefined, { timeout: 5000 })).toBeInTheDocument()
+    expect(screen.getByText('Technical details')).toBeInTheDocument()
+    expect(screen.getByText(/exec format error/)).toBeInTheDocument()
   })
 
   it('has plain wording for each stop reason and passes unknown ones through', () => {
