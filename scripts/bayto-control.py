@@ -148,7 +148,11 @@ def orch_env():
 
 
 ORCH_PROC = Proc("orchestrator", ["uv", "run", "--all-extras", "uvicorn", "orchestrator.app:app", "--port", "8000"],
-                 str(ROOT / "orchestrator"), orch_env, pre=["uv", "sync", "--all-extras"])
+                 str(ROOT / "orchestrator"), orch_env,
+                 # Same as scripts/bayto-up.sh: bring the database schema up to date (and seed) before every start, so a
+                 # new release's migrations never leave the API answering 500. Needs Postgres to be running first.
+                 pre=["sh", "-c", "uv sync --all-extras && uv run --all-extras alembic upgrade head"
+                                  " && uv run --all-extras python -m orchestrator.seed"])
 WEB_PROC = Proc("web", ["npm", "run", "dev"], str(ROOT / "web"))
 
 
