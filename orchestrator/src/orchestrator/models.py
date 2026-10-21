@@ -72,6 +72,8 @@ class Agent(Base):
     auth_ref: Mapped[str | None] = mapped_column(String)
     card_json: Mapped[dict | None] = mapped_column(JSONB)
     version: Mapped[str] = mapped_column(String, nullable=False, default="1")
+    # Custom agents are archived, never deleted: sessions and turns keep pointing at them.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # M2.11: seed.py upserts by this natural key (INSERT ... ON CONFLICT ... DO UPDATE),
     # which needs a real unique constraint/index as its conflict target -- Postgres has no

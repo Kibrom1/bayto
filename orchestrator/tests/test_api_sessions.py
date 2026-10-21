@@ -10,6 +10,7 @@ already-running MessageMirror picks it up and publishes it -- not a shortcut tha
 the real plumbing.
 """
 import asyncio
+from datetime import datetime, timezone
 import json
 import uuid
 from pathlib import Path
@@ -143,6 +144,20 @@ async def test_create_session_snapshots_agent_version_and_returns_created(client
     assert body["session"]["started_at"] is None
     assert body["session"]["budget"] == {"max_tokens": 100000, "max_cost": 5.0}
     assert {sa["agent_version"] for sa in body["session_agents"]} == {"1"}  # Agent.version's default
+
+
+async def test_an_archived_agent_cannot_be_put_in_a_new_session(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    async with live_sessionmaker() as db:
+        row = await db.get(Agent, agent_ids[0])
+        row.archived_at = datetime.now(timezone.utc)
+        await db.commit()
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}, {"agent_id": str(agent_ids[1]), "seat_order": 1}],
+    })
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"]["code"] == "invalid_agent"
 
 
 @pytest.mark.parametrize("budget", [{"tokens": -5}, {"tokens": 0}, {"dollars": -1.0}, {"dollars": 0}])

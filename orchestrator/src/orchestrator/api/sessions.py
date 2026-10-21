@@ -152,7 +152,7 @@ async def create_session(
         session_agents = []
         for entry in req.roster:
             agent_row = await db.get(Agent, entry.agent_id)
-            if agent_row is None:
+            if agent_row is None or agent_row.archived_at is not None:
                 raise HTTPException(422, detail=_error("invalid_agent", f"agent {entry.agent_id} not found",
                                                         "roster.agent_id"))
             sa = SessionAgent(session_id=session_row.id, agent_id=entry.agent_id,
@@ -488,7 +488,7 @@ async def add_participant(
                 "already_participant", f"agent {req.agent_id} is already a participant", "agent_id"))
 
         agent_row = await db.get(Agent, req.agent_id)
-        if agent_row is None:
+        if agent_row is None or agent_row.archived_at is not None:
             raise HTTPException(404, detail=_error("not_found", f"agent {req.agent_id} not found", "agent_id"))
 
         seat_order = req.seat_order
