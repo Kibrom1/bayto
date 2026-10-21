@@ -164,7 +164,7 @@ def container_status(name, port):
     # Anything listening on the port counts, including one started outside this panel (another container, brew).
     if port_open(port):
         return "running"
-    code, out = run(["docker", "inspect", "-f", "{{.State.Running}}", name], 15)
+    code, out = run(["docker", "inspect", "--type", "container", "-f", "{{.State.Running}}", name], 15)
     if code != 0:
         if code == 127:
             return "docker missing"
@@ -181,10 +181,14 @@ def container_start(name, port, run_args, image):
     if st in ("docker missing", "docker not running"):
         return ("Docker is not installed or on PATH." if st == "docker missing"
                 else "Docker is not running. Open Docker Desktop, wait for it to start, then try again.")
-    if st == "absent":
-        code, out = run(["docker", "run", "-d", "--name", name, *run_args, image], 180)
-    else:
+    if st != "absent":
         code, out = run(["docker", "start", name], 60)
+        if code == 0:
+            return "started"
+        if "No such" not in out:
+            return out
+        # The status check said it exists but Docker has no such container: create it.
+    code, out = run(["docker", "run", "-d", "--name", name, *run_args, image], 180)
     return out if code else "started"
 
 
