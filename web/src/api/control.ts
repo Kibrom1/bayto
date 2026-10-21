@@ -1,7 +1,7 @@
 // Talks to scripts/bayto-control.py through the Vite proxy (/control -> 127.0.0.1:8787).
 
 export interface ControlState {
-  services: Record<'postgres' | 'orchestrator' | 'web', string>
+  services: Record<'postgres' | 'observability' | 'orchestrator' | 'web', string>
   config: {
     streaming: boolean
     llm_backend: 'subscription' | 'api'
