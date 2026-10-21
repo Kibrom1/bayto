@@ -12,7 +12,9 @@ Each event is an `audit.<action>` span (for example `audit.agent.created`, `audi
 ## See the events
 
 1. **The log (always on).** `grep AUDIT logs/api.log` (or `tail -f logs/api.log | grep AUDIT`).
-2. **A trace viewer (local).** Start Jaeger, then start Bayto with the endpoint set:
+2. **A trace viewer (local).** On the Services page (http://localhost:5173/services) start **Observability** before the
+   orchestrator. It runs Jaeger in Docker (container `bayto-jaeger`, ports on 127.0.0.1 only, data kept on the
+   `bayto-jaeger-data` volume), and `bayto-control.py` points the orchestrator at it automatically. Or by hand:
    ```
    docker run --rm -p 16686:16686 -p 4317:4317 jaegertracing/all-in-one
    export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317

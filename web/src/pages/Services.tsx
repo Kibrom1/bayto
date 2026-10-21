@@ -4,10 +4,11 @@ import { controlAction, getControlState, getLog, type ControlState } from '../ap
 import { ConfirmDialog } from '../components/Dialog'
 import './Services.css'
 
-type ServiceName = 'postgres' | 'orchestrator' | 'web'
+type ServiceName = 'postgres' | 'observability' | 'orchestrator' | 'web'
 
 const SERVICE_INFO: Record<ServiceName, { title: string; hint: string }> = {
   postgres: { title: 'Postgres', hint: 'Database, in Docker (container bayto-pg, port 5432)' },
+  observability: { title: 'Observability', hint: 'Traces and the audit trail, in Docker (Jaeger, container bayto-jaeger, viewer on port 16686). Keeps its data between restarts. Start it before the orchestrator.' },
   orchestrator: { title: 'Orchestrator', hint: 'API and moderator, port 8000' },
   web: { title: 'Web app', hint: 'This page, port 5173' },
 }
@@ -141,6 +142,9 @@ export function Services() {
                   <div className="svc-row-main">
                     <div className="svc-row-title">{SERVICE_INFO[name].title}</div>
                     <div className="svc-row-hint">{SERVICE_INFO[name].hint}</div>
+                    {name === 'observability' && running && (
+                      <div className="svc-row-hint"><a href="http://localhost:16686" target="_blank" rel="noreferrer">Open the viewer</a> and search for the tag <code>bayto.audit=true</code> to see the audit trail.</div>
+                    )}
                     {r && <div className={`svc-result${r.bad ? ' bad' : ''}`} role={r.bad ? 'alert' : 'status'}>{r.text}</div>}
                   </div>
                   <StatusPill status={status} />

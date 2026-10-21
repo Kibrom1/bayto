@@ -28,6 +28,13 @@ ROOT = Path(__file__).resolve().parent.parent
 PORT = int(os.environ.get("BAYTO_CONTROL_PORT", "8787"))
 ORCH = "http://127.0.0.1:8000"
 PG_NAME = "bayto-pg"
+# Observability: Jaeger all-in-one. Audit events and traces arrive over OTLP (gRPC, 4317) and are browsed on 16686.
+# Both ports are published on 127.0.0.1 only. Data is kept on a named volume so the audit trail survives a restart.
+OBS_NAME = "bayto-jaeger"
+OBS_IMAGE = "jaegertracing/all-in-one:1.62.0"
+OBS_OTLP_PORT = 4317
+OBS_UI_PORT = 16686
+OBS_VOLUME = "bayto-jaeger-data"
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
 UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
 
@@ -134,6 +141,9 @@ def orch_env():
             e["ANTHROPIC_API_KEY"] = CONFIG["api_key"]
     else:
         e["BAYTO_LLM_BACKEND"] = "cli"
+    if port_open(OBS_OTLP_PORT):
+        # Observability is up: send traces and the audit trail to it. (Started later? restart the orchestrator.)
+        e["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"http://127.0.0.1:{OBS_OTLP_PORT}"
     return e
 
 
@@ -150,11 +160,11 @@ def port_open(port=5432):
         return False
 
 
-def pg_status():
-    # Any Postgres on 5432 counts, including one started outside this panel (another container, brew).
-    if port_open():
+def container_status(name, port):
+    # Anything listening on the port counts, including one started outside this panel (another container, brew).
+    if port_open(port):
         return "running"
-    code, out = run(["docker", "inspect", "-f", "{{.State.Running}}", PG_NAME], 15)
+    code, out = run(["docker", "inspect", "-f", "{{.State.Running}}", name], 15)
     if code != 0:
         if code == 127:
             return "docker missing"
@@ -164,25 +174,57 @@ def pg_status():
     return "running" if out.strip() == "true" else "stopped"
 
 
-def pg_start():
-    st = pg_status()
+def container_start(name, port, run_args, image):
+    st = container_status(name, port)
     if st == "running":
         return "already running"
     if st in ("docker missing", "docker not running"):
         return ("Docker is not installed or on PATH." if st == "docker missing"
                 else "Docker is not running. Open Docker Desktop, wait for it to start, then try again.")
     if st == "absent":
-        code, out = run(["docker", "run", "-d", "--name", PG_NAME, "-e", "POSTGRES_USER=bayto", "-e",
-                         "POSTGRES_PASSWORD=bayto", "-e", "POSTGRES_DB=bayto", "-p", "5432:5432",
-                         "postgres:16-alpine"], 180)
+        code, out = run(["docker", "run", "-d", "--name", name, *run_args, image], 180)
     else:
-        code, out = run(["docker", "start", PG_NAME], 60)
+        code, out = run(["docker", "start", name], 60)
     return out if code else "started"
 
 
-def pg_stop():
-    code, out = run(["docker", "stop", PG_NAME], 60)
+def container_stop(name):
+    code, out = run(["docker", "stop", name], 60)
     return out if code else "stopped"
+
+
+def pg_status():
+    return container_status(PG_NAME, 5432)
+
+
+def pg_start():
+    return container_start(PG_NAME, 5432, [
+        "-e", "POSTGRES_USER=bayto", "-e", "POSTGRES_PASSWORD=bayto", "-e", "POSTGRES_DB=bayto", "-p", "5432:5432"],
+        "postgres:16-alpine")
+
+
+def pg_stop():
+    return container_stop(PG_NAME)
+
+
+def obs_status():
+    return container_status(OBS_NAME, OBS_OTLP_PORT)
+
+
+def obs_start():
+    out = container_start(OBS_NAME, OBS_OTLP_PORT, [
+        "--user", "root",
+        "-p", f"127.0.0.1:{OBS_UI_PORT}:16686", "-p", f"127.0.0.1:{OBS_OTLP_PORT}:4317",
+        "-e", "SPAN_STORAGE_TYPE=badger", "-e", "BADGER_EPHEMERAL=false",
+        "-e", "BADGER_DIRECTORY_VALUE=/badger/data", "-e", "BADGER_DIRECTORY_KEY=/badger/key",
+        "-v", f"{OBS_VOLUME}:/badger"], OBS_IMAGE)
+    if out in ("started", "already running"):
+        return f"{out}. Viewer: http://localhost:{OBS_UI_PORT}. Restart the orchestrator so it sends its events here."
+    return out
+
+
+def obs_stop():
+    return container_stop(OBS_NAME)
 
 
 def orch_call(method, path, body=None):
@@ -214,7 +256,8 @@ def state():
                 sessions.append({"task": t["title"], "id": sid,
                                  "status": (s.get("session") or s).get("status") if c == 200 else f"error {c}"})
     return {
-        "services": {"postgres": pg_status(), "orchestrator": ORCH_PROC.status(), "web": WEB_PROC.status()},
+        "services": {"postgres": pg_status(), "observability": obs_status(), "orchestrator": ORCH_PROC.status(),
+                     "web": WEB_PROC.status()},
         "config": {**CONFIG, "api_key": "set" if CONFIG["api_key"] else ""},
         "sessions": sessions,
     }
@@ -226,6 +269,8 @@ def do_action(a):
         name, op = a.get("name"), a.get("op")
         if name == "postgres":
             return pg_start() if op == "start" else pg_stop()
+        if name == "observability":
+            return obs_start() if op == "start" else obs_stop()
         proc = {"orchestrator": ORCH_PROC, "web": WEB_PROC}.get(name)
         if proc is None or op not in ("start", "stop"):
             return "bad request"
