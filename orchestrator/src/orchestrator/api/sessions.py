@@ -166,7 +166,7 @@ async def create_session(
             roster_log.append({"agent_id": str(entry.agent_id), "name": agent_row.name, "role": agent_row.role,
                                "version": agent_row.version, "kind": agent_row.kind})
 
-        await audit.record(db, action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
+        audit.emit(action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
                            task_id=req.task_id, session_id=session_row.id, subject_type="session", subject_id=session_row.id,
                            detail={"mode": mode_row.name, "budget": session_row.budget, "roster": roster_log})
         await db.commit()
@@ -263,7 +263,7 @@ async def interject_session(session_id: uuid.UUID, req: InterjectRequest, reques
     env = await runtime.conversation.send(sender="human", to=to, kind="note", body=req.body)
     async with sessionmaker() as db:  # the text is in the transcript; the log keeps who it went to and how long it was
         session_row = await db.get(Session, session_id)
-        await audit.record(db, action="session.interjected",
+        audit.emit(action="session.interjected",
                            summary="Sent a message to " + ("everyone" if to == ["*"] else ", ".join(to)),
                            task_id=session_row.task_id if session_row else None, session_id=session_id,
                            subject_type="session", subject_id=session_id, detail={"to": to, "chars": len(req.body)})
@@ -293,7 +293,7 @@ async def stop_session(
             raise HTTPException(409, detail=_error("invalid_transition",
                                                      f"cannot stop a session in status {row.status!r}"))
         row.status = STATUS_STOPPING if req.synthesize else STATUS_CANCELLING
-        await audit.record(db, action="session.stop_requested",
+        audit.emit(action="session.stop_requested",
                            summary="Ended the session" + (" with a synthesis" if req.synthesize else " without a synthesis"),
                            task_id=row.task_id, session_id=session_id, subject_type="session", subject_id=session_id,
                            detail={"synthesize": req.synthesize, "reason": req.reason})
@@ -342,7 +342,7 @@ async def pause_session(
                 "invalid_transition",
                 f"can only pause an active session (current status: {row.status!r})"))
         row.status = STATUS_NEEDS_HUMAN
-        await audit.record(db, action="session.paused", summary="Paused the session", task_id=row.task_id,
+        audit.emit(action="session.paused", summary="Paused the session", task_id=row.task_id,
                            session_id=session_id, subject_type="session", subject_id=session_id)
         await db.commit()
     return {"session": {"id": str(session_id), "status": STATUS_NEEDS_HUMAN}}
@@ -386,7 +386,7 @@ async def resume_session(
         # This also prevents a double-tap of /resume from racing into two parallel runners
         # (the second would see `starting`, not `needs_human`, and 409 immediately).
         row.status = STATUS_STARTING
-        await audit.record(db, action="session.resumed", summary="Resumed the session", task_id=row.task_id,
+        audit.emit(action="session.resumed", summary="Resumed the session", task_id=row.task_id,
                            session_id=session_id, subject_type="session", subject_id=session_id)
         await db.commit()
 
@@ -434,7 +434,7 @@ async def _require_live_session(db, session_id: uuid.UUID) -> Session:
 async def _record_participant(db, action: str, sa: SessionAgent, verb: str) -> None:
     agent = await db.get(Agent, sa.agent_id)
     session_row = await db.get(Session, sa.session_id)
-    await audit.record(db, action=action, summary=f"{verb} {agent.name if agent else sa.agent_id}",
+    audit.emit(action=action, summary=f"{verb} {agent.name if agent else sa.agent_id}",
                        task_id=session_row.task_id if session_row else None, session_id=sa.session_id,
                        subject_type="agent", subject_id=sa.agent_id,
                        detail={"name": agent.name if agent else None, "role": agent.role if agent else None})
@@ -810,7 +810,7 @@ async def archive_session(session_id: uuid.UUID,
         row = await _load_idle_session(db, session_id, "archive")
         if row.archived_at is None:
             row.archived_at = datetime.now(timezone.utc)
-            await audit.record(db, action="session.archived", summary="Archived the session", task_id=row.task_id,
+            audit.emit(action="session.archived", summary="Archived the session", task_id=row.task_id,
                                session_id=session_id, subject_type="session", subject_id=session_id)
             await db.commit()
         return {"session": {"id": str(session_id), "archived_at": row.archived_at.isoformat()}}
@@ -825,7 +825,7 @@ async def unarchive_session(session_id: uuid.UUID,
             raise HTTPException(404, detail=_error("not_found", "session not found"))
         if row.archived_at is not None:
             row.archived_at = None
-            await audit.record(db, action="session.unarchived", summary="Restored the session", task_id=row.task_id,
+            audit.emit(action="session.unarchived", summary="Restored the session", task_id=row.task_id,
                                session_id=session_id, subject_type="session", subject_id=session_id)
         await db.commit()
         return {"session": {"id": str(session_id), "archived_at": None}}
@@ -856,7 +856,7 @@ async def delete_session(session_id: uuid.UUID, request: Request,
         for model in (Message, Turn, SessionAgent):
             await db.execute(delete(model).where(model.session_id == session_id))
         await db.execute(delete(Session).where(Session.id == session_id))
-        await audit.record(db, action="session.deleted", summary="Deleted the session and its transcript",
+        audit.emit(action="session.deleted", summary="Deleted the session and its transcript",
                            task_id=deleted_task_id, session_id=session_id, subject_type="session", subject_id=session_id,
                            detail={"turns": deleted_turns, "status": deleted_status})
         await db.commit()

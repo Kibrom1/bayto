@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     ARRAY,
-    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -77,33 +76,6 @@ class TaskAttachment(Base):
     __table_args__ = (
         CheckConstraint("kind in ('file', 'folder', 'url')", name="ck_task_attachment_kind"),
         Index("ix_task_attachment_task_id", "task_id"),
-    )
-
-
-class AuditEvent(Base):
-    """Append-only record of who did what (see audit.py). No foreign keys on purpose: the record outlives the
-    session, task or agent it describes. Each row carries the hash of the row before it, so an edit or a
-    deletion in the middle of the log is detectable."""
-
-    __tablename__ = "audit_event"
-
-    seq: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    actor: Mapped[str] = mapped_column(String, nullable=False)      # person | system
-    action: Mapped[str] = mapped_column(String, nullable=False)     # e.g. agent.created
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    session_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
-    subject_type: Mapped[str | None] = mapped_column(String)
-    subject_id: Mapped[str | None] = mapped_column(String)
-    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    prev_hash: Mapped[str] = mapped_column(String, nullable=False)
-    hash: Mapped[str] = mapped_column(String, nullable=False)
-
-    __table_args__ = (
-        Index("ix_audit_event_session_id", "session_id"),
-        Index("ix_audit_event_task_id", "task_id"),
-        Index("ix_audit_event_action", "action"),
     )
 
 

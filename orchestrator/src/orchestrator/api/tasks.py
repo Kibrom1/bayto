@@ -113,7 +113,7 @@ async def create_task(
                     success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace)
         db.add(row)
         await db.flush()
-        await audit.record(db, action="task.created", summary=f"Created task {row.title}", task_id=row.id,
+        audit.emit(action="task.created", summary=f"Created task {row.title}", task_id=row.id,
                            subject_type="task", subject_id=row.id,
                            detail={"title": row.title, "output_type": row.output_type, "build": workspace is not None})
         await db.commit()
@@ -133,7 +133,7 @@ async def set_task_workspace(
         if row is None:
             raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
         row.workspace = workspace
-        await audit.record(db, action="task.workspace_set", summary=f"Set the repository for {row.title}", task_id=row.id,
+        audit.emit(action="task.workspace_set", summary=f"Set the repository for {row.title}", task_id=row.id,
                            subject_type="task", subject_id=row.id,
                            detail={"repo_path": workspace.get("repo_path"), "base_branch": workspace.get("base_branch"),
                                    "test_command": workspace.get("test_command")})

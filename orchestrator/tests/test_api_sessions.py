@@ -953,8 +953,8 @@ async def test_a_running_session_cannot_be_archived_or_deleted(client, live_sess
         assert await db.get(Session, session_id) is not None
 
 
-async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_sessionmaker, tmp_path):
-    from orchestrator.models import AuditEvent
+async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_sessionmaker, tmp_path, span_exporter):
+    from audit_helpers import audit_events
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
     resp = await client.post("/sessions", json={
         "task_id": str(task_id), "mode_id": str(mode_id),
@@ -976,8 +976,7 @@ async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_se
     await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
     assert (await client.delete(f"/sessions/{session_id}")).status_code == 204
 
-    async with live_sessionmaker() as db:
-        rows = (await db.execute(select(AuditEvent).where(AuditEvent.session_id == session_id).order_by(AuditEvent.seq))).scalars().all()
+    rows = audit_events(span_exporter, session_id=session_id)
     assert [r.action for r in rows] == ["session.created", "session.started", "session.interjected",
                                         "session.stop_requested", "session.ended", "session.deleted"]
     created, started, interjected, stop, ended, deleted = rows
@@ -988,6 +987,3 @@ async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_se
     assert interjected.detail["chars"] == len("PRIVATE-NOTE-TEXT") and "PRIVATE-NOTE-TEXT" not in str(interjected.detail)
     assert stop.detail == {"synthesize": False, "reason": "enough"}
     assert ended.detail["stop_reason"] and ended.detail["synthesized"] is False
-    async with live_sessionmaker() as db:
-        from orchestrator import audit
-        assert (await audit.verify(db))["ok"] is True  # the record survives the session it describes

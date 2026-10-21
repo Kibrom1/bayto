@@ -1108,7 +1108,7 @@ class ModeratorRunner:
     async def _record_end(self, session, row, *, synthesized: bool) -> None:
         """The audit-trail entry for a finished session, written in the same commit as the status change."""
         spent = await session.scalar(select(func.coalesce(func.sum(UsageLedger.cost), 0)).where(UsageLedger.session_id == self._session_id))
-        await audit.record(session, action="session.ended", summary=f"Session ended ({row.stop_reason})",
+        audit.emit(action="session.ended", summary=f"Session ended ({row.stop_reason})",
                            task_id=row.task_id, session_id=self._session_id, actor="system", subject_type="session",
                            subject_id=self._session_id,
                            detail={"stop_reason": row.stop_reason, "synthesized": synthesized, "cost": float(spent or 0)})

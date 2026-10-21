@@ -140,7 +140,7 @@ async def create_agent(req: AgentCreate, sessionmaker: async_sessionmaker = Depe
         )
         db.add(row)
         await db.flush()
-        await audit.record(db, action="agent.created", summary=f"Created custom agent {row.name}",
+        audit.emit(action="agent.created", summary=f"Created custom agent {row.name}",
                            subject_type="agent", subject_id=row.id,
                            detail={"name": row.name, "role": row.role, "stance": row.stance, "preset": req.preset,
                                    "tools": row.tools, "instructions_chars": len(req.instructions),
@@ -177,7 +177,7 @@ async def update_agent(agent_id: uuid.UUID, req: AgentUpdate,
             row.system_prompt = req.instructions
             changed.append("instructions")
         row.version = str(int(row.version or "1") + 1)
-        await audit.record(db, action="agent.updated", summary=f"Edited agent {row.name} ({', '.join(changed) or 'no change'})",
+        audit.emit(action="agent.updated", summary=f"Edited agent {row.name} ({', '.join(changed) or 'no change'})",
                            subject_type="agent", subject_id=row.id,
                            detail={"changed": changed, "version": row.version,
                                    "instructions_sha256": audit.sha256(row.system_prompt or "")})
@@ -191,7 +191,7 @@ async def archive_agent(agent_id: uuid.UUID, sessionmaker: async_sessionmaker = 
     async with sessionmaker() as db:
         row = await _get_custom(db, agent_id)
         row.archived_at = datetime.now(timezone.utc)
-        await audit.record(db, action="agent.archived", summary=f"Archived agent {row.name}",
+        audit.emit(action="agent.archived", summary=f"Archived agent {row.name}",
                            subject_type="agent", subject_id=row.id, detail={"name": row.name, "role": row.role})
         await db.commit()
     return Response(status_code=204)

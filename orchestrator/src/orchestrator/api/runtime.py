@@ -132,7 +132,7 @@ def _on_runner_done(task: asyncio.Task, session_id: uuid.UUID, sessionmaker: asy
             row = await db.get(Session, session_id)
             if row is not None and row.status in _CRASHABLE:
                 row.status = "failed"
-                await audit.record(db, action="session.failed", summary="The session stopped on an error",
+                audit.emit(action="session.failed", summary="The session stopped on an error",
                                    task_id=row.task_id, session_id=session_id, actor="system",
                                    subject_type="session", subject_id=session_id,
                                    detail={"reason": session_failures.get(session_id)})
@@ -265,7 +265,7 @@ async def launch_runner(
             for seat in seats:
                 allow, deny = seat_permissions(seat)
                 seat_log.append({"role": seat.role, "name": seat.name, "model": seat.model, "allowed": allow, "denied": deny})
-            await audit.record(db, action="session.started", summary=f"Session started with {len(seat_log)} seats",
+            audit.emit(action="session.started", summary=f"Session started with {len(seat_log)} seats",
                                task_id=task_id, session_id=session_id, actor="system", subject_type="session",
                                subject_id=session_id,
                                detail={"mode": mode_row.name, "seats": seat_log,
@@ -302,7 +302,7 @@ async def launch_runner(
             row = await db.get(Session, session_id)
             if row is not None:
                 row.status = "failed"
-                await audit.record(db, action="session.failed", summary="The session failed to start",
+                audit.emit(action="session.failed", summary="The session failed to start",
                                    task_id=row.task_id, session_id=session_id, actor="system",
                                    subject_type="session", subject_id=session_id,
                                    detail={"reason": session_failures.get(session_id)})

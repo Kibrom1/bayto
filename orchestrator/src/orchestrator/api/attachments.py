@@ -110,7 +110,7 @@ async def _add(sessionmaker, task_id: uuid.UUID, *, kind: str, name: str, source
         row = TaskAttachment(task_id=task_id, kind=kind, name=name, source=source, content=content, truncated=truncated)
         db.add(row)
         await db.flush()
-        await audit.record(db, action="attachment.added", summary=f"Attached {kind} {name}" + (" during a session" if session_id else ""),
+        audit.emit(action="attachment.added", summary=f"Attached {kind} {name}" + (" during a session" if session_id else ""),
                            task_id=task_id, session_id=session_id,
                            subject_type="attachment", subject_id=row.id,
                            detail={"kind": kind, "name": name, "source": audit.public_url(source) if kind == "url" else source,
@@ -202,7 +202,7 @@ async def remove_attachment(task_id: uuid.UUID, attachment_id: uuid.UUID, reques
         runtime = await _room(db, request, task_id, session_id)
         name = row.name
         await db.delete(row)
-        await audit.record(db, action="attachment.removed", summary=f"Removed {row.kind} {row.name}" + (" during a session" if session_id else ""),
+        audit.emit(action="attachment.removed", summary=f"Removed {row.kind} {row.name}" + (" during a session" if session_id else ""),
                            task_id=task_id, session_id=session_id,
                            subject_type="attachment", subject_id=row.id, detail={"kind": row.kind, "name": row.name})
         await db.commit()
