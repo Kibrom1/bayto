@@ -69,8 +69,6 @@ export function ChangeSet({ artifacts, sessionId }: { artifacts: ArtifactOut[]; 
         back with <code>git switch {cs.base_branch}</code>.
       </p>
 
-      {sessionId && <PullRequestPanel sessionId={sessionId} hasCommits={cs.commits.length > 0} opened={cs.pull_request?.url ?? null} />}
-
       {cs.open_issues.length > 0 && (
         <ul className="cs-issues" aria-label="Open issues">
           {cs.open_issues.map((i) => <li key={i}>{i}</li>)}
@@ -131,6 +129,8 @@ export function ChangeSet({ artifacts, sessionId }: { artifacts: ArtifactOut[]; 
           </ul>
         </details>
       )}
+
+      {sessionId && <PullRequestPanel sessionId={sessionId} hasCommits={cs.commits.length > 0} opened={cs.pull_request?.url ?? null} />}
     </article>
   )
 }

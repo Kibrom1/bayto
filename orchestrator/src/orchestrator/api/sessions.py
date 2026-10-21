@@ -260,6 +260,15 @@ async def interject_session(session_id: uuid.UUID, req: InterjectRequest, reques
     if runtime is None:
         raise HTTPException(409, detail=_error("not_started", "session is not running"))
     to = req.to or ["*"]
+    if to != ["*"]:
+        async with sessionmaker() as db:
+            rows = (await db.execute(select(Agent.role, Agent.name).join(SessionAgent, SessionAgent.agent_id == Agent.id)
+                                      .where(SessionAgent.session_id == session_id))).all()
+        known = {v.lower() for r in rows for v in r if v}
+        bad = [t for t in to if t.lower() not in known and t.lower() != "human"
+               and not any(t.lower().startswith(k + "-") for k in known)]
+        if bad:
+            raise HTTPException(422, detail=_error("unknown_recipient", f"no participant named {', '.join(bad)}", "to"))
     env = await runtime.conversation.send(sender="human", to=to, kind="note", body=req.body)
     async with sessionmaker() as db:  # the text is in the transcript; the log keeps who it went to and how long it was
         session_row = await db.get(Session, session_id)
