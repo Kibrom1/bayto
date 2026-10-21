@@ -91,3 +91,8 @@ async def test_context_changes_are_recorded_by_name_and_fingerprint_not_content(
     assert "CONFIDENTIAL" not in json.dumps([r.detail for r in rows])
     [task] = audit_events(span_exporter, action="task.created")
     assert task.detail["title"] == "T"
+
+
+def test_the_audit_log_line_is_visible_without_any_logging_setup():
+    """uvicorn does not configure the root logger, so the audit logger carries its own handler at INFO."""
+    assert audit.LOGGER.handlers and audit.LOGGER.level == logging.INFO
