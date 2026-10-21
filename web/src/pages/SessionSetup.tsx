@@ -13,6 +13,7 @@ import { agentHue } from '../agentColor'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
+import { ContextCard } from '../components/ContextCard'
 import { ConfirmDialog } from '../components/Dialog'
 import { TableRing } from '../components/TableRing'
 import { EMPTY_WORKSPACE, WorkspaceFields, workspaceBody, type WorkspaceDraft } from '../components/WorkspaceFields'
@@ -302,6 +303,8 @@ export function SessionSetup() {
                 {task.workspace.test_command ? <> · tests: <code>{task.workspace.test_command}</code></> : ' · no test command set'}</p>
             </section>
           )}
+
+          {taskId && <ContextCard taskId={taskId} />}
 
           <section className="card card-pad" aria-labelledby="agents-h">
             <h2 id="agents-h">2. Agent explorer</h2>

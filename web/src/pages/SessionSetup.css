@@ -54,3 +54,15 @@
 .agent-manage { display: inline-flex; gap: 0.9rem; margin-top: 0.15rem; }
 .agent-manage .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; color: var(--ink-2, var(--ink)); text-decoration: underline; cursor: pointer; }
 @media (pointer: coarse) { .agent-manage .link-btn { min-height: 44px; padding: 0 0.25rem; } }
+
+.context-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: 0.4rem; }
+.context-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.context-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-list .muted { margin-left: auto; white-space: nowrap; font-size: 0.85rem; }
+.context-list .link-btn, .context-actions + .context-add .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; text-decoration: underline; color: var(--ink-2, var(--ink)); cursor: pointer; }
+.context-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.context-add { margin-top: var(--space-3); display: grid; gap: 0.3rem; }
+.context-add label { font-size: 0.9rem; font-weight: 600; }
+.context-add-row { display: flex; gap: 0.5rem; }
+.context-add-row input { flex: 1; min-width: 0; font: inherit; padding: 0.55rem 0.7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface, #fff); color: var(--ink); }
+@media (pointer: coarse) { .context-list .link-btn { min-height: 44px; padding: 0 0.25rem; } }

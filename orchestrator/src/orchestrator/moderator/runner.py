@@ -52,10 +52,11 @@ from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
+from ..attachment_prompt import attachment_prompt
 from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
 from ..models import Session as SessionRow
-from ..models import SessionAgent, Task, Turn
+from ..models import SessionAgent, Task, TaskAttachment, Turn
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..sandbox.turns import TextDelta, ToolUse, TurnResult
@@ -785,6 +786,12 @@ class ModeratorRunner:
             lines.append(f"Workspace: git repository, base branch {ws.get('base_branch', 'main')}")
             if ws.get("test_command"):
                 lines.append(f"Test command: {ws['test_command']}")
+        async with self._sessionmaker() as session:
+            attachments = (await session.execute(
+                select(TaskAttachment).where(TaskAttachment.task_id == task.id)
+                .order_by(TaskAttachment.created_at))).scalars().all()
+        if attachments:
+            lines.append(attachment_prompt(attachments))
         return "\n".join(lines)
 
     async def _human_notes_for(self, participant: str) -> str:

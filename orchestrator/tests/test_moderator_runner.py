@@ -1373,3 +1373,18 @@ async def test_an_archived_session_is_left_out_of_the_agents_context(tmp_path, l
         (await db.get(Session, old_id)).archived_at = None
         await db.commit()
     assert "SQLITE-ONLY" in await runner._build_context(await runner._build_view())
+
+
+async def test_task_text_includes_attached_context_as_reference_material(tmp_path, live_sessionmaker):
+    from orchestrator.models import Session as SessionRow, TaskAttachment
+    session_id = await _make_session(live_sessionmaker)
+    await _set_task(live_sessionmaker, session_id, title="T", brief=None, output_type="memo", success_criteria=None)
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(SessionRow, session_id)).task_id
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="terms.md", source=None, content="Data stays in the EU.", truncated=False))
+        await db.commit()
+    runner, *_ = mk_runner(tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+                           mode=mk_mode_config(), policy=RoundRobinFloorPolicy())
+    text = await runner._task_text()
+    assert text.startswith("Task: T\nExpected output: memo")
+    assert "REFERENCE MATERIAL" in text and 'name="terms.md"' in text and "Data stays in the EU." in text

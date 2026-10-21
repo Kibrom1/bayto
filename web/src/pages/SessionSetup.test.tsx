@@ -28,6 +28,7 @@ function mockApi(opts: { build?: boolean; workspace?: object | null } = {}) {
       return json([{ id: 'task-1', title: 't', brief: null, output_type: 'code change', workspace: opts.workspace ?? null }])
     }
     if (url.endsWith('/tasks/task-1/workspace') && init?.method === 'PUT') return json({ task: { id: 'task-1' } })
+    if (url.endsWith('/attachments')) return json([])
     if (url.endsWith('/modes')) return json(opts.build ? [...MODES, BUILD_MODE] : MODES)
     if (url.endsWith('/agents/templates')) return json(opts.build ? [...AGENTS, ...BUILD_AGENTS] : AGENTS)
     if (url.endsWith('/sessions') && init?.method === 'POST') return json({ session: { id: 's9', status: 'created' } }, 201)
