@@ -24,7 +24,6 @@ function mockApi() {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     calls.push({ method, url, body })
     if (url.endsWith('/tasks')) return json([{ id: 'task-1', title: 't', brief: null, output_type: 'plan', workspace: null }])
-    if (url.endsWith('/attachments')) return json([])
     if (url.endsWith('/modes')) return json([...MODES, BUILD_MODE])
     if (url.endsWith('/agents/templates')) return json(agents)
     if (url.endsWith('/agents') && method === 'POST') {

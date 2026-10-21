@@ -21,9 +21,9 @@ function mockApi(refuse?: { url: string; detail: string }) {
     if (url.endsWith('/tasks/t1/attachments') && method === 'GET') return json(items)
     if (refuse && url.includes(refuse.url)) return json({ detail: { error: { code: 'attachment_refused', detail: refuse.detail } } }, 422)
     if (url.includes('/attachments/file')) { const a = { ...NOTES, id: 'f' + items.length, name: 'notes.md' }; items = [...items, a]; return json(a, 201) }
-    if (url.endsWith('/attachments/folder')) { const a = { ...NOTES, id: 'd1', kind: 'folder', name: 'docs', source: '/p/docs', chars: 30000 }; items = [...items, a]; return json(a, 201) }
-    if (url.endsWith('/attachments/url')) { const a = { ...NOTES, id: 'u1', kind: 'url', name: 'Vendor terms', source: 'https://e.com', chars: 800 }; items = [...items, a]; return json(a, 201) }
-    if (method === 'DELETE') { items = items.filter((a) => !url.endsWith(a.id)); return new Response(null, { status: 204 }) }
+    if (url.includes('/attachments/folder')) { const a = { ...NOTES, id: 'd1', kind: 'folder', name: 'docs', source: '/p/docs', chars: 30000 }; items = [...items, a]; return json(a, 201) }
+    if (url.includes('/attachments/url')) { const a = { ...NOTES, id: 'u1', kind: 'url', name: 'Vendor terms', source: 'https://e.com', chars: 800 }; items = [...items, a]; return json(a, 201) }
+    if (method === 'DELETE') { items = items.filter((a) => !url.includes('/' + a.id)); return new Response(null, { status: 204 }) }
     return json({ detail: 'nope' }, 404)
   })
 }
@@ -34,7 +34,7 @@ afterEach(() => { vi.unstubAllGlobals() })
 describe('ContextCard', () => {
   it('says what the agents can and cannot reach, and starts empty', async () => {
     mockApi()
-    render(<ContextCard taskId="t1" />)
+    render(<ContextCard taskId="t1" sessionId="s1" />)
     expect(await screen.findByRole('heading', { name: /context/i })).toBeInTheDocument()
     expect(screen.getByText(/can't reach the folder or the web/i)).toBeInTheDocument()
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
@@ -43,31 +43,31 @@ describe('ContextCard', () => {
   it('uploads a file, lists it and shows the per-turn cost', async () => {
     const user = userEvent.setup()
     mockApi()
-    render(<ContextCard taskId="t1" />)
+    render(<ContextCard taskId="t1" sessionId="s1" />)
     await screen.findByRole('heading', { name: /context/i })
     await user.upload(screen.getByLabelText('Choose files to attach'), new File(['# hi'], 'notes.md', { type: 'text/markdown' }))
     expect(await screen.findByText('notes.md')).toBeInTheDocument()
     expect(screen.getByText(/1\.2k characters/)).toBeInTheDocument()
     expect(screen.getByText(/about 300 tokens each time/)).toBeInTheDocument()
-    expect(calls.some((c) => c.method === 'PUT' && c.url.includes('/attachments/file?name=notes.md'))).toBe(true)
+    expect(calls.some((c) => c.method === 'PUT' && c.url.includes('/attachments/file?name=notes.md&session_id=s1'))).toBe(true)
   })
 
   it('adds a folder by path and warns when more is attached than fits', async () => {
     const user = userEvent.setup()
     mockApi()
-    render(<ContextCard taskId="t1" />)
+    render(<ContextCard taskId="t1" sessionId="s1" />)
     await user.click(await screen.findByRole('button', { name: /add folder/i }))
     await user.type(screen.getByLabelText(/folder path/i), '/p/docs')
     await user.click(screen.getByRole('button', { name: /^add$/i }))
     expect(await screen.findByText('docs')).toBeInTheDocument()
-    expect(calls.find((c) => c.url.endsWith('/attachments/folder'))?.body).toEqual({ path: '/p/docs' })
+    expect(calls.find((c) => c.url.includes('/attachments/folder'))?.body).toEqual({ path: '/p/docs' })
     expect(screen.getByText(/more attached than fits|about 7,500 tokens/)).toBeInTheDocument()
   })
 
   it('adds a link, then removes it', async () => {
     const user = userEvent.setup()
     mockApi()
-    render(<ContextCard taskId="t1" />)
+    render(<ContextCard taskId="t1" sessionId="s1" />)
     await user.click(await screen.findByRole('button', { name: /add link/i }))
     await user.type(screen.getByLabelText(/web address/i), 'https://e.com')
     await user.click(screen.getByRole('button', { name: /^add$/i }))
@@ -79,7 +79,7 @@ describe('ContextCard', () => {
   it('shows the reason an attachment was refused and keeps the form open', async () => {
     const user = userEvent.setup()
     mockApi({ url: '/attachments/url', detail: "that address is not on the public internet, so it can't be attached" })
-    render(<ContextCard taskId="t1" />)
+    render(<ContextCard taskId="t1" sessionId="s1" />)
     await user.click(await screen.findByRole('button', { name: /add link/i }))
     await user.type(screen.getByLabelText(/web address/i), 'http://127.0.0.1:8000')
     await user.click(screen.getByRole('button', { name: /^add$/i }))

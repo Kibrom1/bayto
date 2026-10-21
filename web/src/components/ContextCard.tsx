@@ -15,8 +15,7 @@ function size(chars: number) {
 
 // Reference material for a task. Agents read a text snapshot taken when it is attached; they never get the
 // folder, the file or the network.
-export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId?: string }) {
-  const inRoom = !!sessionId
+export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId: string }) {
   const [items, setItems] = useState<Attachment[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -69,15 +68,10 @@ export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId?:
   const perTurn = Math.min(total, PROMPT_BUDGET_CHARS)
 
   return (
-    <section className={inRoom ? 'rail-block' : 'card card-pad'} aria-labelledby="context-h">
-      <h2 id="context-h">Context{!inRoom && <> <span className="muted">(optional)</span></>}</h2>
-      {inRoom ? (
-        <p className="hint">Add a document, folder or web page while the team talks. The team is told, and every agent reads it
-          from its next turn. They read a text copy taken now.</p>
-      ) : (
-        <p className="hint">Add documents, a project folder or a web page the agents should draw on. They read a text copy taken now.
-          Nothing is shared live, and they can't reach the folder or the web themselves.</p>
-      )}
+    <section className="rail-block" aria-labelledby="context-h">
+      <h2 id="context-h">Context</h2>
+      <p className="hint">Add a document, folder or web page while the team talks. The team is told, and every agent reads it
+        from its next turn. They read a text copy taken now, and can't reach the folder or the web themselves.</p>
 
       {items && items.length > 0 && (
         <ul className="context-list">

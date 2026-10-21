@@ -1,20 +1,69 @@
-"""Context attachments API: files, folders and links on a task, and what the agents are shown."""
+"""Context attachments API: files, folders and links on a task, added from inside a running room, and what the agents are shown."""
+import uuid
+
 import httpx
 import pytest
 
 from orchestrator import context_extract as cx
 from orchestrator.app import app
 from orchestrator.attachment_prompt import HEADER, PROMPT_BUDGET_CHARS, attachment_prompt
+from orchestrator.models import Mode, Session
 from test_context_extract import make_tree, pdf_bytes
 
 
-def _client():
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+class _Conversation:
+    def __init__(self): self.sent = []
+    async def send(self, **kw): self.sent.append(kw)
+
+
+class _Runtime:
+    def __init__(self): self.conversation = _Conversation()
+
+
+ROOMS: dict[str, uuid.UUID] = {}   # task id -> the running session the test "is in"
+_SM = None
+
+
+@pytest.fixture(autouse=True)
+def _rooms(live_sessionmaker):
+    global _SM
+    _SM = live_sessionmaker
+    saved = dict(getattr(app.state, "session_runtimes", {}) or {})
+    app.state.session_runtimes = saved
+    ROOMS.clear()
+    yield
+    for sid in ROOMS.values():
+        app.state.session_runtimes.pop(sid, None)
+
+
+def _client(*, in_room: bool = True):
+    """A client that, for /tasks/{id}/attachments calls, says which running session it is in (unless in_room=False)."""
+    async def add_session(request: httpx.Request):
+        parts = request.url.path.split("/")
+        if in_room and len(parts) > 3 and parts[1] == "tasks" and parts[3] == "attachments" and parts[2] in ROOMS \
+                and "session_id" not in request.url.params:
+            request.url = request.url.copy_add_param("session_id", str(ROOMS[parts[2]]))
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test",
+                             event_hooks={"request": [add_session]})
+
+
+async def _room_for(task_id: str, *, running: bool = True) -> uuid.UUID:
+    async with _SM() as db:
+        mode = Mode(name=f"m-{uuid.uuid4().hex[:6]}")
+        db.add(mode); await db.flush()
+        sess = Session(task_id=uuid.UUID(task_id), mode_id=mode.id, status="active")
+        db.add(sess); await db.commit()
+        sid = sess.id
+    if running:
+        app.state.session_runtimes[sid] = _Runtime()
+    return sid
 
 
 async def _task(c) -> str:
     r = await c.post("/tasks", json={"title": "T", "brief": "B", "output_type": "decision"})
-    return r.json()["task"]["id"]
+    tid = r.json()["task"]["id"]
+    ROOMS[tid] = await _room_for(tid)
+    return tid
 
 
 async def _put(c, task_id, name, data: bytes):
@@ -140,76 +189,57 @@ def test_no_attachments_adds_nothing():
     assert attachment_prompt([]) == ""
 
 
-# ---- added from inside a room -------------------------------------------------------------------------------
+# ---- only from inside a running room -----------------------------------------------------------------------
 
-class _Conversation:
-    def __init__(self): self.sent = []
-    async def send(self, **kw): self.sent.append(kw)
-
-
-class _Runtime:
-    def __init__(self): self.conversation = _Conversation()
-
-
-async def _session_for(sm, task_id):
-    import uuid as _uuid
-    from orchestrator.models import Mode, Session
-    async with sm() as db:
-        mode = Mode(name=f"m-{_uuid.uuid4().hex[:6]}")
-        db.add(mode); await db.flush()
-        s = Session(task_id=_uuid.UUID(task_id), mode_id=mode.id, status="active")
-        db.add(s); await db.commit()
-        return s.id
+async def test_context_is_refused_outside_a_running_room(live_sessionmaker):
+    async with _client(in_room=False) as c:
+        tid = await _task(c)
+        put = await _put(c, tid, "n.md", b"x")
+        folder = await c.post(f"/tasks/{tid}/attachments/folder", json={"path": "/tmp"})
+        url = await c.post(f"/tasks/{tid}/attachments/url", json={"url": "https://example.com/terms"})
+        for r in (put, folder, url):
+            assert r.status_code == 422 and r.json()["detail"]["error"]["code"] == "room_required"
+        assert (await c.get(f"/tasks/{tid}/attachments")).json() == []
 
 
-@pytest.fixture
-def runtimes():
-    app.state.session_runtimes = getattr(app.state, "session_runtimes", {}) or {}
-    saved = dict(app.state.session_runtimes)
-    yield app.state.session_runtimes
-    app.state.session_runtimes.clear(); app.state.session_runtimes.update(saved)
+async def test_a_session_that_is_not_running_or_is_someone_elses_is_refused(live_sessionmaker):
+    async with _client(in_room=False) as c:
+        tid, other = await _task(c), await _task(c)
+        ended = await _room_for(tid, running=False)
+        r = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "a.md", "session_id": str(ended)}, content=b"x")
+        assert r.status_code == 409 and r.json()["detail"]["error"]["code"] == "not_running"
+        r = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "a.md", "session_id": str(ROOMS[other])}, content=b"x")
+        assert r.status_code == 404 and r.json()["detail"]["error"]["code"] == "session_not_found"
 
 
-async def test_adding_and_removing_in_a_running_room_tells_the_team(live_sessionmaker, runtimes):
+async def test_a_link_is_not_even_fetched_outside_a_room(live_sessionmaker, monkeypatch):
+    async def boom(*a, **k): raise AssertionError("fetched")
+    monkeypatch.setattr(cx, "fetch_url", boom)
+    async with _client(in_room=False) as c:
+        tid = await _task(c)
+        r = await c.post(f"/tasks/{tid}/attachments/url", json={"url": "https://example.com/x"})
+    assert r.status_code == 422
+
+
+async def test_adding_and_removing_tells_the_team(live_sessionmaker):
     async with _client() as c:
         tid = await _task(c)
-        sid = await _session_for(live_sessionmaker, tid)
-        rt = runtimes[sid] = _Runtime()
-        made = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "spec.md", "session_id": str(sid)},
-                           content=b"# Spec\nship friday", headers={"content-type": "application/octet-stream"})
+        rt = app.state.session_runtimes[ROOMS[tid]]
+        made = await _put(c, tid, "spec.md", b"# Spec\nship friday")
         assert made.status_code == 201
         [note] = rt.conversation.sent
         assert note["sender"] == "human" and note["to"] == ["*"] and note["kind"] == "note"
         assert '"spec.md"' in note["body"] and "added a file" in note["body"]
-        # The attachment is in what the agents read from now on.
         assert "ship friday" in (await c.get(f"/tasks/{tid}/attachments/{made.json()['id']}")).json()["content"]
-        gone = await c.delete(f"/tasks/{tid}/attachments/{made.json()['id']}", params={"session_id": str(sid)})
-        assert gone.status_code == 204
+        assert (await c.delete(f"/tasks/{tid}/attachments/{made.json()['id']}")).status_code == 204
         assert "removed" in rt.conversation.sent[-1]["body"] and '"spec.md"' in rt.conversation.sent[-1]["body"]
 
 
-async def test_a_room_that_is_not_running_gets_no_note_and_a_foreign_session_is_refused(live_sessionmaker, runtimes):
-    async with _client() as c:
-        tid, other = await _task(c), await _task(c)
-        sid = await _session_for(live_sessionmaker, tid)
-        ok = await c.post(f"/tasks/{tid}/attachments/folder", params={"session_id": str(sid)}, json={"path": "/nonexistent-zz"})
-        assert ok.status_code == 422  # refused for the path, not for the session
-        wrong = await c.put(f"/tasks/{other}/attachments/file", params={"name": "a.md", "session_id": str(sid)},
-                            content=b"x", headers={"content-type": "application/octet-stream"})
-        assert wrong.status_code == 404 and wrong.json()["detail"]["error"]["code"] == "session_not_found"
-        quiet = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "a.md", "session_id": str(sid)},
-                            content=b"x", headers={"content-type": "application/octet-stream"})
-        assert quiet.status_code == 201  # no runtime registered: stored, nobody to tell
-
-
-async def test_the_runner_prompt_reads_attachments_added_mid_session(live_sessionmaker):
-    """Each turn builds its prompt from the database, so context added after the start is seen on the next turn."""
-    from orchestrator.models import TaskAttachment
-    from orchestrator.attachment_prompt import attachment_prompt
+async def test_removing_outside_a_room_is_refused(live_sessionmaker):
     async with _client() as c:
         tid = await _task(c)
-        await _put(c, tid, "late.md", b"Added after the session began.")
-    from sqlalchemy import select
-    async with live_sessionmaker() as db:
-        rows = (await db.execute(select(TaskAttachment))).scalars().all()
-    assert "Added after the session began." in attachment_prompt(rows)
+        made = (await _put(c, tid, "n.md", b"x")).json()
+    async with _client(in_room=False) as c:
+        r = await c.delete(f"/tasks/{tid}/attachments/{made['id']}")
+        assert r.status_code == 422 and r.json()["detail"]["error"]["code"] == "room_required"
+        assert len((await c.get(f"/tasks/{tid}/attachments")).json()) == 1

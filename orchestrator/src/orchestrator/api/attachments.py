@@ -69,23 +69,26 @@ async def _task_or_404(db, task_id: uuid.UUID) -> Task:
     return task
 
 
-async def _check_session(db, task_id: uuid.UUID, session_id: uuid.UUID | None) -> None:
-    """`session_id` says the person is adding this from inside a room; it must be a session of this task."""
+async def _room(db, request: Request, task_id: uuid.UUID, session_id: uuid.UUID | None):
+    """Context is added and removed only from inside a running session: `session_id` is required, must belong to the
+    task, and the session must be running (or paused). Returns the session's runtime, to tell the team."""
     if session_id is None:
-        return
+        raise HTTPException(422, detail=_error(
+            "room_required", "context can only be added from inside a running session", "session_id"))
     sess = await db.get(Session, session_id)
     if sess is None or sess.task_id != task_id:
         raise HTTPException(404, detail=_error("session_not_found", "that session does not belong to this task"))
-
-
-async def _tell_room(request: Request, session_id: uuid.UUID | None, body: str) -> None:
-    """Put a line from the human in the room's transcript (and so in each agent's next prompt) when the session is
-    running. Not running: nothing to tell; the next turn reads the attachments anyway."""
-    if session_id is None:
-        return
     runtime = request.app.state.session_runtimes.get(session_id)
-    if runtime is not None:
-        await runtime.conversation.send(sender="human", to=["*"], kind="note", body=body)
+    if runtime is None:
+        raise HTTPException(409, detail=_error("not_running", "that session is not running"))
+    return runtime
+
+
+async def _require_room(sessionmaker, request: Request, task_id: uuid.UUID, session_id: uuid.UUID | None) -> None:
+    """Checked first, before any file is read or any link fetched."""
+    async with sessionmaker() as db:
+        await _task_or_404(db, task_id)
+        await _room(db, request, task_id, session_id)
 
 
 def _added_note(name: str, kind: str) -> str:
@@ -95,11 +98,11 @@ def _added_note(name: str, kind: str) -> str:
 
 
 async def _add(sessionmaker, task_id: uuid.UUID, *, kind: str, name: str, source: str | None,
-               content: str, truncated: bool, request: Request | None = None,
+               content: str, truncated: bool, request: Request,
                session_id: uuid.UUID | None = None) -> AttachmentOut:
     async with sessionmaker() as db:
         await _task_or_404(db, task_id)
-        await _check_session(db, task_id, session_id)
+        runtime = await _room(db, request, task_id, session_id)
         count = await db.scalar(select(func.count()).select_from(TaskAttachment).where(TaskAttachment.task_id == task_id))
         if (count or 0) >= MAX_ATTACHMENTS:
             raise HTTPException(409, detail=_error("too_many_attachments", f"a task can have up to {MAX_ATTACHMENTS} attachments"))
@@ -108,8 +111,7 @@ async def _add(sessionmaker, task_id: uuid.UUID, *, kind: str, name: str, source
         await db.commit()
         await db.refresh(row)
         out = _out(row)
-    if request is not None:
-        await _tell_room(request, session_id, _added_note(name, kind))
+    await runtime.conversation.send(sender="human", to=["*"], kind="note", body=_added_note(name, kind))
     return out
 
 
@@ -140,6 +142,7 @@ async def get_attachment(task_id: uuid.UUID, attachment_id: uuid.UUID,
 async def attach_file(task_id: uuid.UUID, request: Request, name: str, session_id: uuid.UUID | None = None,
                       sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> AttachmentOut:
     """The file's bytes are the request body (no multipart); `name` is its file name."""
+    await _require_room(sessionmaker, request, task_id, session_id)
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > cx.MAX_FILE_BYTES:
         raise _refuse(cx.ContextError(f"that file is larger than {cx.MAX_FILE_BYTES // (1024 * 1024)} MB"), "file")
@@ -159,6 +162,7 @@ async def attach_file(task_id: uuid.UUID, request: Request, name: str, session_i
 @router.post("/tasks/{task_id}/attachments/folder", status_code=201, response_model=AttachmentOut)
 async def attach_folder(task_id: uuid.UUID, req: FolderIn, request: Request, session_id: uuid.UUID | None = None,
                         sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> AttachmentOut:
+    await _require_room(sessionmaker, request, task_id, session_id)
     try:
         resolved, content, truncated = await asyncio.to_thread(cx.extract_folder, req.path)
     except cx.ContextError as exc:
@@ -171,6 +175,7 @@ async def attach_folder(task_id: uuid.UUID, req: FolderIn, request: Request, ses
 @router.post("/tasks/{task_id}/attachments/url", status_code=201, response_model=AttachmentOut)
 async def attach_url(task_id: uuid.UUID, req: UrlIn, request: Request, session_id: uuid.UUID | None = None,
                      sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> AttachmentOut:
+    await _require_room(sessionmaker, request, task_id, session_id)
     try:
         title, content, truncated = await cx.fetch_url(req.url)
     except cx.ContextError as exc:
@@ -187,10 +192,11 @@ async def remove_attachment(task_id: uuid.UUID, attachment_id: uuid.UUID, reques
         row = await db.get(TaskAttachment, attachment_id)
         if row is None or row.task_id != task_id:
             raise HTTPException(404, detail=_error("not_found", "attachment not found"))
-        await _check_session(db, task_id, session_id)
+        runtime = await _room(db, request, task_id, session_id)
         name = row.name
         await db.delete(row)
         await db.commit()
-    await _tell_room(request, session_id,
-                     f"I removed \"{name}\" from the shared context. Do not rely on it from now on.")
+    await runtime.conversation.send(
+        sender="human", to=["*"], kind="note",
+        body=f"I removed \"{name}\" from the shared context. Do not rely on it from now on.")
     return Response(status_code=204)

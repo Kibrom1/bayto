@@ -24,22 +24,22 @@ const json = (body: unknown): RequestInit => ({
 export const listAttachments = (taskId: string) =>
   fetch(`/tasks/${taskId}/attachments`).then((r) => ok<Attachment[]>(r))
 
-// `sessionId` says the person is adding this from inside a room: the team is told, and the record names the session.
-const room = (sessionId?: string) => (sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : '')
-const roomOnly = (sessionId?: string) => (sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '')
+// Context is added and removed only from inside a running room: the team is told, and the record names the session.
+const room = (sessionId: string) => (sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : '')
+const roomOnly = (sessionId: string) => (sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '')
 
-export const attachFile = (taskId: string, file: File, sessionId?: string) =>
+export const attachFile = (taskId: string, file: File, sessionId: string) =>
   fetch(`/tasks/${taskId}/attachments/file?name=${encodeURIComponent(file.name)}${room(sessionId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: file,
   }).then((r) => ok<Attachment>(r))
 
-export const attachFolder = (taskId: string, path: string, sessionId?: string) =>
+export const attachFolder = (taskId: string, path: string, sessionId: string) =>
   fetch(`/tasks/${taskId}/attachments/folder${roomOnly(sessionId)}`, json({ path })).then((r) => ok<Attachment>(r))
 
-export const attachUrl = (taskId: string, url: string, sessionId?: string) =>
+export const attachUrl = (taskId: string, url: string, sessionId: string) =>
   fetch(`/tasks/${taskId}/attachments/url${roomOnly(sessionId)}`, json({ url })).then((r) => ok<Attachment>(r))
 
-export const removeAttachment = (taskId: string, id: string, sessionId?: string) =>
+export const removeAttachment = (taskId: string, id: string, sessionId: string) =>
   fetch(`/tasks/${taskId}/attachments/${id}${roomOnly(sessionId)}`, { method: 'DELETE' }).then((r) => ok<null>(r))
