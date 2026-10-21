@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { archiveSession, deleteSession } from '../api/sessions'
 import { ConfirmDialog } from '../components/Dialog'
-import { createTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
+import { createTask, deleteTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
 import { NewTaskForm } from './NewTaskForm'
 import './TaskBoard.css'
 
@@ -53,7 +53,7 @@ function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task
       <Link className={`btn ${task.last_session_id ? 'ghost' : 'primary'}`} to={`/setup/${task.id}`}>
         {task.last_session_id ? 'New session' : 'Start session'}
       </Link>
-      {task.last_session_id && !['active', 'starting', 'stopping'].includes(task.status ?? '') && (
+      {!['active', 'starting', 'stopping'].includes(task.status ?? '') && (
         <details
           className="row-menu"
           onKeyDown={(e) => {
@@ -68,8 +68,8 @@ function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task
         >
           <summary className="btn ghost sm" aria-label={`More actions for ${task.title}`}>More</summary>
           <div className="row-menu-list" role="group" aria-label="Task actions">
-            <button type="button" onClick={() => onArchive(task)}>Archive</button>
-            <button type="button" className="danger" onClick={() => onDelete(task)}>Delete</button>
+            {task.last_session_id && <button type="button" onClick={() => onArchive(task)}>Archive</button>}
+            <button type="button" className="danger" onClick={() => onDelete(task)}>{task.last_session_id ? 'Delete' : 'Delete task'}</button>
           </div>
         </details>
       )}
@@ -110,7 +110,8 @@ export function TaskBoard() {
     setToDelete(null)
     setActionError(null)
     try {
-      await deleteSession(task.last_session_id!)
+      if (task.last_session_id) await deleteSession(task.last_session_id)
+      else await deleteTask(task.id)
       refresh()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
@@ -201,9 +202,11 @@ export function TaskBoard() {
 
       {toDelete && (
         <ConfirmDialog
-          title="Delete this session?"
-          message="Its conversation, results and cost record are removed for good. The task stays. To keep the record but stop it from shaping later sessions, archive it instead."
-          confirmLabel="Delete session"
+          title={toDelete.last_session_id ? 'Delete this session?' : 'Delete this task?'}
+          message={toDelete.last_session_id
+            ? 'Its conversation, results and cost record are removed for good. The task stays. To keep the record but stop it from shaping later sessions, archive it instead.'
+            : 'The task and anything attached to it are removed for good. It has not run yet, so there is no conversation to lose.'}
+          confirmLabel={toDelete.last_session_id ? 'Delete session' : 'Delete task'}
           cancelLabel="Keep it"
           danger
           onCancel={() => setToDelete(null)}

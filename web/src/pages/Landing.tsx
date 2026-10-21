@@ -224,7 +224,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
             </div>
             <div>
               <h3>Different permissions</h3>
-              <p>In a discussion, agents only talk: no files, no shell. In Build, each role gets only what its job needs: the architect plans without editing, the developer edits and commits, the tester and reviewer only read. No agent is allowed to push or use the network.</p>
+              <p>In a discussion, agents talk and can read the project folder you share, read-only: they can't change files or run commands. In Build, each role gets only what its job needs: the architect plans without editing, the developer edits and commits, the tester and reviewer only read. No agent is allowed to push or use the network.</p>
             </div>
             <div>
               <h3>Isolated from your machine</h3>
@@ -239,7 +239,7 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
               <h3>Need a specialist we don't have?</h3>
               <p>Add your own: give it a role, a stance and instructions, such as a compliance officer, a data engineer or a customer from your own market. It joins the catalogue, and you seat it like any other agent.</p>
             </div>
-            <span className="chip accent">Custom agents: coming soon</span>
+            <span className="chip accent">Custom agents: available now</span>
           </div>
         </section>
 

@@ -10,13 +10,13 @@ import asyncio
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .. import audit
-from ..models import Artifact, Session, Task, UsageLedger
+from ..models import Artifact, Session, Task, TaskAttachment, UsageLedger
 from ..build_policy import parse_test_command
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
@@ -140,6 +140,25 @@ async def set_task_workspace(
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
+
+
+# ---------------------------------------------------------------- DELETE /tasks/{id}
+
+@router.delete("/tasks/{task_id}", status_code=204)
+async def delete_task(task_id: uuid.UUID, sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> Response:
+    """Remove a task that never ran. A task with sessions is cleaned up through its sessions."""
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
+        if await db.scalar(select(func.count()).select_from(Session).where(Session.task_id == task_id)):
+            raise HTTPException(status_code=409, detail={"error": {"code": "task_has_sessions",
+                                "detail": "this task has sessions; archive or delete them instead"}})
+        await db.execute(delete(TaskAttachment).where(TaskAttachment.task_id == task_id))
+        audit.emit(action="task.deleted", summary=f"Deleted {row.title}", task_id=row.id, subject_type="task", subject_id=row.id)
+        await db.delete(row)
+        await db.commit()
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------- GET /tasks
