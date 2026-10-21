@@ -37,6 +37,7 @@ from acp.transport import FileTransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from .. import audit
 from ..conversation import OrchestratorConversation
 from ..floor import PipelineFloorPolicy, RaiseHandFloorPolicy, RoundRobinFloorPolicy, StopRulesConfig
 from ..floor.scorer import HandRaiseScorer
@@ -44,11 +45,12 @@ from ..mirror import MessageMirror
 from ..build_policy import build_seat_tools
 from ..git_guard import save_baseline
 from ..workspace import build_branch_name, prepare_branch
-from ..models import Agent, Mode, Session, SessionAgent, Task
+from ..models import Agent, Mode, Session, SessionAgent, Task, TaskAttachment
 from ..moderator import ModeratorRunner, Summarizer, Synthesizer
 from ..modes_registry import resolve_mode
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxProvider, SeatSpec
+from ..sandbox.provision import seat_permissions
 
 log = logging.getLogger(__name__)
 
@@ -130,11 +132,21 @@ def _on_runner_done(task: asyncio.Task, session_id: uuid.UUID, sessionmaker: asy
             row = await db.get(Session, session_id)
             if row is not None and row.status in _CRASHABLE:
                 row.status = "failed"
+                await audit.record(db, action="session.failed", summary="The session stopped on an error",
+                                   task_id=row.task_id, session_id=session_id, actor="system",
+                                   subject_type="session", subject_id=session_id,
+                                   detail={"reason": session_failures.get(session_id)})
                 await db.commit()
 
     t = asyncio.get_running_loop().create_task(mark_failed())
     _failure_tasks.add(t)
     t.add_done_callback(_failure_tasks.discard)
+
+
+async def _attachment_names(db, task_id) -> list[dict]:
+    rows = (await db.execute(select(TaskAttachment.kind, TaskAttachment.name).where(TaskAttachment.task_id == task_id)
+                             .order_by(TaskAttachment.created_at))).all()
+    return [{"kind": k, "name": n} for k, n in rows]
 
 
 DEFAULT_FACTORY_ROOT = Path(__file__).resolve().parents[2] / ".sessions"
@@ -249,6 +261,16 @@ async def launch_runner(
             row = await db.get(Session, session_id)
             row.status = "active"
             row.started_at = datetime.now(timezone.utc)
+            seat_log = []
+            for seat in seats:
+                allow, deny = seat_permissions(seat)
+                seat_log.append({"role": seat.role, "name": seat.name, "model": seat.model, "allowed": allow, "denied": deny})
+            await audit.record(db, action="session.started", summary=f"Session started with {len(seat_log)} seats",
+                               task_id=task_id, session_id=session_id, actor="system", subject_type="session",
+                               subject_id=session_id,
+                               detail={"mode": mode_row.name, "seats": seat_log,
+                                       "workspace": (workspace or {}).get("repo_path"),
+                                       "attachments": await _attachment_names(db, task_id)})
             await db.commit()
 
         # A relaunch (Resume, or restart reconciliation) must retire the previous runtime first. Its
@@ -280,4 +302,8 @@ async def launch_runner(
             row = await db.get(Session, session_id)
             if row is not None:
                 row.status = "failed"
+                await audit.record(db, action="session.failed", summary="The session failed to start",
+                                   task_id=row.task_id, session_id=session_id, actor="system",
+                                   subject_type="session", subject_id=session_id,
+                                   detail={"reason": session_failures.get(session_id)})
                 await db.commit()

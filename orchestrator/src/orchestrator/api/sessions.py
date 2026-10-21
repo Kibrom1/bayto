@@ -21,6 +21,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
+from .. import audit
 from ..models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
@@ -150,6 +151,7 @@ async def create_session(
         await db.flush()
 
         session_agents = []
+        roster_log = []
         for entry in req.roster:
             agent_row = await db.get(Agent, entry.agent_id)
             if agent_row is None or agent_row.archived_at is not None:
@@ -161,7 +163,12 @@ async def create_session(
                                model=entry.model, isolation=entry.isolation)
             db.add(sa)
             session_agents.append(sa)
+            roster_log.append({"agent_id": str(entry.agent_id), "name": agent_row.name, "role": agent_row.role,
+                               "version": agent_row.version, "kind": agent_row.kind})
 
+        await audit.record(db, action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
+                           task_id=req.task_id, session_id=session_row.id, subject_type="session", subject_id=session_row.id,
+                           detail={"mode": mode_row.name, "budget": session_row.budget, "roster": roster_log})
         await db.commit()
         await db.refresh(session_row)
         return SessionCreateResponse(
@@ -240,7 +247,8 @@ class InterjectResponse(BaseModel):
 
 
 @router.post("/sessions/{session_id}/interject", response_model=InterjectResponse)
-async def interject_session(session_id: uuid.UUID, req: InterjectRequest, request: Request) -> InterjectResponse:
+async def interject_session(session_id: uuid.UUID, req: InterjectRequest, request: Request,
+                            sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> InterjectResponse:
     """Lands in the transcript like any other message. The text also goes into each agent's
     next prompt (ModeratorRunner._human_notes_for), once per agent, marked as the human's. Never wakes anyone (only ModeratorRunner's grant flow does that), so this
     can never interrupt whoever currently holds the floor, same rule as Grant/wake-up.
@@ -253,6 +261,13 @@ async def interject_session(session_id: uuid.UUID, req: InterjectRequest, reques
         raise HTTPException(409, detail=_error("not_started", "session is not running"))
     to = req.to or ["*"]
     env = await runtime.conversation.send(sender="human", to=to, kind="note", body=req.body)
+    async with sessionmaker() as db:  # the text is in the transcript; the log keeps who it went to and how long it was
+        session_row = await db.get(Session, session_id)
+        await audit.record(db, action="session.interjected",
+                           summary="Sent a message to " + ("everyone" if to == ["*"] else ", ".join(to)),
+                           task_id=session_row.task_id if session_row else None, session_id=session_id,
+                           subject_type="session", subject_id=session_id, detail={"to": to, "chars": len(req.body)})
+        await db.commit()
     return InterjectResponse(envelope=env.dump())
 
 
@@ -278,6 +293,10 @@ async def stop_session(
             raise HTTPException(409, detail=_error("invalid_transition",
                                                      f"cannot stop a session in status {row.status!r}"))
         row.status = STATUS_STOPPING if req.synthesize else STATUS_CANCELLING
+        await audit.record(db, action="session.stop_requested",
+                           summary="Ended the session" + (" with a synthesis" if req.synthesize else " without a synthesis"),
+                           task_id=row.task_id, session_id=session_id, subject_type="session", subject_id=session_id,
+                           detail={"synthesize": req.synthesize, "reason": req.reason})
         await db.commit()
         new_status = row.status
 
@@ -323,6 +342,8 @@ async def pause_session(
                 "invalid_transition",
                 f"can only pause an active session (current status: {row.status!r})"))
         row.status = STATUS_NEEDS_HUMAN
+        await audit.record(db, action="session.paused", summary="Paused the session", task_id=row.task_id,
+                           session_id=session_id, subject_type="session", subject_id=session_id)
         await db.commit()
     return {"session": {"id": str(session_id), "status": STATUS_NEEDS_HUMAN}}
 
@@ -365,6 +386,8 @@ async def resume_session(
         # This also prevents a double-tap of /resume from racing into two parallel runners
         # (the second would see `starting`, not `needs_human`, and 409 immediately).
         row.status = STATUS_STARTING
+        await audit.record(db, action="session.resumed", summary="Resumed the session", task_id=row.task_id,
+                           session_id=session_id, subject_type="session", subject_id=session_id)
         await db.commit()
 
     task = asyncio.create_task(launch_runner(
@@ -408,6 +431,15 @@ async def _require_live_session(db, session_id: uuid.UUID) -> Session:
     return row
 
 
+async def _record_participant(db, action: str, sa: SessionAgent, verb: str) -> None:
+    agent = await db.get(Agent, sa.agent_id)
+    session_row = await db.get(Session, sa.session_id)
+    await audit.record(db, action=action, summary=f"{verb} {agent.name if agent else sa.agent_id}",
+                       task_id=session_row.task_id if session_row else None, session_id=sa.session_id,
+                       subject_type="agent", subject_id=sa.agent_id,
+                       detail={"name": agent.name if agent else None, "role": agent.role if agent else None})
+
+
 async def _get_participant(db, session_id: uuid.UUID, agent_id: uuid.UUID) -> SessionAgent:
     row = await db.get(SessionAgent, (session_id, agent_id))
     if row is None:
@@ -425,6 +457,7 @@ async def mute_participant(
         await _require_live_session(db, session_id)
         sa = await _get_participant(db, session_id, agent_id)
         sa.muted = True
+        await _record_participant(db, "participant.muted", sa, "Muted")
         await db.commit()
         await db.refresh(sa)
         return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
@@ -439,6 +472,7 @@ async def unmute_participant(
         await _require_live_session(db, session_id)
         sa = await _get_participant(db, session_id, agent_id)
         sa.muted = False
+        await _record_participant(db, "participant.unmuted", sa, "Unmuted")
         await db.commit()
         await db.refresh(sa)
         return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
@@ -463,6 +497,7 @@ async def remove_participant(
         sa = await _get_participant(db, session_id, agent_id)
         if sa.removed_at is None:
             sa.removed_at = datetime.now(timezone.utc)
+            await _record_participant(db, "participant.removed", sa, "Removed")
         await db.commit()
         await db.refresh(sa)
         return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
@@ -502,6 +537,8 @@ async def add_participant(
         sa = SessionAgent(session_id=session_id, agent_id=req.agent_id, agent_version=agent_row.version,
                            seat_order=seat_order)
         db.add(sa)
+        await db.flush()
+        await _record_participant(db, "participant.added", sa, "Added")
         await db.commit()
         await db.refresh(sa)
         return ParticipantResponse(session_agent=SessionAgentOut.model_validate(sa, from_attributes=True))
@@ -773,6 +810,8 @@ async def archive_session(session_id: uuid.UUID,
         row = await _load_idle_session(db, session_id, "archive")
         if row.archived_at is None:
             row.archived_at = datetime.now(timezone.utc)
+            await audit.record(db, action="session.archived", summary="Archived the session", task_id=row.task_id,
+                               session_id=session_id, subject_type="session", subject_id=session_id)
             await db.commit()
         return {"session": {"id": str(session_id), "archived_at": row.archived_at.isoformat()}}
 
@@ -784,7 +823,10 @@ async def unarchive_session(session_id: uuid.UUID,
         row = await db.get(Session, session_id)
         if row is None:
             raise HTTPException(404, detail=_error("not_found", "session not found"))
-        row.archived_at = None
+        if row.archived_at is not None:
+            row.archived_at = None
+            await audit.record(db, action="session.unarchived", summary="Restored the session", task_id=row.task_id,
+                               session_id=session_id, subject_type="session", subject_id=session_id)
         await db.commit()
         return {"session": {"id": str(session_id), "archived_at": None}}
 
@@ -796,7 +838,9 @@ async def delete_session(session_id: uuid.UUID, request: Request,
     Refused while the session is starting, running or ending. A paused session is fine: its runtime is retired first.
     The task, its sandbox and a Build branch in the repository are not touched."""
     async with sessionmaker() as db:
-        await _load_idle_session(db, session_id, "delete")
+        gone = await _load_idle_session(db, session_id, "delete")
+        deleted_task_id, deleted_status = gone.task_id, gone.status
+        deleted_turns = await db.scalar(select(func.count()).select_from(Turn).where(Turn.session_id == session_id))
 
     runtime = request.app.state.session_runtimes.pop(session_id, None)
     if runtime is not None:
@@ -812,6 +856,9 @@ async def delete_session(session_id: uuid.UUID, request: Request,
         for model in (Message, Turn, SessionAgent):
             await db.execute(delete(model).where(model.session_id == session_id))
         await db.execute(delete(Session).where(Session.id == session_id))
+        await audit.record(db, action="session.deleted", summary="Deleted the session and its transcript",
+                           task_id=deleted_task_id, session_id=session_id, subject_type="session", subject_id=session_id,
+                           detail={"turns": deleted_turns, "status": deleted_status})
         await db.commit()
 
     root = factory_root().resolve()

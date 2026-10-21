@@ -201,3 +201,18 @@ async def test_add_404s_for_an_unknown_session(live_sessionmaker):
     async with _client() as client:
         resp = await client.post(f"/sessions/{uuid.uuid4()}/participants", json={"agent_id": str(new_agent_id)})
     assert resp.status_code == 404
+
+
+async def test_roster_changes_are_written_to_the_audit_trail(live_sessionmaker):
+    from sqlalchemy import select
+    from orchestrator.models import AuditEvent
+    session_id, agent_id = await _make_live_session(live_sessionmaker)
+    async with _client() as client:
+        await client.post(f"/sessions/{session_id}/participants/{agent_id}/mute")
+        await client.post(f"/sessions/{session_id}/participants/{agent_id}/unmute")
+        await client.post(f"/sessions/{session_id}/participants/{agent_id}/remove")
+        await client.post(f"/sessions/{session_id}/participants/{agent_id}/remove")  # idempotent: logged once
+    async with live_sessionmaker() as db:
+        rows = (await db.execute(select(AuditEvent).where(AuditEvent.session_id == session_id).order_by(AuditEvent.seq))).scalars().all()
+    assert [r.action for r in rows] == ["participant.muted", "participant.unmuted", "participant.removed"]
+    assert rows[0].task_id is not None and rows[0].subject_id == str(agent_id)

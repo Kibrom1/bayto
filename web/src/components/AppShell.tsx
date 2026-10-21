@@ -23,6 +23,7 @@ export function AppShell() {
         </NavLink>
         <nav className="shell-nav" aria-label="Main">
           <NavLink to="/" end>Tasks</NavLink>
+          <NavLink to="/activity">Audit</NavLink>
           <NavLink to="/services">Services</NavLink>
         </nav>
       </header>

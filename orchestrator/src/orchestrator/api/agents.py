@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from .. import audit
 from ..models import Agent
 from ..seed import AGENT_MODEL
 from .deps import get_db_sessionmaker
@@ -138,6 +139,12 @@ async def create_agent(req: AgentCreate, sessionmaker: async_sessionmaker = Depe
             model=AGENT_MODEL, params_json={"preset": req.preset}, tools=list(PRESETS[req.preset]["tools"]), version="1",
         )
         db.add(row)
+        await db.flush()
+        await audit.record(db, action="agent.created", summary=f"Created custom agent {row.name}",
+                           subject_type="agent", subject_id=row.id,
+                           detail={"name": row.name, "role": row.role, "stance": row.stance, "preset": req.preset,
+                                   "tools": row.tools, "instructions_chars": len(req.instructions),
+                                   "instructions_sha256": audit.sha256(req.instructions)})
         await db.commit()
         await db.refresh(row)
         return _out(row)
@@ -157,15 +164,23 @@ async def update_agent(agent_id: uuid.UUID, req: AgentUpdate,
                        sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> AgentOut:
     async with sessionmaker() as db:
         row = await _get_custom(db, agent_id)
+        changed = []
         if req.name is not None and req.name != row.name:
             # The role is the agent's identity in transcripts and the moderator's addressing, so a rename keeps it.
             await _check_name_and_role(db, req.name, exclude=row.id, check_role=False)
             row.name = req.name
-        if req.stance is not None:
+            changed.append("name")
+        if req.stance is not None and req.stance != row.stance:
             row.stance = req.stance
-        if req.instructions is not None:
+            changed.append("stance")
+        if req.instructions is not None and req.instructions != row.system_prompt:
             row.system_prompt = req.instructions
+            changed.append("instructions")
         row.version = str(int(row.version or "1") + 1)
+        await audit.record(db, action="agent.updated", summary=f"Edited agent {row.name} ({', '.join(changed) or 'no change'})",
+                           subject_type="agent", subject_id=row.id,
+                           detail={"changed": changed, "version": row.version,
+                                   "instructions_sha256": audit.sha256(row.system_prompt or "")})
         await db.commit()
         await db.refresh(row)
         return _out(row)
@@ -176,5 +191,7 @@ async def archive_agent(agent_id: uuid.UUID, sessionmaker: async_sessionmaker = 
     async with sessionmaker() as db:
         row = await _get_custom(db, agent_id)
         row.archived_at = datetime.now(timezone.utc)
+        await audit.record(db, action="agent.archived", summary=f"Archived agent {row.name}",
+                           subject_type="agent", subject_id=row.id, detail={"name": row.name, "role": row.role})
         await db.commit()
     return Response(status_code=204)

@@ -52,6 +52,7 @@ from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
+from .. import audit
 from ..attachment_prompt import attachment_prompt
 from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
@@ -1101,7 +1102,16 @@ class ModeratorRunner:
             row.status = STATUS_FINISHED
             row.stop_reason = _STOP_REASON_VALUES.get(reason, reason)
             row.ended_at = datetime.now(timezone.utc)
+            await self._record_end(session, row, synthesized=True)
             await session.commit()
+
+    async def _record_end(self, session, row, *, synthesized: bool) -> None:
+        """The audit-trail entry for a finished session, written in the same commit as the status change."""
+        spent = await session.scalar(select(func.coalesce(func.sum(UsageLedger.cost), 0)).where(UsageLedger.session_id == self._session_id))
+        await audit.record(session, action="session.ended", summary=f"Session ended ({row.stop_reason})",
+                           task_id=row.task_id, session_id=self._session_id, actor="system", subject_type="session",
+                           subject_id=self._session_id,
+                           detail={"stop_reason": row.stop_reason, "synthesized": synthesized, "cost": float(spent or 0)})
 
     async def _add_change_set(self, session, reason: str, turn_rows, synthesis: dict) -> None:
         """Build mode: attach the `change_set` artifact read from the repo's branch. Best effort: a git
@@ -1135,4 +1145,5 @@ class ModeratorRunner:
             row.status = STATUS_FINISHED
             row.stop_reason = stop_reason
             row.ended_at = datetime.now(timezone.utc)
+            await self._record_end(session, row, synthesized=False)
             await session.commit()

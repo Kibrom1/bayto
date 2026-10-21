@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from .. import audit
 from .. import context_extract as cx
 from ..models import Session, Task, TaskAttachment
 from .deps import get_db_sessionmaker
@@ -108,6 +109,11 @@ async def _add(sessionmaker, task_id: uuid.UUID, *, kind: str, name: str, source
             raise HTTPException(409, detail=_error("too_many_attachments", f"a task can have up to {MAX_ATTACHMENTS} attachments"))
         row = TaskAttachment(task_id=task_id, kind=kind, name=name, source=source, content=content, truncated=truncated)
         db.add(row)
+        await db.flush()
+        await audit.record(db, action="attachment.added", summary=f"Attached {kind} {name}", task_id=task_id,
+                           subject_type="attachment", subject_id=row.id,
+                           detail={"kind": kind, "name": name, "source": audit.public_url(source) if kind == "url" else source,
+                                   "chars": len(content), "truncated": truncated, "content_sha256": audit.sha256(content)})
         await db.commit()
         await db.refresh(row)
         out = _out(row)
@@ -195,6 +201,8 @@ async def remove_attachment(task_id: uuid.UUID, attachment_id: uuid.UUID, reques
         runtime = await _room(db, request, task_id, session_id)
         name = row.name
         await db.delete(row)
+        await audit.record(db, action="attachment.removed", summary=f"Removed {row.kind} {row.name}", task_id=task_id,
+                           subject_type="attachment", subject_id=row.id, detail={"kind": row.kind, "name": row.name})
         await db.commit()
     await runtime.conversation.send(
         sender="human", to=["*"], kind="note",

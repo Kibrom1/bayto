@@ -10,6 +10,7 @@ export default defineConfig({
       '/sessions': 'http://127.0.0.1:8000',
       '/modes': 'http://127.0.0.1:8000',
       '/agents': 'http://127.0.0.1:8000',
+      '/audit': 'http://127.0.0.1:8000', // the API; the page for it lives at /activity so the two never share a path
       '/control': {
         target: 'http://127.0.0.1:8787',
         rewrite: (path) => path.replace(/^\/control/, ''),

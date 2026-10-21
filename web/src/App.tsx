@@ -3,6 +3,7 @@ import { AppShell } from './components/AppShell'
 import { TaskBoard } from './pages/TaskBoard'
 import { SessionSetup } from './pages/SessionSetup'
 import { BaytoRoom } from './pages/BaytoRoom'
+import { Audit } from './pages/Audit'
 import { Services } from './pages/Services'
 import { Landing } from './pages/Landing'
 import { NotFound } from './pages/NotFound'
@@ -17,6 +18,7 @@ function App() {
           <Route path="/" element={<TaskBoard />} />
           <Route path="/setup/:taskId" element={<SessionSetup />} />
           <Route path="/room/:sessionId" element={<BaytoRoom />} />
+          <Route path="/activity" element={<Audit />} />
           <Route path="/services" element={<Services />} />
           <Route path="*" element={<NotFound />} />
         </Route>

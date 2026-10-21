@@ -32,6 +32,14 @@ def seat_id(role: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", role.lower()).strip("-") or "seat"
 
 
+def seat_permissions(seat: SeatSpec) -> tuple[list[str], list[str]]:
+    """(allowed, denied) tools for a seat. The one place this is decided: used to build the role files and to
+    record, in the audit trail, what each seat was allowed to do."""
+    allow = READ_ONLY + [t for t in seat.tools if t not in READ_ONLY]
+    deny = [t for t in GATED if t not in allow] + [t for t in seat.deny if t not in allow]
+    return allow, deny
+
+
 def write_catalog(seats: list[SeatSpec], roles_dir: Path, roster_file: Path) -> list[str]:
     """Write one role (.yaml + .md) per distinct seat plus a roster file. Returns the seat ids."""
     roles_dir.mkdir(parents=True, exist_ok=True)
@@ -41,8 +49,7 @@ def write_catalog(seats: list[SeatSpec], roles_dir: Path, roster_file: Path) -> 
         if rid in ids:
             continue
         ids.append(rid)
-        allow = READ_ONLY + [t for t in seat.tools if t not in READ_ONLY]
-        deny = [t for t in GATED if t not in allow] + [t for t in seat.deny if t not in allow]
+        allow, deny = seat_permissions(seat)
         (roles_dir / f"{rid}.yaml").write_text(yaml.safe_dump({
             "id": rid, "name": seat.name, "responsibility": f"{seat.name} takes part in the discussion.",
             "brief": f"roles/{rid}.md",

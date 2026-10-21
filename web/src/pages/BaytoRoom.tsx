@@ -236,6 +236,7 @@ export function BaytoRoom() {
           </div>
           <div className="room-meta">
             {modeName && <span>{titleCase(modeName)}</span>}
+            <Link to={`/activity?session=${session.id}`}>Audit trail</Link>
             <span>Round {session.round}</span>
             {canSend && (
               <span title={connected ? 'Live updates connected' : 'Reconnecting…'} className={connected ? 'live-on' : 'live-off'}>

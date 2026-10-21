@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from .. import audit
 from ..models import Artifact, Session, Task, UsageLedger
 from ..build_policy import parse_test_command
 from ..workspace import WorkspaceReport, preflight_workspace
@@ -111,6 +112,10 @@ async def create_task(
         row = Task(title=req.title, brief=req.brief, output_type=req.output_type,
                     success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace)
         db.add(row)
+        await db.flush()
+        await audit.record(db, action="task.created", summary=f"Created task {row.title}", task_id=row.id,
+                           subject_type="task", subject_id=row.id,
+                           detail={"title": row.title, "output_type": row.output_type, "build": workspace is not None})
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
@@ -128,6 +133,10 @@ async def set_task_workspace(
         if row is None:
             raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
         row.workspace = workspace
+        await audit.record(db, action="task.workspace_set", summary=f"Set the repository for {row.title}", task_id=row.id,
+                           subject_type="task", subject_id=row.id,
+                           detail={"repo_path": workspace.get("repo_path"), "base_branch": workspace.get("base_branch"),
+                                   "test_command": workspace.get("test_command")})
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
