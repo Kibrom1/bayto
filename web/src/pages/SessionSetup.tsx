@@ -86,6 +86,7 @@ export function SessionSetup() {
   const [agentDialog, setAgentDialog] = useState<{ edit?: AgentTemplate } | null>(null)
   const [agentBusy, setAgentBusy] = useState(false)
   const [agentError, setAgentError] = useState<string | null>(null)
+  const [agentNote, setAgentNote] = useState<string | null>(null)
   const [archiving, setArchiving] = useState<AgentTemplate | null>(null)
 
   // The route takes any id, so check the task exists. If the lookup itself fails we carry on: the
@@ -125,6 +126,7 @@ export function SessionSetup() {
       const saved = edit ? await updateAgent(edit.id, draft) : await createAgent(draft)
       setTemplates(await getAgentTemplates())
       if (!edit && !isBuild) setAgentIds((ids) => [...ids, saved.id]) // a new agent joins the roster it was made for
+      setAgentNote(edit ? `Saved ${saved.name}.` : `Created ${saved.name} and added it to the roster.`)
       setAgentDialog(null)
     } catch (err) {
       setAgentError(err instanceof Error ? err.message : String(err))
@@ -310,8 +312,9 @@ export function SessionSetup() {
               ? 'The pipeline decides who speaks: plan, build, test, review. Fixes go back to the developer.'
               : 'Order matters: seats speak in roster order.'}</p>
             {!isBuild && (
-              <button type="button" className="btn sm" onClick={() => { setAgentError(null); setAgentDialog({}) }}>Create agent</button>
+              <button type="button" className="btn sm" onClick={() => { setAgentError(null); setAgentNote(null); setAgentDialog({}) }}>Create agent</button>
             )}
+            {agentNote && <p className="hint" role="status">{agentNote}</p>}
             <ul className="agent-list">
               {visibleTemplates.map((t) => {
                 const on = agentIds.includes(t.id)

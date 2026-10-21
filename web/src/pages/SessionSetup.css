@@ -55,7 +55,7 @@
 .agent-manage .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; color: var(--ink-2, var(--ink)); text-decoration: underline; cursor: pointer; }
 @media (pointer: coarse) { .agent-manage .link-btn { min-height: 44px; padding: 0 0.25rem; } }
 
-.context-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: 0.4rem; }
+.context-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: 0.4rem; max-height: 14rem; overflow-y: auto; }
 .context-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius); }
 .context-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-list .muted { margin-left: auto; white-space: nowrap; font-size: 0.85rem; }
