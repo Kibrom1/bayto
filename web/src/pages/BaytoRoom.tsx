@@ -333,7 +333,7 @@ export function BaytoRoom() {
         <div className="transcript">
           <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll} tabIndex={0} role="region" aria-label="Conversation">
             <h2 className="sr-only">Transcript</h2>
-            <ChangeSet artifacts={artifacts} />
+            <ChangeSet artifacts={artifacts} sessionId={sessionId} />
             <Synthesis title={taskTitle ?? 'Discussion'} artifacts={artifacts} />
             {status === 'stopping' && artifacts.length === 0 && <p className="empty">Writing the final synthesis…</p>}
             <div className="transcript-inner" role="log" aria-live="polite" aria-label="Transcript">
