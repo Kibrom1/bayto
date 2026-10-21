@@ -59,32 +59,35 @@ async def test_agent_changes_are_recorded_without_the_instructions_text(live_ses
     assert all(r.actor == "person" for r in rows)
 
 
-async def test_attachments_are_recorded_by_name_and_fingerprint_not_content(live_sessionmaker, span_exporter):
+class _Runtime:
+    class conversation:  # noqa: N801
+        @staticmethod
+        async def send(**kw): return None
+
+
+async def _running_room(sm, task_id):
+    import uuid
+    from orchestrator.models import Mode, Session
+    async with sm() as db:
+        mode = Mode(name=f"m-{uuid.uuid4().hex[:6]}"); db.add(mode); await db.flush()
+        s = Session(task_id=uuid.UUID(task_id), mode_id=mode.id, status="active"); db.add(s); await db.commit()
+        sid = s.id
+    app.state.session_runtimes[sid] = _Runtime()
+    return sid
+
+
+async def test_context_changes_are_recorded_by_name_and_fingerprint_not_content(live_sessionmaker, span_exporter):
     async with _client() as c:
         tid = (await c.post("/tasks", json={"title": "T", "brief": "B", "output_type": "memo"})).json()["task"]["id"]
-        made = (await c.put(f"/tasks/{tid}/attachments/file", params={"name": "terms.md"}, content=b"CONFIDENTIAL clause 7",
-                            headers={"content-type": "application/octet-stream"})).json()
-        await c.delete(f"/tasks/{tid}/attachments/{made['id']}")
+        sid = await _running_room(live_sessionmaker, tid)
+        made = (await c.put(f"/tasks/{tid}/attachments/file", params={"name": "terms.md", "session_id": str(sid)},
+                            content=b"CONFIDENTIAL clause 7")).json()
+        await c.delete(f"/tasks/{tid}/attachments/{made['id']}", params={"session_id": str(sid)})
     rows = audit_events(span_exporter, subject_id=made["id"])
     assert [r.action for r in rows] == ["attachment.added", "attachment.removed"]
-    assert rows[0].task_id == tid and rows[0].detail["name"] == "terms.md" and len(rows[0].detail["content_sha256"]) == 64
+    assert rows[0].task_id == tid and rows[0].session_id == str(sid)
+    assert rows[0].detail["name"] == "terms.md" and len(rows[0].detail["content_sha256"]) == 64
+    assert all("during a session" in r.summary for r in rows)
     assert "CONFIDENTIAL" not in json.dumps([r.detail for r in rows])
     [task] = audit_events(span_exporter, action="task.created")
     assert task.detail["title"] == "T"
-
-
-async def test_context_changed_inside_a_room_names_the_session(live_sessionmaker, span_exporter):
-    from orchestrator.models import Mode, Session
-    import uuid
-    async with _client() as c:
-        tid = (await c.post("/tasks", json={"title": "T", "brief": "B", "output_type": "decision"})).json()["task"]["id"]
-        async with live_sessionmaker() as db:
-            mode = Mode(name=f"m-{uuid.uuid4().hex[:6]}"); db.add(mode); await db.flush()
-            s = Session(task_id=uuid.UUID(tid), mode_id=mode.id, status="active"); db.add(s); await db.commit()
-            sid = s.id
-        r = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "n.md", "session_id": str(sid)}, content=b"hi",
-                        headers={"content-type": "application/octet-stream"})
-        await c.delete(f"/tasks/{tid}/attachments/{r.json()['id']}", params={"session_id": str(sid)})
-    evs = audit_events(span_exporter, session_id=sid)
-    assert [e.action for e in evs] == ["attachment.added", "attachment.removed"]
-    assert all("during a session" in e.summary for e in evs)
