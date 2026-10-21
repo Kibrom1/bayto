@@ -21,6 +21,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -53,6 +54,29 @@ class Task(Base):
     # (see docs/decisions.md, 2026-09-30).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                   default=lambda: datetime.now(timezone.utc))
+
+
+class TaskAttachment(Base):
+    """Reference material for a task: a snapshot of text taken when it was attached (see context_extract.py).
+
+    `source` is where it came from (a file name, a folder path or a URL); agents only ever see `content`."""
+
+    __tablename__ = "task_attachment"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("task.id"), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)       # file | folder | url
+    name: Mapped[str] = mapped_column(String, nullable=False)       # what the person sees
+    source: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
+                                                  default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        CheckConstraint("kind in ('file', 'folder', 'url')", name="ck_task_attachment_kind"),
+        Index("ix_task_attachment_task_id", "task_id"),
+    )
 
 
 class Agent(Base):
