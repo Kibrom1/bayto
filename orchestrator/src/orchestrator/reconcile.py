@@ -26,6 +26,7 @@ from typing import Awaitable, Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from . import audit
 from .models import Session
 from .moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_STOPPING
 from .sandbox.provider import SandboxProvider
@@ -126,4 +127,7 @@ async def _mark_orphaned(sessionmaker: async_sessionmaker, session_id: uuid.UUID
     async with sessionmaker() as db:
         row = await db.get(Session, session_id)
         row.status = STATUS_ORPHANED
+        audit.emit(action="session.orphaned", summary="The session's sandbox was gone at startup",
+                           task_id=row.task_id, session_id=session_id, actor="system",
+                           subject_type="session", subject_id=session_id)
         await db.commit()

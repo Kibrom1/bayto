@@ -951,3 +951,39 @@ async def test_a_running_session_cannot_be_archived_or_deleted(client, live_sess
         assert resp.json()["detail"]["error"]["code"] == "session_busy"
     async with live_sessionmaker() as db:
         assert await db.get(Session, session_id) is not None
+
+
+async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_sessionmaker, tmp_path, span_exporter):
+    from audit_helpers import audit_events
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+        "budget": {"dollars": 5.0},
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    box = {"id": session_id}
+
+    async def on_wake(role):
+        await asyncio.sleep(0.2)
+        await _auto_responder(tmp_path / "sessions", box)(role)
+
+    _wire_fakes(FakeSandboxProvider(on_wake=on_wake))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "active")
+    assert (await client.post(f"/sessions/{session_id}/interject", json={"body": "PRIVATE-NOTE-TEXT"})).status_code == 200
+    await client.post(f"/sessions/{session_id}/stop", json={"synthesize": False, "reason": "enough"})
+    await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
+    assert (await client.delete(f"/sessions/{session_id}")).status_code == 204
+
+    rows = audit_events(span_exporter, session_id=session_id)
+    assert [r.action for r in rows] == ["session.created", "session.started", "session.interjected",
+                                        "session.stop_requested", "session.ended", "session.deleted"]
+    created, started, interjected, stop, ended, deleted = rows
+    assert created.detail["roster"][0]["name"] and created.detail["budget"] == {"max_cost": 5.0}
+    [seat] = started.detail["seats"]
+    assert {"Read", "Grep", "Glob"} <= set(seat["allowed"]) and {"Write", "Edit", "Bash", "WebFetch"} <= set(seat["denied"])
+    assert started.actor == "system" and ended.actor == "system" and created.actor == "person"
+    assert interjected.detail["chars"] == len("PRIVATE-NOTE-TEXT") and "PRIVATE-NOTE-TEXT" not in str(interjected.detail)
+    assert stop.detail == {"synthesize": False, "reason": "enough"}
+    assert ended.detail["stop_reason"] and ended.detail["synthesized"] is False
