@@ -147,3 +147,20 @@ async def test_there_is_no_way_to_write_to_the_log_through_the_api(live_sessionm
         for method in ("post", "put", "patch", "delete"):
             r = await getattr(c, method)("/audit")
             assert r.status_code in (404, 405)
+
+
+async def test_context_changed_inside_a_room_names_the_session(live_sessionmaker):
+    from orchestrator.models import Mode, Session
+    import uuid
+    async with _client() as c:
+        tid = (await c.post("/tasks", json={"title": "T", "brief": "B", "output_type": "decision"})).json()["task"]["id"]
+        async with live_sessionmaker() as db:
+            mode = Mode(name=f"m-{uuid.uuid4().hex[:6]}"); db.add(mode); await db.flush()
+            s = Session(task_id=uuid.UUID(tid), mode_id=mode.id, status="active"); db.add(s); await db.commit()
+            sid = s.id
+        r = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "n.md", "session_id": str(sid)}, content=b"hi",
+                        headers={"content-type": "application/octet-stream"})
+        await c.delete(f"/tasks/{tid}/attachments/{r.json()['id']}", params={"session_id": str(sid)})
+    evs = await _events(live_sessionmaker, session_id=sid)
+    assert [e.action for e in evs] == ["attachment.added", "attachment.removed"]
+    assert all("during a session" in e.summary for e in evs)
