@@ -138,3 +138,78 @@ def test_the_prompt_is_capped_and_every_item_gets_a_share():
 
 def test_no_attachments_adds_nothing():
     assert attachment_prompt([]) == ""
+
+
+# ---- added from inside a room -------------------------------------------------------------------------------
+
+class _Conversation:
+    def __init__(self): self.sent = []
+    async def send(self, **kw): self.sent.append(kw)
+
+
+class _Runtime:
+    def __init__(self): self.conversation = _Conversation()
+
+
+async def _session_for(sm, task_id):
+    import uuid as _uuid
+    from orchestrator.models import Mode, Session
+    async with sm() as db:
+        mode = Mode(name=f"m-{_uuid.uuid4().hex[:6]}")
+        db.add(mode); await db.flush()
+        s = Session(task_id=_uuid.UUID(task_id), mode_id=mode.id, status="active")
+        db.add(s); await db.commit()
+        return s.id
+
+
+@pytest.fixture
+def runtimes():
+    app.state.session_runtimes = getattr(app.state, "session_runtimes", {}) or {}
+    saved = dict(app.state.session_runtimes)
+    yield app.state.session_runtimes
+    app.state.session_runtimes.clear(); app.state.session_runtimes.update(saved)
+
+
+async def test_adding_and_removing_in_a_running_room_tells_the_team(live_sessionmaker, runtimes):
+    async with _client() as c:
+        tid = await _task(c)
+        sid = await _session_for(live_sessionmaker, tid)
+        rt = runtimes[sid] = _Runtime()
+        made = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "spec.md", "session_id": str(sid)},
+                           content=b"# Spec\nship friday", headers={"content-type": "application/octet-stream"})
+        assert made.status_code == 201
+        [note] = rt.conversation.sent
+        assert note["sender"] == "human" and note["to"] == ["*"] and note["kind"] == "note"
+        assert '"spec.md"' in note["body"] and "added a file" in note["body"]
+        # The attachment is in what the agents read from now on.
+        assert "ship friday" in (await c.get(f"/tasks/{tid}/attachments/{made.json()['id']}")).json()["content"]
+        gone = await c.delete(f"/tasks/{tid}/attachments/{made.json()['id']}", params={"session_id": str(sid)})
+        assert gone.status_code == 204
+        assert "removed" in rt.conversation.sent[-1]["body"] and '"spec.md"' in rt.conversation.sent[-1]["body"]
+
+
+async def test_a_room_that_is_not_running_gets_no_note_and_a_foreign_session_is_refused(live_sessionmaker, runtimes):
+    async with _client() as c:
+        tid, other = await _task(c), await _task(c)
+        sid = await _session_for(live_sessionmaker, tid)
+        ok = await c.post(f"/tasks/{tid}/attachments/folder", params={"session_id": str(sid)}, json={"path": "/nonexistent-zz"})
+        assert ok.status_code == 422  # refused for the path, not for the session
+        wrong = await c.put(f"/tasks/{other}/attachments/file", params={"name": "a.md", "session_id": str(sid)},
+                            content=b"x", headers={"content-type": "application/octet-stream"})
+        assert wrong.status_code == 404 and wrong.json()["detail"]["error"]["code"] == "session_not_found"
+        quiet = await c.put(f"/tasks/{tid}/attachments/file", params={"name": "a.md", "session_id": str(sid)},
+                            content=b"x", headers={"content-type": "application/octet-stream"})
+        assert quiet.status_code == 201  # no runtime registered: stored, nobody to tell
+
+
+async def test_the_runner_prompt_reads_attachments_added_mid_session(live_sessionmaker):
+    """Each turn builds its prompt from the database, so context added after the start is seen on the next turn."""
+    from orchestrator.models import TaskAttachment
+    from orchestrator.attachment_prompt import attachment_prompt
+    async with _client() as c:
+        tid = await _task(c)
+        await _put(c, tid, "late.md", b"Added after the session began.")
+    from sqlalchemy import select
+    async with live_sessionmaker() as db:
+        rows = (await db.execute(select(TaskAttachment))).scalars().all()
+    assert "Added after the session began." in attachment_prompt(rows)

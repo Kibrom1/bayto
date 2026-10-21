@@ -87,3 +87,23 @@ describe('ContextCard', () => {
     expect(screen.getByLabelText(/web address/i)).toBeInTheDocument()
   })
 })
+
+describe('ContextCard in a room', () => {
+  it('sends the session with each change so the team is told', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${url}`)
+      if (!init?.method) return new Response('[]', { status: 200 })
+      if (init.method === 'DELETE') return new Response(null, { status: 204 })
+      return new Response(JSON.stringify({ id: 'a1', kind: 'url', name: 'Terms', source: 'https://x.test/t', chars: 10, truncated: false, created_at: '' }), { status: 201 })
+    }))
+    render(<ContextCard taskId="t1" sessionId="s1" />)
+    expect(screen.getByText(/the team is told/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Add link' }))
+    await userEvent.type(screen.getByLabelText(/web address/i), 'https://x.test/t')
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await userEvent.click(await screen.findByRole('button', { name: /remove terms/i }))
+    expect(calls).toContain('POST /tasks/t1/attachments/url?session_id=s1')
+    await vi.waitFor(() => expect(calls).toContain('DELETE /tasks/t1/attachments/a1?session_id=s1'))
+  })
+})

@@ -21,6 +21,7 @@ import { ApiError, isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
+import { ContextCard } from '../components/ContextCard'
 import { Synthesis } from './Synthesis'
 import { agentHue } from '../agentColor'
 import { TableRing } from '../components/TableRing'
@@ -434,6 +435,8 @@ export function BaytoRoom() {
             )
           })}
         </section>
+
+          {!finished && session.task_id && <ContextCard taskId={session.task_id} sessionId={sessionId} />}
 
           <div className="rail-block">
           <div className="mod-card">
