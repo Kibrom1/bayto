@@ -26,6 +26,15 @@ TRACER_NAME = "bayto.audit"
 LOGGER = logging.getLogger("bayto.audit")
 _tracer = trace.get_tracer(TRACER_NAME)
 
+# Python shows nothing below WARNING unless something configures it, and uvicorn only configures its own loggers. Without
+# this, a machine with no collector would have no audit record at all: give the audit logger its own handler (stderr,
+# which `bayto-up` captures in logs/api.log).
+if not LOGGER.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s AUDIT %(message)s"))
+    LOGGER.addHandler(_handler)
+    LOGGER.setLevel(logging.INFO)
+
 
 def sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
