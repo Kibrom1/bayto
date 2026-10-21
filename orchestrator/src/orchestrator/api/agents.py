@@ -62,7 +62,7 @@ def _error(code: str, detail: str, field: str | None = None) -> dict:
 
 
 def role_slug(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return re.sub(r"[\W_]+", "-", name.lower()).strip("-")
 
 
 class AgentOut(BaseModel):

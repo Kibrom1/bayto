@@ -110,6 +110,21 @@ app.state.summarizer_factory = lambda: AnthropicSummarizer(client=make_client())
 app.state.synthesizer_factory = lambda: AnthropicSynthesizer(client=make_client())
 app.state.scorer_factory = lambda: AnthropicHandRaiseScorer(client=make_client())
 
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver", "test"}
+
+
+@app.middleware("http")
+async def _host_check(request, call_next):
+    """Refuse requests whose Host is not local (DNS rebinding). BAYTO_ALLOWED_HOSTS adds names."""
+    host = (request.headers.get("host") or "").rsplit(":", 1)[0] if not (request.headers.get("host") or "").startswith("[") \
+        else (request.headers.get("host") or "").split("]")[0] + "]"
+    extra = {h.strip() for h in os.environ.get("BAYTO_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    if host and host not in _ALLOWED_HOSTS and host not in extra:
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": {"error": {"code": "bad_host", "detail": "unexpected Host header"}}}, status_code=400)
+    return await call_next(request)
+
+
 app.include_router(tasks_router)
 app.include_router(attachments_router)
 app.include_router(pull_request_router)

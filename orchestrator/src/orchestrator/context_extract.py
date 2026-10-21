@@ -17,6 +17,7 @@ Three things are guarded on purpose:
 from __future__ import annotations
 
 import io
+import re
 import ipaddress
 import os
 import socket
@@ -46,6 +47,24 @@ SKIP_DIRS = frozenset({
 _SECRET_PARTS = ("secret", "credential", "password", "passwd", "token", "private", "id_rsa", "id_ed25519")
 _SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer", ".keystore", ".jks", ".kdbx", ".env")
 _SECRET_NAMES = frozenset({".npmrc", ".pypirc", ".netrc", ".pgpass", ".htpasswd", ".git-credentials"})
+
+# Content that looks like a credential. A file containing one is left out of a folder attachment.
+_SECRET_CONTENT = re.compile(
+    r"(-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\b(?:ghp|gho|ghs|github_pat)_[A-Za-z0-9_]{16,}"
+    r"|\bsk-[A-Za-z0-9_-]{16,}"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|(?i:\b[\w.-]*(?:password|passwd|secret|api[_-]?key|token|access[_-]?key)[\w.-]*\s*[:=]\s*['\"]?[^\s'\"#]{4,}))"
+)
+# Folders that hold the system, not a project.
+_SYSTEM_ROOTS = ("/etc", "/var", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc", "/sys",
+                 "/root", "/private", "/System", "/Library", "/Applications", "/opt")
+
+
+def has_secret(body: str) -> bool:
+    return bool(_SECRET_CONTENT.search(body))
+
 
 FOLDER_MAX_FILES = 60
 FOLDER_MAX_FILE_CHARS = 12_000
@@ -135,6 +154,11 @@ def extract_folder(raw_path: str) -> tuple[str, str, bool]:
     if root == Path(root.anchor) or root == Path.home().resolve():
         raise ContextError("pick a specific project folder, not the whole disk or your home folder")
 
+    home = Path.home().resolve()
+    if not root.is_relative_to(home) and any(root == Path(r) or root.is_relative_to(r) for r in _SYSTEM_ROOTS) \
+            and not os.environ.get("BAYTO_ALLOW_SYSTEM_FOLDERS"):
+        raise ContextError("that is a system folder; pick a project folder")
+
     files: list[Path] = []
     scanned = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
@@ -163,6 +187,7 @@ def extract_folder(raw_path: str) -> tuple[str, str, bool]:
     blocks = ["Files:\n" + "\n".join(tree)]
     used = 0
     omitted = max(0, len(files) - FOLDER_MAX_FILES)
+    withheld: list[str] = []
     for f in files[:FOLDER_MAX_FILES]:
         try:
             with open(f, "rb") as fh:
@@ -172,6 +197,9 @@ def extract_folder(raw_path: str) -> tuple[str, str, bool]:
         if b"\x00" in data[:4096]:
             continue
         body = data.decode("utf-8", errors="replace")
+        if has_secret(body):
+            withheld.append(str(f.relative_to(root)))
+            continue
         clipped = len(body) > FOLDER_MAX_FILE_CHARS
         body = body[:FOLDER_MAX_FILE_CHARS]
         block = f"--- {f.relative_to(root)}{' (clipped)' if clipped else ''} ---\n{body}"
@@ -181,6 +209,8 @@ def extract_folder(raw_path: str) -> tuple[str, str, bool]:
         blocks.append(block)
         used += len(block)
     text = "\n\n".join(blocks)
+    if withheld:
+        text += "\n\n[Left out because they look like they contain credentials: " + ", ".join(withheld) + "]"
     if omitted:
         text += f"\n\n[{omitted} more file(s) not included]"
     text, truncated = _cap(text)
