@@ -157,6 +157,9 @@ async def create_session(
             if agent_row is None or agent_row.archived_at is not None:
                 raise HTTPException(422, detail=_error("invalid_agent", f"agent {entry.agent_id} not found",
                                                         "roster.agent_id"))
+            if (mode_row.name != "build" and (agent_row.role or "").startswith("build-")):
+                raise HTTPException(422, detail=_error("invalid_agent", f"{agent_row.name} only works in a Build session",
+                                                        "roster.agent_id"))
             sa = SessionAgent(session_id=session_row.id, agent_id=entry.agent_id,
                                agent_version=agent_row.version,  # snapshotted server-side, never client-supplied
                                seat_order=entry.seat_order, muted=entry.muted, harness=entry.harness,

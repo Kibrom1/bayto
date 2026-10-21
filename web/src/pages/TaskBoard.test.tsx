@@ -65,17 +65,34 @@ describe('TaskBoard', () => {
     })
     render(<MemoryRouter><TaskBoard /></MemoryRouter>)
     await screen.findByText('Write a launch memo')
-    expect(screen.getAllByText('More')).toHaveLength(1)  // only the task that has a session
+    expect(screen.getAllByText('More')).toHaveLength(2)  // every task that is not running
 
-    await userEvent.click(screen.getByText('More'))
+    await userEvent.click(screen.getAllByText('More')[0])
     await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1/archive', { method: 'POST' }))
 
-    await userEvent.click(screen.getByText('More'))
+    await userEvent.click(screen.getAllByText('More')[0])
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
     expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')).toBe(false)
     await userEvent.click(await screen.findByRole('button', { name: 'Delete session' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1', { method: 'DELETE' }))
+  })
+
+  it('deletes a task that never ran, after asking', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (url, init) => {
+      if (url === '/tasks') return jsonResponse(TASKS)
+      return jsonResponse({}, { status: (init as RequestInit | undefined)?.method === 'DELETE' ? 204 : 200 })
+    })
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByText('Write a launch memo')
+    const more = screen.getAllByText('More')
+    await userEvent.click(more[more.length - 1])
+    expect(screen.getAllByRole('button', { name: 'Archive' })).toHaveLength(1) // only the task with a session
+    await userEvent.click(screen.getByRole('button', { name: 'Delete task' }))
+    const confirm = await screen.findAllByRole('button', { name: 'Delete task' })
+    await userEvent.click(confirm[confirm.length - 1])
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/tasks/t2', { method: 'DELETE' }))
   })
 
   it('shows an empty state when there are no tasks', async () => {
@@ -155,7 +172,7 @@ describe('TaskBoard', () => {
   it('moves through the row menu with the arrow keys and closes it with Escape', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(TASKS))
     render(<MemoryRouter><TaskBoard /></MemoryRouter>)
-    const more = await screen.findByText('More')
+    const more = (await screen.findAllByText('More'))[0]
     await userEvent.click(more)
     const archive = screen.getByRole('button', { name: 'Archive' })
     const del = screen.getByRole('button', { name: 'Delete' })

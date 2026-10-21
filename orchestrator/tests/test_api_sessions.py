@@ -987,3 +987,26 @@ async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_se
     assert interjected.detail["chars"] == len("PRIVATE-NOTE-TEXT") and "PRIVATE-NOTE-TEXT" not in str(interjected.detail)
     assert stop.detail == {"synthesize": False, "reason": "enough"}
     assert ended.detail["stop_reason"] and ended.detail["synthesized"] is False
+
+
+async def test_a_build_agent_cannot_join_a_discussion_session(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, roles=("a", "build-developer"))
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(i), "seat_order": n} for n, i in enumerate(agent_ids)],
+    })
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["error"]["code"] == "invalid_agent"
+
+
+async def test_a_task_that_never_ran_can_be_deleted_but_one_with_sessions_cannot(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    other = await client.post("/tasks", json={"title": "x", "brief": "b", "output_type": "decision"})
+    assert other.status_code == 201, other.text
+    other_id = other.json()["task"]["id"]
+    assert (await client.delete(f"/tasks/{other_id}")).status_code == 204
+    assert (await client.delete(f"/tasks/{other_id}")).status_code == 404
+    await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id),
+                                         "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]})
+    resp = await client.delete(f"/tasks/{task_id}")
+    assert resp.status_code == 409 and resp.json()["detail"]["error"]["code"] == "task_has_sessions"
