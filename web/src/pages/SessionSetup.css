@@ -50,3 +50,7 @@
 .affix-mark { position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--ink-3); pointer-events: none; }
 .affix input { width: 100%; box-sizing: border-box; padding-left: 1.5rem; }
 .setup .page-head h1 { font-size: 1.5rem; }
+
+.agent-manage { display: inline-flex; gap: 0.9rem; margin-top: 0.15rem; }
+.agent-manage .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; color: var(--ink-2, var(--ink)); text-decoration: underline; cursor: pointer; }
+@media (pointer: coarse) { .agent-manage .link-btn { min-height: 44px; padding: 0 0.25rem; } }

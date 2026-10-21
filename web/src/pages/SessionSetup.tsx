@@ -10,7 +10,10 @@ import {
   type SessionCreateRequest,
 } from '../api/sessions'
 import { agentHue } from '../agentColor'
+import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
+import { AgentDialog } from '../components/AgentDialog'
+import { ConfirmDialog } from '../components/Dialog'
 import { TableRing } from '../components/TableRing'
 import { EMPTY_WORKSPACE, WorkspaceFields, workspaceBody, type WorkspaceDraft } from '../components/WorkspaceFields'
 import './SessionSetup.css'
@@ -22,6 +25,7 @@ interface AgentTemplate {
   system_prompt: string
   stance: string
   model: string
+  custom?: boolean
 }
 
 interface Mode {
@@ -78,6 +82,12 @@ export function SessionSetup() {
   const [touched, setTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
+  // Custom agents: create, edit (dialog) and archive (confirm).
+  const [agentDialog, setAgentDialog] = useState<{ edit?: AgentTemplate } | null>(null)
+  const [agentBusy, setAgentBusy] = useState(false)
+  const [agentError, setAgentError] = useState<string | null>(null)
+  const [archiving, setArchiving] = useState<AgentTemplate | null>(null)
+
   // The route takes any id, so check the task exists. If the lookup itself fails we carry on: the
   // setup options below report their own load errors, and starting a session re-validates the task.
   const [taskMissing, setTaskMissing] = useState(false)
@@ -107,6 +117,31 @@ export function SessionSetup() {
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
   }, [])
+
+  async function saveAgent(draft: AgentDraft) {
+    setAgentBusy(true); setAgentError(null)
+    try {
+      const edit = agentDialog?.edit
+      const saved = edit ? await updateAgent(edit.id, draft) : await createAgent(draft)
+      setTemplates(await getAgentTemplates())
+      if (!edit && !isBuild) setAgentIds((ids) => [...ids, saved.id]) // a new agent joins the roster it was made for
+      setAgentDialog(null)
+    } catch (err) {
+      setAgentError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setAgentBusy(false)
+    }
+  }
+  async function archive(t: AgentTemplate) {
+    setArchiving(null)
+    try {
+      await archiveAgent(t.id)
+      setTemplates(await getAgentTemplates())
+      setAgentIds((ids) => ids.filter((id) => id !== t.id))
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   const selectedMode = modes?.find((m) => m.id === modeId)
   const isBuild = selectedMode?.name === 'build'
@@ -273,6 +308,9 @@ export function SessionSetup() {
             <p className="hint">{isBuild
               ? 'The pipeline decides who speaks: plan, build, test, review. Fixes go back to the developer.'
               : 'Order matters: seats speak in roster order.'}</p>
+            {!isBuild && (
+              <button type="button" className="btn sm" onClick={() => { setAgentError(null); setAgentDialog({}) }}>Create agent</button>
+            )}
             <ul className="agent-list">
               {visibleTemplates.map((t) => {
                 const on = agentIds.includes(t.id)
@@ -284,7 +322,14 @@ export function SessionSetup() {
                       <span className="muted">{t.role ?? t.stance}</span>
                       <span className="agent-tags">
                         {t.stance && <span className="chip" title={`Model: ${t.model}`}>{t.stance}</span>}
+                        {t.custom && <span className="chip accent">Custom</span>}
                       </span>
+                      {t.custom && (
+                        <span className="agent-manage">
+                          <button type="button" className="link-btn" aria-label={`Edit ${t.name}`} onClick={() => { setAgentError(null); setAgentDialog({ edit: t }) }}>Edit</button>
+                          <button type="button" className="link-btn" aria-label={`Archive ${t.name}`} onClick={() => setArchiving(t)}>Archive</button>
+                        </span>
+                      )}
                     </div>
                     <button type="button" className={`btn sm${on ? '' : ' primary'}`} aria-pressed={on} onClick={() => toggle(t.id)}>
                       {on ? 'Remove' : 'Add to roster'}
@@ -363,6 +408,26 @@ export function SessionSetup() {
           </button>
         </aside>
       </div>
+
+      {agentDialog && (
+        <AgentDialog
+          initial={agentDialog.edit ? { name: agentDialog.edit.name, stance: agentDialog.edit.stance, instructions: agentDialog.edit.system_prompt } : undefined}
+          submitting={agentBusy}
+          error={agentError}
+          onSubmit={saveAgent}
+          onCancel={() => setAgentDialog(null)}
+        />
+      )}
+      {archiving && (
+        <ConfirmDialog
+          title={`Archive ${archiving.name}?`}
+          message="It leaves the catalogue and can't be added to new sessions. Past sessions keep it."
+          confirmLabel="Archive"
+          danger
+          onConfirm={() => archive(archiving)}
+          onCancel={() => setArchiving(null)}
+        />
+      )}
     </div>
   )
 }
