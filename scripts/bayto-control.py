@@ -168,9 +168,13 @@ def container_status(name, port):
     if code != 0:
         if code == 127:
             return "docker missing"
-        if "Cannot connect" in out or "daemon" in out or "docker.sock" in out:
+        # "No such container" is checked first: Docker words it "Error response from daemon: No such container: x",
+        # which must not be mistaken for a daemon that is not running.
+        if "No such" in out:
+            return "absent"
+        if "Cannot connect" in out or "docker.sock" in out or "daemon running" in out:
             return "docker not running"
-        return "absent" if "No such" in out else "stopped"
+        return "stopped"
     return "running" if out.strip() == "true" else "stopped"
 
 
