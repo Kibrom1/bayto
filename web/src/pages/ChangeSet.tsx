@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { ArtifactOut } from '../api/sessions'
+import { PullRequestPanel } from '../components/PullRequestPanel'
 import './ChangeSet.css'
 
 interface ChangeSetContent {
@@ -20,13 +21,14 @@ interface ChangeSetContent {
   open_issues: string[]
   git_guard?: { changed: string[]; restored: boolean }
   summary?: string | null
+  pull_request?: { url: string } | null
 }
 
 const FILE_STATUS: Record<string, string> = { A: 'added', M: 'changed', D: 'deleted', R: 'renamed' }
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 /** What a Build session left on its branch: read from git and from the tester's and reviewer's own reports. */
-export function ChangeSet({ artifacts }: { artifacts: ArtifactOut[] }) {
+export function ChangeSet({ artifacts, sessionId }: { artifacts: ArtifactOut[]; sessionId?: string }) {
   const [copied, setCopied] = useState(false)
   const art = artifacts.find((a) => a.type === 'change_set')
   if (!art) return null
@@ -60,12 +62,14 @@ export function ChangeSet({ artifacts }: { artifacts: ArtifactOut[] }) {
         <button type="button" className="btn sm" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
       </div>
       <p className="cs-sub">
-        On branch <code>{cs.branch}</code>, based on <code>{cs.base_branch}</code>. Nothing was pushed; you merge it.
+        On branch <code>{cs.branch}</code>, based on <code>{cs.base_branch}</code>. Nothing was pushed until you choose to open a pull request; you merge it.
       </p>
       <p className="cs-sub" data-testid="repo-left-on">
         Your repository is still checked out on <code>{cs.branch}</code>. When you have finished reviewing, go
         back with <code>git switch {cs.base_branch}</code>.
       </p>
+
+      {sessionId && <PullRequestPanel sessionId={sessionId} hasCommits={cs.commits.length > 0} opened={cs.pull_request?.url ?? null} />}
 
       {cs.open_issues.length > 0 && (
         <ul className="cs-issues" aria-label="Open issues">
