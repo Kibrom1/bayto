@@ -436,7 +436,7 @@ export function BaytoRoom() {
           })}
         </section>
 
-          {(canSend || paused) && session.task_id && <ContextCard taskId={session.task_id} sessionId={sessionId} />}
+          {(canSend || paused) && session.task_id && sessionId && <ContextCard taskId={session.task_id} sessionId={sessionId} />}
 
           <div className="rail-block">
           <div className="mod-card">
