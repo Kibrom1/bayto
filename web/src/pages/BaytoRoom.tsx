@@ -167,6 +167,21 @@ export function BaytoRoom() {
     if (!isError) setTimeout(() => setNotice(null), 4000)
   }
 
+  function downloadTranscript() {
+    const title = taskTitle ?? 'Discussion'
+    const lines = messages.map((m) => {
+      const known = roster.some((tc) => tc.participant === m.from)
+      const who = known ? display(m.from).name : titleCase(m.from)
+      return `**${who}:** ${splitVerdict(m.body).text}\n`
+    })
+    const url = URL.createObjectURL(new Blob([`# ${title}: transcript\n\n${lines.join('\n')}`], { type: 'text/markdown' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'discussion'}-transcript.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function continueWithSameTeam() {
     try {
       const made = await continueSession(sessionId!)
@@ -262,6 +277,9 @@ export function BaytoRoom() {
             <button type="button" className="btn primary" onClick={() => run(() => startSession(sessionId!), 'Session starting')}>Start</button>
           ) : !finished && (
             <button type="button" className="btn" disabled={!canSend} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
+          )}
+          {finished && messages.length > 0 && (
+            <button type="button" className="btn" onClick={downloadTranscript}>Download transcript</button>
           )}
           {status === 'finished' && modeName && modeName !== 'build' && (
             <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>

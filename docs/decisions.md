@@ -95,3 +95,6 @@ The cap used to stop a session only after spending had already reached it, so th
 
 ## 2026-10-22: an interrupted discussion is continued as a new session, not resumed
 After an orchestrator restart a running session is marked `orphaned` because its sandbox team is gone, and it cannot be brought back. `POST /sessions/{id}/continue` creates a new session with the same mode, team and budget (agents archived since are left out); the old session's summary reaches it as earlier context on the task, like any earlier session. Only `orphaned` and `failed` sessions can be continued, and Build sessions are refused (their sandbox and branch are not something to pick up blind). The room offers it as "Continue with the same team".
+
+## 2026-10-22: pilot readiness
+Added for the first small pilot: `scripts/bayto-doctor.sh` (read-only preflight with fixes), `docs/pilot-guide.md`, a "Try a sample discussion" button on the empty task list (creates a real release-cadence task and opens its setup with Debate chosen) and "Download transcript" in the room. The synthesis already had Copy Markdown and Download .md. Not done: accounts and sign-in (the app stays local-only), a hosted version, an in-app feedback channel and usage analytics. Pilot feedback is gathered by hand with the questions in the guide.

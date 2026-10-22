@@ -34,10 +34,11 @@ Needs: Postgres 16 running, `uv`, Node 22, the `claude` CLI signed in (Bayto use
 API key) and `sbx`.
 
 ```
+scripts/bayto-doctor.sh      # checks everything is installed, and says how to fix what is not
 scripts/bayto-up.sh          # migrates and seeds the database, starts the API (:8000) and the web app (:5173)
 ```
 
-Logs go to `.bayto-run/`. Versions are pinned in `versions.env` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+New to it? Follow the [pilot guide](docs/pilot-guide.md). Logs go to `.bayto-run/`. Versions are pinned in `versions.env` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Tests
 
