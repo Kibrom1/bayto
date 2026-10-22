@@ -15,11 +15,12 @@ const STATUS_LABEL: Record<string, string> = {
   finished: 'Done',
   completed: 'Done',
   failed: 'Failed',
+  orphaned: 'Interrupted',
 }
 
 function statusChip(status: string | null) {
   if (!status) return <span className="chip"><span className="dot" />Not started</span>
-  const tone = status === 'active' ? 'ok' : status === 'failed' ? 'bad' : status === 'needs_human' || status === 'stopping' ? 'warn' : ''
+  const tone = status === 'active' ? 'ok' : status === 'failed' ? 'bad' : status === 'orphaned' ? 'warn' : status === 'needs_human' || status === 'stopping' ? 'warn' : ''
   return <span className={`chip ${tone}`}><span className="dot" />{STATUS_LABEL[status] ?? status}</span>
 }
 
@@ -36,7 +37,7 @@ const DONE = ['finished', 'completed']
 function matches(task: Task, f: Filter): boolean {
   if (f === 'all') return true
   if (f === 'live') return LIVE.includes(task.status ?? '')
-  if (f === 'finished') return DONE.includes(task.status ?? '') || !!task.output_artifact_id
+  if (f === 'finished') return DONE.includes(task.status ?? '') || task.status === 'orphaned' || !!task.output_artifact_id
   return !task.status
 }
 

@@ -23,7 +23,7 @@ import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
 import { ContextCard } from '../components/ContextCard'
 import { Synthesis } from './Synthesis'
-import { agentHue } from '../agentColor'
+import { agentHue, initials } from '../agentColor'
 import { TableRing } from '../components/TableRing'
 import './BaytoRoom.css'
 
@@ -33,7 +33,6 @@ interface AgentInfo {
 }
 
 const fmt = (n: number) => n.toLocaleString('en-US')
-const initials = (name: string) => name.split(/[\s_-]+/).map((w) => w[0]?.toUpperCase() ?? '').slice(0, 2).join('')
 const STOP_REASONS: Record<string, string> = {
   max_rounds: 'it reached its round limit',
   staleness: 'the agents stopped adding new arguments',
@@ -61,7 +60,7 @@ export function splitVerdict(body: string): { text: string; verdict: string | nu
   return { text: body.replace(m[0], '').trimEnd(), verdict: m[1] }
 }
 
-const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'ended']
+const FINISHED = ['finished', 'completed', 'stopped', 'failed', 'cancelled', 'ended', 'orphaned']
 
 export function BaytoRoom() {
   const { sessionId } = useParams<{ sessionId: string }>()
@@ -232,7 +231,7 @@ export function BaytoRoom() {
           <p className="room-kicker"><Link to="/">Tasks</Link><span aria-hidden="true"> / </span><span>Bayto room</span></p>
           <div className="room-titlerow">
             <h1 className="room-title">{taskTitle ?? 'Discussion'}</h1>
-            <span className={`chip status-${status}`}><span className="dot" />{paused ? 'Paused' : titleCase(status)}</span>
+            <span className={`chip status-${status}`}><span className="dot" />{paused ? 'Paused' : status === 'orphaned' ? 'Interrupted' : titleCase(status)}</span>
           </div>
           <div className="room-meta">
             {modeName && <span>{titleCase(modeName)}</span>}
@@ -318,6 +317,12 @@ export function BaytoRoom() {
       )}
       {!session.archived_at && session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
         <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.</div>
+      )}
+      {status === 'orphaned' && (
+        <div className="notice" role="status">
+          <strong>This session was interrupted.</strong> The app restarted while it was running, so its team is gone. The conversation so far is kept below.
+          {' '}<Link to={`/setup/${session.task_id}`}>Start a new session</Link> on this task to keep going.
+        </div>
       )}
       {paused && (
         <div className="notice" role="status">Paused. If an agent asked you something, answer below, then press Resume.</div>
