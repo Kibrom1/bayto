@@ -109,7 +109,7 @@
 .tool-line { font-size: 0.8rem; color: var(--ink-3); margin-top: 0.3rem; }
 .empty { color: var(--ink-3); text-align: center; padding: 3rem 0; }
 
-.jump { position: absolute; left: 50%; bottom: 7rem; transform: translateX(-50%); background: var(--surface); box-shadow: 0 6px 20px rgb(0 0 0 / 0.15); }
+.jump { position: absolute; left: 50%; bottom: 7rem; transform: translateX(-50%); box-shadow: 0 6px 20px rgb(0 0 0 / 0.15); }
 
 /* ---- composer ---- */
 .composer { border-top: 1px solid var(--line); padding: var(--space-3) 1.5rem 0.9rem; background: var(--surface); }
