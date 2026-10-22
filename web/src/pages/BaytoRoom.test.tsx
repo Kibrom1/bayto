@@ -204,6 +204,7 @@ describe('BaytoRoom', () => {
     expect(box).toBeDisabled()
     expect(screen.getByText(/this session was interrupted/i)).toBeInTheDocument()
     expect(screen.getByText('Interrupted')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /continue with the same team/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
     expect(screen.queryByRole('button', { name: /end & synthesize/i })).toBeNull()
   })

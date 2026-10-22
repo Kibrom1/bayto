@@ -180,6 +180,53 @@ async def create_session(
         )
 
 
+@router.post("/sessions/{session_id}/continue", status_code=201, response_model=SessionCreateResponse)
+async def continue_session(session_id: uuid.UUID,
+                           sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> SessionCreateResponse:
+    """A new session with the same mode, team and budget, for a discussion that was interrupted (the app restarted)
+    or failed. The old session's summary reaches the new one as earlier context on the task. Build sessions are
+    refused: their sandbox and branch are not something to pick up blind."""
+    async with sessionmaker() as db:
+        old = await db.get(Session, session_id)
+        if old is None:
+            raise HTTPException(404, detail=_error("not_found", "session not found"))
+        if old.status not in ("orphaned", "failed"):
+            raise HTTPException(409, detail=_error("invalid_transition",
+                                                    f"only an interrupted or failed session can be continued (this one is {old.status})"))
+        mode_row = await db.get(Mode, old.mode_id)
+        if mode_row is not None and mode_row.name == "build":
+            raise HTTPException(409, detail=_error("build_not_continuable",
+                                                    "a Build session can't be continued; start a new one from the task"))
+        await _refuse_if_task_busy(db, old)
+        seats = (await db.execute(select(SessionAgent).where(SessionAgent.session_id == session_id,
+                                                              SessionAgent.removed_at.is_(None))
+                                  .order_by(SessionAgent.seat_order))).scalars().all()
+        new = Session(task_id=old.task_id, mode_id=old.mode_id, status=STATUS_CREATED, budget=old.budget)
+        db.add(new)
+        await db.flush()
+        out = []
+        for sa in seats:
+            agent_row = await db.get(Agent, sa.agent_id)
+            if agent_row is None or agent_row.archived_at is not None:
+                continue  # an agent archived since then is left out
+            copy = SessionAgent(session_id=new.id, agent_id=sa.agent_id, agent_version=agent_row.version,
+                                seat_order=len(out), muted=sa.muted, harness=sa.harness, model=sa.model,
+                                isolation=sa.isolation)
+            db.add(copy)
+            out.append(copy)
+        if len(out) < 2:
+            raise HTTPException(422, detail=_error("roster_too_small", "fewer than two of its agents are still available"))
+        audit.emit(action="session.continued", summary=f"Continued an interrupted session with {len(out)} agents",
+                   task_id=old.task_id, session_id=new.id, subject_type="session", subject_id=new.id,
+                   detail={"from_session": str(session_id), "from_status": old.status})
+        await db.commit()
+        await db.refresh(new)
+        return SessionCreateResponse(
+            session=SessionOut.model_validate(new, from_attributes=True),
+            session_agents=[SessionAgentOut.model_validate(sa, from_attributes=True) for sa in out],
+        )
+
+
 # Sessions of one task share a sandbox and, in Build mode, one repository whose checked-out branch the
 # session works on. A second running session would switch that branch under the first, so only one session
 # of a task may be running at a time. A paused (`needs_human`) session does not count: resuming it puts the

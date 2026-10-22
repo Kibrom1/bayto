@@ -130,6 +130,14 @@ export async function startSession(sessionId: string): Promise<{ session: { id: 
   return res.json()
 }
 
+export async function continueSession(sessionId: string): Promise<SessionCreateResponse> {
+  const res = await fetch(`/sessions/${sessionId}/continue`, { method: 'POST' })
+  if (!res.ok) {
+    throw new ApiError(res.status, `POST /sessions/${sessionId}/continue failed: ${res.status} ${await parseError(res)}`)
+  }
+  return res.json()
+}
+
 export async function getSessionDetail(sessionId: string): Promise<{ session: SessionDetailOut }> {
   const res = await fetch(`/sessions/${sessionId}`)
   if (!res.ok) {

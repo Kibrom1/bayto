@@ -12,6 +12,7 @@ import {
   deleteSession,
   pauseSession,
   startSession,
+  continueSession,
   resumeSession,
   stopSession,
   type ArtifactOut,
@@ -164,6 +165,16 @@ export function BaytoRoom() {
   function flash(text: string, isError = false) {
     setNotice({ text, error: isError })
     if (!isError) setTimeout(() => setNotice(null), 4000)
+  }
+
+  async function continueWithSameTeam() {
+    try {
+      const made = await continueSession(sessionId!)
+      await startSession(made.session.id)
+      navigate(`/room/${made.session.id}`)
+    } catch (err) {
+      flash(err instanceof Error ? err.message : 'Could not continue the session', true)
+    }
   }
 
   async function run(action: () => Promise<unknown>, ok: string) {
@@ -321,7 +332,8 @@ export function BaytoRoom() {
       {status === 'orphaned' && (
         <div className="notice" role="status">
           <strong>This session was interrupted.</strong> The app restarted while it was running, so its team is gone. The conversation so far is kept below.
-          {' '}<Link to={`/setup/${session.task_id}`}>Start a new session</Link> on this task to keep going.
+          {' '}{modeName !== 'build' && <button type="button" className="btn sm primary" onClick={continueWithSameTeam}>Continue with the same team</button>}
+          {' '}<Link to={`/setup/${session.task_id}`}>Start a new session</Link> {modeName !== 'build' ? 'instead to change the team or budget' : 'on this task to keep going'}. {modeName !== 'build' && 'The new session is told what was said so far.'}
         </div>
       )}
       {paused && (
