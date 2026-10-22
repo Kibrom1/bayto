@@ -1,0 +1,67 @@
+# Bayto pilot guide
+
+For people trying Bayto on their own machine. It takes about 15 minutes to set up and 10 to see a full discussion.
+
+Bayto has no sign-in. Run it on your own computer only and do not expose its ports to a network.
+
+## 1. What you need
+
+- macOS or Linux, with Docker running
+- [uv](https://docs.astral.sh/uv/), Node 22 or newer, and PostgreSQL 16 (a Docker container is fine)
+- The `claude` command-line tool, signed in. Bayto uses your Claude subscription, not an API key
+- `sbx` (Docker Sandboxes), signed in. Agents run inside it, not on your computer
+
+Check all of this in one go:
+
+```
+scripts/bayto-doctor.sh
+```
+
+It changes nothing and tells you how to fix anything missing.
+
+## 2. Start it
+
+If you have no Postgres yet:
+
+```
+docker run -d --name bayto-pg -p 5432:5432 \
+  -e POSTGRES_USER=bayto -e POSTGRES_PASSWORD=bayto -e POSTGRES_DB=bayto postgres:16
+```
+
+Then:
+
+```
+scripts/bayto-up.sh
+```
+
+It prepares the database and starts the API and the web app. Open http://127.0.0.1:5173. Logs are in `.bayto-run/`. Ctrl-C stops everything.
+
+The Services page in the app can also start and stop Postgres, the API and the optional trace viewer, and shows what is running.
+
+## 3. Try it
+
+1. On an empty task list, click **Try a sample discussion**. It creates a real task about release cadence.
+2. Pick a mode (Debate is a good first one) and seat three or four agents. Check the estimated cost and set a dollar cap.
+3. **Start session.** Watch the agents talk. Type into the box to steer them. While it runs you can add a document, a folder or a web page with **Context** in the right-hand column.
+4. **End & synthesize.** You get a synthesis (and a minority report for debates). Use **Copy Markdown** or **Download .md**; **Download transcript** saves the whole conversation.
+5. Try it on your own question next. You can create your own specialist agents with **Create agent**.
+
+Build mode works on a repository you choose, on its own branch. It never pushes or merges for you. When it finishes you can open a pull request from the Change Set page; this needs the GitHub CLI (`gh`) signed in on your machine.
+
+## 4. Things to know
+
+- **Cost.** Sessions use your Claude subscription. The dollar cap stops a session before a turn that would cross it. The estimate on the setup page is rough.
+- **Restarts.** If the app restarts while a discussion is running, the session is marked Interrupted. Use **Continue with the same team** in the room to carry on in a new session.
+- **Attached folders** are read as a text copy. Files that look like they hold passwords or keys are left out, but do not attach folders you would not paste into a chat.
+- **Attached links** must be public web pages.
+
+## 5. What we would like to hear
+
+After a real session, tell us:
+
+1. What were you trying to decide or make, and did the result help?
+2. Where did you get stuck or confused, from install to the final result?
+3. Did anything cost more or take longer than you expected?
+4. What would make you use it again next week?
+
+If something breaks, send the last 30 lines of `.bayto-run/api.log` and what you clicked.

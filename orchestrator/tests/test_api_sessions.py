@@ -1011,3 +1011,23 @@ async def test_a_task_is_deleted_with_its_idle_sessions(client, live_sessionmake
     # a task whose sessions are all idle is deleted together with them
     assert (await client.delete(f"/tasks/{task_id}")).status_code == 204
     assert (await client.get(f"/tasks/{task_id}/attachments")).status_code in (200, 404)
+
+
+async def test_an_interrupted_session_can_be_continued_with_the_same_team(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    created = (await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(a), "seat_order": i} for i, a in enumerate(agent_ids)],
+        "budget": {"dollars": 4.0}})).json()["session"]["id"]
+    resp = await client.post(f"/sessions/{created}/continue")
+    assert resp.status_code == 409  # still "created": only interrupted or failed sessions continue
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, uuid.UUID(created))
+        row.status = "orphaned"
+        await db.commit()
+    resp = await client.post(f"/sessions/{created}/continue")
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["session"]["id"] != created and body["session"]["status"] == "created"
+    assert body["session"]["budget"] == {"max_cost": 4.0}
+    assert [sa["agent_id"] for sa in body["session_agents"]] == [str(a) for a in agent_ids]

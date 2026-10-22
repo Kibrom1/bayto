@@ -187,4 +187,17 @@ describe('TaskBoard', () => {
     expect(more.closest('details')).not.toHaveAttribute('open')
     expect(more).toHaveFocus()
   })
+
+  it('offers a sample discussion on an empty board and opens its setup', async () => {
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockImplementation(async (url, init) => {
+      if (url === '/tasks' && (init as RequestInit | undefined)?.method === 'POST') {
+        return jsonResponse({ task: { id: 'sample-1', title: 'Should we ship weekly or every two weeks?', brief: 'b', output_type: 'decision', status: null, last_session_id: null, output_artifact_id: null } }, { status: 201 })
+      }
+      return jsonResponse([])
+    })
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await userEvent.click(await screen.findByRole('button', { name: /try a sample discussion/i }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([u, i]) => u === '/tasks' && (i as RequestInit | undefined)?.method === 'POST')).toBe(true))
+  })
 })

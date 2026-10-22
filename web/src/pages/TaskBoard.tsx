@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { archiveSession, deleteSession } from '../api/sessions'
 import { ConfirmDialog } from '../components/Dialog'
 import { createTask, deleteTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
@@ -79,7 +79,14 @@ function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task
   )
 }
 
+const SAMPLE_TASK: TaskCreateRequest = {
+  title: 'Should we ship weekly or every two weeks?',
+  brief: 'Our team ships every two weeks. Some people want weekly releases for faster feedback; others worry about review time, release notes and support load. Decide on a cadence and say what would change your mind.',
+  output_type: 'decision',
+}
+
 export function TaskBoard() {
+  const navigate = useNavigate()
   const [tasks, setTasks] = useState<Task[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [formOpen, setFormOpen] = useState(false)
@@ -115,6 +122,16 @@ export function TaskBoard() {
       if (!whole && task.last_session_id) await deleteSession(task.last_session_id)
       else await deleteTask(task.id)
       refresh()
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function trySample() {
+    setActionError(null)
+    try {
+      const task = await createTask(SAMPLE_TASK)
+      navigate(`/setup/${task.id}?mode=debate`)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err))
     }
@@ -166,7 +183,11 @@ export function TaskBoard() {
         <div className="empty-state card">
           <h2>No tasks yet</h2>
           <p>Create your first task, pick a few agents, and watch them debate it to a conclusion.</p>
-          <button type="button" className="btn primary" onClick={() => setFormOpen(true)}>Create your first task</button>
+          <div className="empty-actions">
+            <button type="button" className="btn primary" onClick={() => setFormOpen(true)}>Create your first task</button>
+            <button type="button" className="btn" onClick={trySample}>Try a sample discussion</button>
+          </div>
+          <p className="hint">The sample sets up a real task about release cadence. You choose the agents and start it, so you see the whole flow.</p>
         </div>
       )}
 

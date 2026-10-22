@@ -52,3 +52,4 @@
 .task-list { overflow: visible; }
 .task-row:first-child { border-radius: var(--radius) var(--radius) 0 0; }
 .task-row:last-child { border-radius: 0 0 var(--radius) var(--radius); }
+.empty-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: center; margin: var(--space-3) 0; }
