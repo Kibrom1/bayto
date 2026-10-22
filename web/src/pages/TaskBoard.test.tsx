@@ -72,9 +72,10 @@ describe('TaskBoard', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1/archive', { method: 'POST' }))
 
     await userEvent.click(screen.getAllByText('More')[0])
-    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete session' }))
     expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')).toBe(false)
-    await userEvent.click(await screen.findByRole('button', { name: 'Delete session' }))
+    const confirmBtns = await screen.findAllByRole('button', { name: 'Delete session' })
+    await userEvent.click(confirmBtns[confirmBtns.length - 1])
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1', { method: 'DELETE' }))
   })
 
@@ -89,7 +90,8 @@ describe('TaskBoard', () => {
     const more = screen.getAllByText('More')
     await userEvent.click(more[more.length - 1])
     expect(screen.getAllByRole('button', { name: 'Archive' })).toHaveLength(1) // only the task with a session
-    await userEvent.click(screen.getByRole('button', { name: 'Delete task' }))
+    const menuItems = screen.getAllByRole('button', { name: 'Delete task' })
+    await userEvent.click(menuItems[menuItems.length - 1])
     const confirm = await screen.findAllByRole('button', { name: 'Delete task' })
     await userEvent.click(confirm[confirm.length - 1])
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/tasks/t2', { method: 'DELETE' }))
@@ -175,7 +177,7 @@ describe('TaskBoard', () => {
     const more = (await screen.findAllByText('More'))[0]
     await userEvent.click(more)
     const archive = screen.getByRole('button', { name: 'Archive' })
-    const del = screen.getByRole('button', { name: 'Delete' })
+    const del = screen.getByRole('button', { name: 'Delete session' })
     archive.focus()
     await userEvent.keyboard('{ArrowDown}')
     expect(del).toHaveFocus()

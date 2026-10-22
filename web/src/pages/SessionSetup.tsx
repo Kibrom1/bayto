@@ -397,7 +397,7 @@ export function SessionSetup() {
                   This cap is below the estimate, so the session will likely stop early, after a turn or two. Raise the cap or seat fewer agents.
                 </p>
               )}
-              <p className="hint">A planning estimate, not a quote. The session stops at the dollar cap.</p>
+              <p className="hint">A planning estimate, not a quote. The session stops before a turn that would cross the dollar cap.</p>
             </div>
           </section>
 

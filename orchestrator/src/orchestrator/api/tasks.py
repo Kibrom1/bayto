@@ -10,7 +10,7 @@ import asyncio
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -145,17 +145,25 @@ async def set_task_workspace(
 # ---------------------------------------------------------------- DELETE /tasks/{id}
 
 @router.delete("/tasks/{task_id}", status_code=204)
-async def delete_task(task_id: uuid.UUID, sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> Response:
-    """Remove a task that never ran. A task with sessions is cleaned up through its sessions."""
+async def delete_task(task_id: uuid.UUID, request: Request,
+                      sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> Response:
+    """Remove a task and its sessions. Refused while any session is starting, running or ending."""
+    from .sessions import _BUSY_STATUSES, delete_session  # sessions imports this module's helpers too
     async with sessionmaker() as db:
         row = await db.get(Task, task_id)
         if row is None:
             raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
-        if await db.scalar(select(func.count()).select_from(Session).where(Session.task_id == task_id)):
-            raise HTTPException(status_code=409, detail={"error": {"code": "task_has_sessions",
-                                "detail": "this task has sessions; archive or delete them instead"}})
+        sessions = (await db.execute(select(Session.id, Session.status).where(Session.task_id == task_id))).all()
+        if any(status in _BUSY_STATUSES for _, status in sessions):
+            raise HTTPException(status_code=409, detail={"error": {"code": "task_busy",
+                                "detail": "a session on this task is still running; pause or end it first"}})
+    for sid, _ in sessions:
+        await delete_session(sid, request, sessionmaker)
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
         await db.execute(delete(TaskAttachment).where(TaskAttachment.task_id == task_id))
-        audit.emit(action="task.deleted", summary=f"Deleted {row.title}", task_id=row.id, subject_type="task", subject_id=row.id)
+        audit.emit(action="task.deleted", summary=f"Deleted {row.title}", task_id=row.id, subject_type="task",
+                   subject_id=row.id, detail={"sessions": len(sessions)})
         await db.delete(row)
         await db.commit()
     return Response(status_code=204)
