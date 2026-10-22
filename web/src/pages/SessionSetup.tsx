@@ -9,7 +9,7 @@ import {
   type Task,
   type SessionCreateRequest,
 } from '../api/sessions'
-import { agentHue } from '../agentColor'
+import { agentHue, initials } from '../agentColor'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
@@ -59,10 +59,6 @@ const isBuildTemplate = (t: { role?: string }) => (t.role ?? '').startsWith('bui
 
 function titleCase(s: string) {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
-
-function initials(name: string) {
-  return name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
 }
 
 export function SessionSetup() {
@@ -395,6 +391,11 @@ export function SessionSetup() {
                 <div className="meter" role="img" aria-label={`${pct}% of budget cap`}>
                   <span style={{ width: `${Math.min(100, pct)}%` }} className={pct > 80 ? 'warn' : ''} />
                 </div>
+              )}
+              {pct !== null && pct > 100 && (
+                <p className="alert warn" role="status">
+                  This cap is below the estimate, so the session will likely stop early, after a turn or two. Raise the cap or seat fewer agents.
+                </p>
               )}
               <p className="hint">A planning estimate, not a quote. The session stops at the dollar cap.</p>
             </div>

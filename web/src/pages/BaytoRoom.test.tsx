@@ -199,6 +199,15 @@ describe('BaytoRoom', () => {
     expect(screen.getByRole('link', { name: /start a new session/i })).toHaveAttribute('href', '/setup/task-1')
   })
 
+  it('explains an interrupted session and offers no controls that would fail', async () => {
+    const box = await renderWithStatus('orphaned')
+    expect(box).toBeDisabled()
+    expect(screen.getByText(/this session was interrupted/i)).toBeInTheDocument()
+    expect(screen.getByText('Interrupted')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Pause' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /end & synthesize/i })).toBeNull()
+  })
+
   it('lets you answer a paused session and says the message waits for Resume', async () => {
     const box = await renderWithStatus('needs_human')
     expect(box).toBeEnabled()
