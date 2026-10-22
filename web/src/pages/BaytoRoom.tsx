@@ -376,7 +376,7 @@ export function BaytoRoom() {
             </div>
           </div>
           {!atBottom && (
-            <button type="button" className="btn jump" onClick={() => { endRef.current?.scrollIntoView({ block: 'end' }); setAtBottom(true) }}>Jump to latest</button>
+            <button type="button" className="btn primary jump" onClick={() => { endRef.current?.scrollIntoView({ block: 'end' }); setAtBottom(true) }}>Jump to latest</button>
           )}
 
           <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
