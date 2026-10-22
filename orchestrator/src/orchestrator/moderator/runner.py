@@ -532,7 +532,14 @@ class ModeratorRunner:
         if max_cost is None:
             return False
         usage = await session_usage(self._sessionmaker, self._session_id)
-        return usage.cost >= max_cost
+        if usage.cost >= max_cost:
+            return True
+        # Stop before the turn that would cross the cap, using the average cost of the turns so far, so the
+        # cap is a limit and not "the point after which one more turn runs". The first turn is never skipped.
+        async with self._sessionmaker() as db:
+            turns = await db.scalar(select(func.count()).select_from(Turn)
+                                    .where(Turn.session_id == self._session_id, Turn.cost.is_not(None)))
+        return bool(turns) and usage.cost + usage.cost / turns > max_cost
 
     # ---------------------------------------------------------------- hand-raise collection
 

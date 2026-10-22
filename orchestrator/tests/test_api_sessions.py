@@ -999,7 +999,7 @@ async def test_a_build_agent_cannot_join_a_discussion_session(client, live_sessi
     assert resp.json()["detail"]["error"]["code"] == "invalid_agent"
 
 
-async def test_a_task_that_never_ran_can_be_deleted_but_one_with_sessions_cannot(client, live_sessionmaker):
+async def test_a_task_is_deleted_with_its_idle_sessions(client, live_sessionmaker):
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
     other = await client.post("/tasks", json={"title": "x", "brief": "b", "output_type": "decision"})
     assert other.status_code == 201, other.text
@@ -1008,5 +1008,6 @@ async def test_a_task_that_never_ran_can_be_deleted_but_one_with_sessions_cannot
     assert (await client.delete(f"/tasks/{other_id}")).status_code == 404
     await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id),
                                          "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]})
-    resp = await client.delete(f"/tasks/{task_id}")
-    assert resp.status_code == 409 and resp.json()["detail"]["error"]["code"] == "task_has_sessions"
+    # a task whose sessions are all idle is deleted together with them
+    assert (await client.delete(f"/tasks/{task_id}")).status_code == 204
+    assert (await client.get(f"/tasks/{task_id}/attachments")).status_code in (200, 404)

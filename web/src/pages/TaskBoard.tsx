@@ -41,7 +41,7 @@ function matches(task: Task, f: Filter): boolean {
   return !task.status
 }
 
-function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task) => void) {
+function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task, whole: boolean) => void) {
   const live = ['active', 'needs_human', 'starting', 'stopping'].includes(task.status ?? '')
   const done = ['finished', 'completed'].includes(task.status ?? '')
   return (
@@ -70,7 +70,8 @@ function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task
           <summary className="btn ghost sm" aria-label={`More actions for ${task.title}`}>More</summary>
           <div className="row-menu-list" role="group" aria-label="Task actions">
             {task.last_session_id && <button type="button" onClick={() => onArchive(task)}>Archive</button>}
-            <button type="button" className="danger" onClick={() => onDelete(task)}>{task.last_session_id ? 'Delete' : 'Delete task'}</button>
+            {task.last_session_id && <button type="button" className="danger" onClick={() => onDelete(task, false)}>Delete session</button>}
+            <button type="button" className="danger" onClick={() => onDelete(task, true)}>Delete task</button>
           </div>
         </details>
       )}
@@ -84,7 +85,7 @@ export function TaskBoard() {
   const [formOpen, setFormOpen] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
-  const [toDelete, setToDelete] = useState<Task | null>(null)
+  const [toDelete, setToDelete] = useState<{ task: Task; whole: boolean } | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -107,11 +108,11 @@ export function TaskBoard() {
     }
   }
 
-  async function remove(task: Task) {
+  async function remove(task: Task, whole: boolean) {
     setToDelete(null)
     setActionError(null)
     try {
-      if (task.last_session_id) await deleteSession(task.last_session_id)
+      if (!whole && task.last_session_id) await deleteSession(task.last_session_id)
       else await deleteTask(task.id)
       refresh()
     } catch (err) {
@@ -191,7 +192,7 @@ export function TaskBoard() {
                   <span className="task-output">{task.output_type}</span>
                   {task.output_artifact_id && <span className="chip accent">{task.workspace ? 'Change ready' : 'Synthesis ready'}</span>}
                 </div>
-                <div className="task-actions">{actionsFor(task, archive, setToDelete)}</div>
+                <div className="task-actions">{actionsFor(task, archive, (t, whole) => setToDelete({ task: t, whole }))}</div>
               </li>
             ))}
           </ul>
@@ -203,15 +204,17 @@ export function TaskBoard() {
 
       {toDelete && (
         <ConfirmDialog
-          title={toDelete.last_session_id ? 'Delete this session?' : 'Delete this task?'}
-          message={toDelete.last_session_id
+          title={toDelete.whole ? 'Delete this task?' : 'Delete this session?'}
+          message={!toDelete.whole
             ? 'Its conversation, results and cost record are removed for good. The task stays. To keep the record but stop it from shaping later sessions, archive it instead.'
-            : 'The task and anything attached to it are removed for good. It has not run yet, so there is no conversation to lose.'}
-          confirmLabel={toDelete.last_session_id ? 'Delete session' : 'Delete task'}
+            : toDelete.task.last_session_id
+              ? 'The task, all of its sessions, their conversations and cost records, and anything attached are removed for good.'
+              : 'The task and anything attached to it are removed for good. It has not run yet, so there is no conversation to lose.'}
+          confirmLabel={toDelete.whole ? 'Delete task' : 'Delete session'}
           cancelLabel="Keep it"
           danger
           onCancel={() => setToDelete(null)}
-          onConfirm={() => remove(toDelete)}
+          onConfirm={() => remove(toDelete.task, toDelete.whole)}
         />
       )}
 

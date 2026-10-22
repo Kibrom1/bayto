@@ -303,6 +303,24 @@ async def test_budget_exceeded_stops_the_session(tmp_path, live_sessionmaker):
     # above, the "still produces one" half of the same product-owner acceptance test.
 
 
+async def test_budget_stops_before_a_turn_that_would_cross_the_cap(tmp_path, live_sessionmaker):
+    """Under the cap, but the next turn (at the average cost so far) would cross it: stop now, don't overshoot."""
+    session_id = await _make_session(live_sessionmaker, budget={"max_cost": 1.0})
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    mode = mk_mode_config(roles={"moderator": None, "a": None})
+    async with live_sessionmaker() as session:
+        agent_id = (await session.execute(select(Agent.id).where(Agent.role == "a"))).scalar_one()
+        session.add(Turn(session_id=session_id, seq=1, speaker_id=agent_id, round=1, content="x",
+                          tokens_in=60, tokens_out=50, cost=0.6))
+        await session.commit()
+    runner, transport, mirror, sandbox = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mode, policy=RoundRobinFloorPolicy(),
+    )
+    result = await runner.run_once()
+    assert result.stopped is True and result.reason == "budget-exceeded"  # 0.6 spent + ~0.6 next > 1.0
+
+
 async def test_token_budget_is_a_suggestion_not_a_limit(tmp_path, live_sessionmaker):
     """Product-owner decision 2026-10-09: exceeding max_tokens must NOT stop the session
     (only max_cost does)."""
