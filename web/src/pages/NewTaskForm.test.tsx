@@ -45,7 +45,7 @@ describe('NewTaskForm in Build mode', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/uncommitted changes \(1 file\)/)
     const [url, init] = vi.mocked(fetch).mock.calls[0]
     expect(String(url)).toBe('/workspaces/preflight')
-    expect(JSON.parse(init!.body as string)).toEqual({ repo_path: '/r', base_branch: 'main', test_command: null })
+    expect(JSON.parse(init!.body as string)).toEqual({ repo_path: '/r', base_branch: 'main', test_command: null, allowed_commands: [] })
   })
 
   it('shows the reason a repository cannot be used', async () => {
@@ -75,6 +75,20 @@ describe('NewTaskForm in Build mode', () => {
       output_type: 'code change',
       workspace: { repo_path: '/code/app', base_branch: 'main', test_command: 'npm test' },
     })
+  })
+
+  it('sends the extra allowed commands, one per line', async () => {
+    const onSubmit = vi.fn()
+    const user = userEvent.setup()
+    render(<NewTaskForm submitting={false} error={null} onSubmit={onSubmit} onCancel={() => {}} />)
+    await fillBasics(user)
+    await user.click(screen.getByLabelText(/this task changes code/i))
+    await user.type(screen.getByLabelText('Repository path'), '/code/app')
+    await user.type(screen.getByLabelText('Test command'), 'uv run pytest -q')
+    await user.type(screen.getByLabelText(/other allowed commands/i), 'uv sync{enter}  npm run lint  {enter}')
+    await user.click(screen.getByRole('button', { name: 'Create task' }))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit.mock.calls[0][0].workspace.allowed_commands).toEqual(['uv sync', 'npm run lint'])
   })
 
   it('sends no workspace for a discussion task', async () => {

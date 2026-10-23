@@ -75,6 +75,7 @@ def build_change_set(*, workspace: dict, session_id, stop_reason: str, turns: li
         **changes,
         "tests": evidence_from_report(tester) if tester is not None else None,
         "test_command": workspace.get("test_command"),
+        "allowed_commands": workspace.get("allowed_commands") or [],
         "review": review_from_report(reviewer) if reviewer is not None else None,
         "fix_cycles": max(developer_turns - 1, 0),
         "git_guard": {"changed": guard_changes, "restored": bool(guard_changes)},

@@ -166,3 +166,15 @@ def test_session_branch_name_is_the_one_prepare_branch_makes(repo):
     sid = "0123abcd-1111-2222-3333-444455556666"
     prepare_branch(str(repo), "main", build_branch_name(sid))
     assert _head(repo) == "bayto/build-0123abcd"
+
+
+async def test_allowed_commands_are_saved_with_the_task_and_checked_up_front(live_sessionmaker, repo):
+    ok = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "code", "workspace": {
+        "repo_path": str(repo), "test_command": "make test", "allowed_commands": ["make lint", "uv sync"]}})
+    assert ok.status_code == 201 and ok.json()["task"]["workspace"]["allowed_commands"] == ["make lint", "uv sync"]
+    for bad in ("make lint | tee x", "git push origin main", "curl https://x.example"):
+        resp = await _post("/tasks", {"title": "t", "brief": "b", "output_type": "code", "workspace": {
+            "repo_path": str(repo), "allowed_commands": [bad]}})
+        assert resp.status_code == 422 and resp.json()["detail"]["error"]["code"] == "workspace_bad_allowed_commands", bad
+        pre = (await _post("/workspaces/preflight", {"repo_path": str(repo), "allowed_commands": [bad]})).json()
+        assert pre["ok"] is False and pre["problems"][0]["code"] == "bad_allowed_commands", bad

@@ -794,6 +794,8 @@ class ModeratorRunner:
             lines.append(f"Workspace: git repository, base branch {ws.get('base_branch', 'main')}")
             if ws.get("test_command"):
                 lines.append(f"Test command: {ws['test_command']}")
+            if ws.get("allowed_commands"):
+                lines.append("Other commands the developer and tester may run: " + "; ".join(ws["allowed_commands"]))
         async with self._sessionmaker() as session:
             attachments = (await session.execute(
                 select(TaskAttachment).where(TaskAttachment.task_id == task.id)
