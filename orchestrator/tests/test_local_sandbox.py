@@ -345,6 +345,7 @@ async def test_stop_is_a_noop_when_already_stopped(live_sessionmaker):
 
 
 async def test_remove_builds_expected_argv_and_updates_status(live_sessionmaker):
+    from orchestrator.sandbox.local import DEFAULT_SBXENV
     runner = FakeSbxRunner()
     provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner)
     task_id = await _make_task(live_sessionmaker)
@@ -352,7 +353,8 @@ async def test_remove_builds_expected_argv_and_updates_status(live_sessionmaker)
 
     removed = await provider.remove(created)
 
-    assert runner.calls[-1] == ["env", "rm", "sbx-wad-102"]
+    # sbx takes the env file's path, not a name; the name goes in as the env arg, and --force skips the prompt
+    assert runner.calls[-1] == ["env", "rm", str(DEFAULT_SBXENV), "--env-arg", "name=sbx-wad-102", "--force"]
     assert removed.status == "removed"
     assert removed.closed_at is not None
 

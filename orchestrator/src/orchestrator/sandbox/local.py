@@ -333,6 +333,15 @@ class LocalSbxSandboxProvider(SandboxProvider):
             raise SandboxCommandError(argv, result.returncode, result.stderr)
         return result
 
+    def _rm_argv(self, name: str) -> list[str]:
+        """`sbx env rm` takes the PATH of the environment file the sandbox was created from, never a name
+        (live runs 2026-10-22/23: a bare name was read as a folder, and --auto-approve is create-only). The name goes
+        in as the env arg, and --force skips the prompt. A team built by dev-team/run.sh was created from the
+        file it generated; otherwise it is the repo's envs/team.sbxenv.yaml."""
+        built = Path(__file__).resolve().parents[4] / "dev-team" / ".build" / "factory" / "sbxenv.yaml"
+        env_file = built if (self._provisioner is not None and built.exists()) else self._sbxenv_path
+        return ["env", "rm", str(env_file), "--env-arg", f"name={name}", "--force"]
+
     async def create(self, task_id: uuid.UUID, *, name: str, seats=None, workspace: str | None = None) -> SandboxInfo:
         async with self._sessionmaker() as session:
             row = await session.scalar(select(Sandbox).where(Sandbox.task_id == task_id))
@@ -359,7 +368,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
                         raise
                     log.warning("sandbox %s already exists but is not live; removing it and creating it again", name)
                     self._drop_client(name)
-                    await self._run(["env", "rm", name])
+                    await self._run(self._rm_argv(name))
                     await build()
                 if row is None:
                     row = Sandbox(
@@ -487,8 +496,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
                 raise SandboxProviderError(f"no sandbox row for id={sandbox.id}")
-            # `sbx env rm` takes no --auto-approve (live run 2026-10-22: "unknown flag"); only `env create` does.
-            await self._run(["env", "rm", sandbox.name])
+            await self._run(self._rm_argv(sandbox.name))
             row.status = "removed"
             row.closed_at = datetime.now(timezone.utc)
             await session.commit()

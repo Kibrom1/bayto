@@ -148,7 +148,8 @@ async def test_create_removes_a_stale_sandbox_of_the_same_name_and_tries_again(l
     provider = LocalSbxSandboxProvider(live_sessionmaker, runner=runner, provisioner=provisioner)
     info = await provider.create(task_id, name="sbx-stale", seats=SEATS)
     assert attempts == ["sbx-stale", "sbx-stale"]
-    assert ["env", "rm", "sbx-stale"] in runner.calls
+    [rm] = [c for c in runner.calls if c[:2] == ["env", "rm"]]
+    assert rm[2].endswith("sbxenv.yaml") and rm[3:] == ["--env-arg", "name=sbx-stale", "--force"]  # a path, never a bare name
     assert info.status == "running"
 
 
