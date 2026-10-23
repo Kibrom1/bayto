@@ -1,10 +1,10 @@
-# Per-agent models: design and implementation plan
+# Per-agent models and providers: design, implementation plan and priorities
 
 Status: proposal (2026-10-22). Nothing in this document is built yet except what the "What exists" section lists.
 
 ## Goal
 
-Let a person choose which model each agent uses: for example the Architect on a large model, the Tester on a small, cheap one, and (later) the Lawyer on a model that runs locally. Defaults stay as they are, so nobody has to choose.
+Let a person choose which model, and later which provider, each agent uses: for example the Architect on a large model, the Tester on a small, cheap one, and (later) the Lawyer on a model that runs locally. Defaults stay as they are, so nobody has to choose.
 
 ## What exists today
 
@@ -80,6 +80,64 @@ One workable route is an Anthropic-compatible gateway in front of the local mode
 
 Risks to test before promising it: small local models are weak at the tool use the Build roles need, so limit local models to discussion seats at first; latency and context limits differ; and a seat that quietly falls back to a hosted model would defeat the reason for choosing a local one, so a gateway failure should fail the turn loudly.
 
+## Providers (OpenAI, Gemini, others)
+
+Today every agent turn runs through the `claude` command inside the sandbox, so only Claude models work. Choosing a provider means changing what runs a turn, not just a setting. Three routes:
+
+| Route | What it is | Effort | Verdict |
+| --- | --- | --- | --- |
+| A. Gateway | An Anthropic-compatible proxy (LiteLLM, or similar) in front of OpenAI, Gemini or Ollama; a seat's `claude` process is pointed at it | Small | Fastest way to try other providers. Tool use is translated by the gateway, so quality varies. Same design as "Local models" above. |
+| B. Provider adapter for discussion seats | A small interface in the orchestrator, one implementation per provider, used by discussion seats only | Medium | **Recommended.** Discussion turns are mostly text, so they do not need the agent tool loop. |
+| C. Full multi-provider harness incl. Build | Replace the `claude`-based runner everywhere | Large | Not for the pilot. Build relies on the `claude` tool's permission model. |
+
+### Route B in detail
+
+```python
+class Provider(Protocol):
+    id: str                                   # "anthropic" | "openai" | "gemini" | "ollama"
+    async def complete(self, *, model: str, system: str, messages: list[Msg],
+                       max_tokens: int) -> Completion: ...   # text, tokens_in, tokens_out, cost
+
+class Completion(BaseModel):
+    text: str
+    tokens_in: int
+    tokens_out: int
+    cost: float | None        # computed from the catalogue price; None when unknown
+```
+
+- **Where it plugs in.** The catalogue entry gains a `provider` field (default `anthropic`). A seat whose provider is `anthropic` runs exactly as today. A seat with any other provider is run by the orchestrator with `Provider.complete`, and its reply is written to the conversation log as that seat, so the moderator, floor policy, transcript, summary and cost ledger treat it like any other turn. Set `SessionAgent.harness` to the provider id; it is stored today and unused.
+- **What these seats cannot do.** No file or shell tools. A discussion seat's read-only access to the project folder is replaced by the same text copy the attached-context feature already produces, so the seat is told about files as text. Build seats stay Anthropic-only; the setup page says so and the API refuses another provider for a Build seat (`422 provider_not_supported`).
+- **Keys.** Read from environment variables (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `OLLAMA_HOST`) or a local secrets file outside the repository, never from the sandbox, never logged, never in an audit event. `GET /models` lists only providers whose key is present, and marks the others "needs a key" so the choice is visible but not selectable.
+- **Failure.** A missing key, a rejected request or a timeout fails that turn with a plain message in the room. There is no fallback to another provider: a seat quietly answering from a different provider is a worse outcome than a visible failure.
+- **Cost.** The catalogue holds a price per provider and model (input and output per million tokens). The estimate uses it; the dollar cap check works unchanged because turns record real cost. Your Claude subscription covers only Anthropic seats; other providers bill their own account, and the setup page says so.
+- **Privacy.** A seat on another provider sends the conversation, and any attached context, to that provider. The setup page labels each seat with its provider, and a one-time notice appears the first time a non-Anthropic provider is chosen. The audit log records the provider per seat, never the key or the content.
+- **Where the code goes.** `orchestrator/src/orchestrator/providers/` (one module per provider, a registry), the turn dispatch in `api/runtime.py` and the moderator's turn call, `GET /models` extended with provider and key status, the setup select grouped by provider.
+
+### Tests for providers
+
+- A fake provider for unit tests: returns canned text and token counts, to prove turns, cost and the cap check work for a non-Anthropic seat.
+- Missing key, HTTP error and timeout each fail one turn with a clear message and leave the session able to continue.
+- A Build seat with a non-Anthropic provider is refused.
+- Secrets never appear in logs, audit events or API responses (a test greps the captured output for a sentinel key).
+- Live, on a machine with real keys: one three-seat discussion mixing Anthropic and one other provider.
+
+## Priorities
+
+Ordered by value to the pilot against risk and effort. Items above the line are needed before or during the pilot; items below it are improvements that should wait for what the pilot teaches.
+
+| # | Item | Why now | Effort | Depends on |
+| --- | --- | --- | --- | --- |
+| P0 | Real-run checks on a Mac: a real Build with a pull request, context added mid-session, an interrupted session continued | These are the only parts of the pilot never run against real models, GitHub or Docker | Small (manual) | none |
+| P1 | Model catalogue, validation and `GET /models` (steps 1 and 2 of "Rollout order") | Stops typos failing mid-session; unlocks everything below; no migration | Small | none |
+| P1 | Model select per seat in setup, per-seat cost estimate, model shown in the room | Delivers the request that started this document: Architect on a large model, Tester on a small one | Small to medium | the catalogue |
+| P2 | Default model on a custom agent (dialog) | Convenience once seats can be set | Small | the catalogue |
+| P2 | Provider adapter for discussion seats, with OpenAI and Gemini first (Route B) | Real choice of provider with controlled quality; discussion only | Medium | the catalogue, key handling |
+| P3 | Gateway for local models (Route A), only if Route B does not cover the need | Local and self-hosted models | Small to medium | the catalogue |
+| P3 | Per-session synthesis model | Large model writes the result while seats run small | Small | the catalogue |
+| P4 | Providers for Build seats (Route C) | Only if pilot users ask; high risk | Large | everything above |
+
+Reasoning: P0 comes first because every later item changes code that has only been exercised against a fake sandbox, and a failing Build or PR step would change the pilot plan. The catalogue is first among the code items because the picker, the estimate, the agent default and every provider all read it. Providers come after the picker because the picker alone covers the original request (Opus for the Architect, Haiku for the Tester) at much lower risk, and because the pilot will show whether people want other providers at all. Build stays Anthropic-only because its safety depends on the `claude` tool's permission model.
+
 ## Rollout order
 
 1. Catalogue, `GET /models`, validation, audit detail (backend, with tests).
@@ -96,6 +154,9 @@ Steps 1 to 3 are roughly one branch of work and add no migration: `Agent.model` 
 - Live (on a machine with `claude`): one discussion with three different models, checking the model names in `team.tsv` and that each turn's reported model matches.
 
 ## Open questions
+
+- Which providers matter to pilot users first: OpenAI, Gemini, a local model? Ask in the pilot feedback questions before building Route B.
+- Is mixing providers in one discussion wanted, or would people rather pick one provider per session?
 
 - Which model ids and tiers should be offered at launch, and what are their real per-turn costs? The figures above are planning numbers to be replaced with measured ones from real sessions.
 - Should Build lock its roles to a minimum tier?
