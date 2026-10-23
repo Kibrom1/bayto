@@ -65,3 +65,5 @@ After a real session, tell us:
 4. What would make you use it again next week?
 
 If something breaks, send the last 30 lines of `.bayto-run/api.log` and what you clicked.
+
+**For whoever runs the pilot: an in-app feedback link.** Set `BAYTO_FEEDBACK_URL` before starting the orchestrator to show a small "Send feedback" link in the header. It must be an `https://` address (a form, a shared inbox page) or a `mailto:` address; anything else is ignored and a warning is logged. Unset means no link. In a room, an `https` destination receives `?session=<session id>` (only the id, never task text or attachments) so you can match a comment to a session; a `mailto:` link gets only the subject "Bayto pilot feedback". The link opens in a new tab. The app does not store or read what people send there.
