@@ -53,3 +53,10 @@
 .task-row:first-child { border-radius: var(--radius) var(--radius) 0 0; }
 .task-row:last-child { border-radius: 0 0 var(--radius) var(--radius); }
 .empty-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: center; margin: var(--space-3) 0; }
+
+.deep-search { display: flex; gap: var(--space-2); margin-bottom: var(--space-4); }
+.deep-search .input { flex: 1; min-height: 2rem; }
+.deep-results ul { list-style: none; padding: 0; margin: 0 0 var(--space-4); display: grid; gap: var(--space-3); }
+.deep-who { font-size: 0.85em; opacity: 0.75; }
+.deep-snippet { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
+.deep-snippet mark { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; border-radius: 2px; }

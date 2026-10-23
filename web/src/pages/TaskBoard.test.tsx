@@ -201,3 +201,47 @@ describe('TaskBoard', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some(([u, i]) => u === '/tasks' && (i as RequestInit | undefined)?.method === 'POST')).toBe(true))
   })
 })
+
+describe('TaskBoard transcript search', () => {
+  it('searches past discussions, shows snippets as text with the match marked, and links to the room', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(TASKS)).mockResolvedValueOnce(jsonResponse({
+      query: 'indemnity',
+      results: [{ task_id: 't1', task_title: 'Write a launch memo', session_id: 's9', message_id: 'm1', speaker: 'lawyer',
+        kind: 'answer', snippet: 'push for <img src=x> [[indemnity]] limits', created_at: null, rank: 1 }],
+    }))
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByText('Review the pricing page')
+    await userEvent.type(screen.getByRole('searchbox', { name: /search past discussions/i }), 'indemnity')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    const results = await screen.findByRole('region', { name: /search results/i })
+    expect(results.querySelector('mark')?.textContent).toBe('indemnity')
+    expect(results.querySelector('img')).toBeNull()
+    expect(results).toHaveTextContent('<img src=x>')
+    expect(screen.getAllByRole('link', { name: 'Write a launch memo' }).some((a) => a.getAttribute('href') === '/room/s9')).toBe(true)
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe('/search?q=indemnity')
+  })
+
+  it('does not call the server for a too-short query, and shows a server error', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(TASKS))
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByText('Review the pricing page')
+    const box = screen.getByRole('searchbox', { name: /search past discussions/i })
+    await userEvent.type(box, 'a')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/at least 2/i)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ detail: 'boom' }, { status: 500 }))
+    await userEvent.type(box, 'b')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/boom/))
+  })
+
+  it('says so when nothing matches', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(TASKS)).mockResolvedValueOnce(jsonResponse({ query: 'zz', results: [] }))
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByText('Review the pricing page')
+    await userEvent.type(screen.getByRole('searchbox', { name: /search past discussions/i }), 'zzz')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    expect(await screen.findByText(/no past discussion matches/i)).toBeInTheDocument()
+  })
+})

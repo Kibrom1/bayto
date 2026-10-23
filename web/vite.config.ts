@@ -14,6 +14,7 @@ export default defineConfig({
       '/models': 'http://127.0.0.1:8000',
       '/app-config': 'http://127.0.0.1:8000',
       '/auth': 'http://127.0.0.1:8000',
+      '/search': 'http://127.0.0.1:8000',
       '/control': {
         target: 'http://127.0.0.1:8787',
         rewrite: (path) => path.replace(/^\/control/, ''),

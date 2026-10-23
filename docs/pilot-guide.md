@@ -56,6 +56,7 @@ Build mode works on a repository you choose, on its own branch. A test command i
 - **Attached links** must be public web pages.
 - **Exposing the port beyond localhost.** By default Bayto has no sign-in and is meant for your own machine. If you must reach it from elsewhere, set `BAYTO_API_TOKEN` (a long random string) before starting the orchestrator: every route except `/healthz`, `/app-config` and `/auth/login` then needs `Authorization: Bearer <token>` or the session cookie the web app's sign-in page sets. This is one shared secret, not user accounts, and **not a replacement for a proper reverse proxy**. You still need TLS in front (without it the token and cookie travel in clear text) and should keep `BAYTO_ALLOWED_HOSTS` set to your host name. Failed sign-ins are slowed down, and the token is never passed to the programs Bayto starts.
 
+- **Search past discussions** on the task list finds words in earlier answers and syntheses (not attachments, private notes or archived sessions). Results open the room; they do not scroll to the message.
 ## 5. What we would like to hear
 
 After a real session, tell us:
