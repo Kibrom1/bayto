@@ -59,6 +59,7 @@ from ..models import Message as MessageRow
 from ..models import Session as SessionRow
 from ..models import SessionAgent, Task, TaskAttachment, Turn
 from ..models_catalog import get_model
+from ..recall import MAX_MESSAGES_SCANNED, MAX_SYNTHESES_SCANNED, RECALL_KINDS, SUMMARY_CHARS, Source, recall_block, synthesis_text
 from ..providers import ProviderError, provider_for, split_model_id
 from ..providers.gateway import gateway_env, gateway_model_name
 from ..pubsub import PubSub
@@ -948,6 +949,34 @@ class ModeratorRunner:
         lines.append("")
         return "\n".join(lines)
 
+    async def _recall_query(self, task_text: str, summary: str | None) -> str | None:
+        """What the seat about to speak is working on (same query as for attachments); None when no seat is known."""
+        if not self._grant_seat:
+            return None
+        async with self._sessionmaker() as session:
+            task = await session.scalar(
+                select(Task).join(SessionRow, SessionRow.task_id == Task.id).where(SessionRow.id == self._session_id))
+        return await self._attachment_query(task, summary) if task is not None else None
+
+    async def _recall_sources(self, session, task_id) -> list[Source]:
+        """Earlier sessions' shared messages (answers and assignments) and syntheses, newest first, capped. Only
+        non-archived sessions of this task; only messages everyone could read (visibility "all"), so a private note
+        is never quoted to another seat. Message bodies hold no attachment text, so a role-restricted attachment
+        cannot come back through here beyond what a seat said in the shared transcript."""
+        earlier = (SessionRow.task_id == task_id, SessionRow.id != self._session_id, SessionRow.archived_at.is_(None))
+        msgs = (await session.execute(
+            select(MessageRow.from_, MessageRow.kind, MessageRow.body, SessionRow.started_at)
+            .join(SessionRow, SessionRow.id == MessageRow.session_id)
+            .where(*earlier, MessageRow.kind.in_(RECALL_KINDS), MessageRow.visibility == "all")
+            .order_by(MessageRow.created_at.desc()).limit(MAX_MESSAGES_SCANNED))).all()
+        syntheses = (await session.execute(
+            select(Artifact.content_json, SessionRow.started_at)
+            .join(SessionRow, SessionRow.id == Artifact.session_id)
+            .where(*earlier, Artifact.type == "synthesis")
+            .order_by(SessionRow.started_at.desc().nulls_last()).limit(MAX_SYNTHESES_SCANNED))).all()
+        return ([Source(w, f, k, b) for f, k, b, w in msgs if b and b.strip()]
+                + [Source(w, "synthesis", "synthesis", synthesis_text(c)) for c, w in syntheses])
+
     async def _build_context(self, view: ConversationView) -> str:
         task_text = await self._task_text()
         async with self._sessionmaker() as session:
@@ -962,7 +991,9 @@ class ModeratorRunner:
                        SessionRow.archived_at.is_(None))
                 .order_by(SessionRow.started_at.desc())
             )).all()
-            prev_summaries = [f"Session {s.id}: {s.rolling_summary}" for s in prev_sessions if s.rolling_summary]
+            prev_summaries = [f"Session {s.id}: {s.rolling_summary[:SUMMARY_CHARS]}" for s in prev_sessions if s.rolling_summary]
+            # Passages of those same sessions (never another task's, never an archived one's) that match this seat.
+            recall_sources = await self._recall_sources(session, row.task_id)
             if self._pipeline:
                 # "Continue as Build": an earlier discussion's final synthesis is the brief to build from
                 # (the rolling summary alone drops the decision and the dissent).
@@ -972,6 +1003,10 @@ class ModeratorRunner:
                            SessionRow.archived_at.is_(None), Artifact.type == "synthesis").order_by(SessionRow.started_at.desc())
                 )).scalars().all()
                 prev_summaries += [f"Earlier synthesis: {json.dumps(c)[:6000]}" for c in earlier]
+                recall_sources = [s for s in recall_sources if s.kind != "synthesis"]  # already given whole above
+        recalled = recall_block(recall_sources, await self._recall_query(task_text, summary))
+        if recalled:
+            prev_summaries.append(recalled)
 
         if self._pipeline:
             return self._pipeline_context(task_text, summary, prev_summaries, view)
