@@ -11,6 +11,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .child_env import child_env
+
 # A branch name is passed to git as an argument, so keep it to a conservative character set and
 # never let it start with "-" (option injection) or contain ".." / "@{" (revision syntax).
 _BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -32,7 +34,7 @@ class WorkspaceReport:
 
 
 def _git(repo: str, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT)
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=GIT_TIMEOUT, env=child_env())
 
 
 def preflight_workspace(repo_path: str, base_branch: str) -> WorkspaceReport:
