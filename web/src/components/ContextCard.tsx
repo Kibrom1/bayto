@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
   attachFile, attachFolder, attachUrl, listAttachments, removeAttachment, setAttachmentRoles, type Attachment,
 } from '../api/attachments'
+import { RolePicker } from './RolePicker'
 
 const KIND_LABEL = { file: 'File', folder: 'Folder', url: 'Link' } as const
 // What one turn can carry for all attachments together; mirrors the orchestrator's cap.
@@ -26,6 +27,9 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
   const [value, setValue] = useState('')
   const [picking, setPicking] = useState<string | null>(null) // the attachment whose visibility is open
   const [chosen, setChosen] = useState<Set<string>>(new Set()) // attachments set to "chosen roles" before any role is ticked
+  const [openWho, setOpenWho] = useState(false) // the "who can read what I add next" picker
+  const [newRoles, setNewRoles] = useState<string[] | null>(null) // null: everyone
+  const [newChosen, setNewChosen] = useState(false) // "Only chosen roles" picked, nothing ticked yet
   const fileRef = useRef<HTMLInputElement>(null)
   const inputId = useId()
 
@@ -33,14 +37,25 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
     listAttachments(taskId).then((list) => setItems(Array.isArray(list) ? list : [])).catch((e) => { setItems([]); setError(e instanceof Error ? e.message : String(e)) })
   }, [taskId])
 
-  async function run(job: () => Promise<Attachment>) {
+  // The roles to send with an add: none for Everyone. "Only chosen roles" with nothing ticked is refused here
+  // (the API would answer 422 roles_invalid) so nothing is added by mistake.
+  function rolesForAdd(): { roles: string[] | null } | null {
+    if (newChosen && !newRoles?.length) { setError('Tick at least one role, or choose Everyone.'); setOpenWho(true); return null }
+    return { roles: newRoles?.length ? newRoles : null }
+  }
+
+  function resetWho() { setNewRoles(null); setNewChosen(false); setOpenWho(false) }
+
+  async function run(job: () => Promise<Attachment>): Promise<boolean> {
     setBusy(true); setError(null)
     try {
       const made = await job()
       setItems((cur) => [...(cur ?? []), made])
       setAdding(null); setValue('')
+      return true
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      return false
     } finally {
       setBusy(false)
     }
@@ -49,14 +64,25 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
   async function onFiles(files: FileList | null) {
     const list = Array.from(files ?? [])
     if (fileRef.current) fileRef.current.value = ''
-    for (const f of list) await run(() => attachFile(taskId, f, sessionId))
+    const who = rolesForAdd()
+    if (!who || list.length === 0) return
+    let all = true
+    for (const f of list) all = (await run(() => attachFile(taskId, f, sessionId, who.roles))) && all
+    if (all) resetWho()
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault()
     const v = value.trim()
     if (!v) return
-    run(() => (adding === 'folder' ? attachFolder(taskId, v, sessionId) : attachUrl(taskId, v, sessionId)))
+    const who = rolesForAdd()
+    if (!who) return
+    if (await run(() => (adding === 'folder' ? attachFolder(taskId, v, sessionId, who.roles) : attachUrl(taskId, v, sessionId, who.roles)))) resetWho()
+  }
+
+  function toggleNewRole(role: string) {
+    setError(null)
+    setNewRoles((cur) => { const now = cur ?? []; return now.includes(role) ? now.filter((r) => r !== role) : [...now, role] })
   }
 
   async function remove(a: Attachment) {
@@ -109,16 +135,8 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
               </button>
               <button type="button" className="link-btn" aria-label={`Remove ${a.name}`} onClick={() => remove(a)}>Remove</button>
               {picking === a.id && (
-                <fieldset className="context-who">
-                  <legend>Who can read {a.name}</legend>
-                  <label><input type="radio" name={`who-${a.id}`} checked={!a.roles && !chosen.has(a.id)} onChange={() => setRoles(a, null)} /> Everyone</label>
-                  <label><input type="radio" name={`who-${a.id}`} checked={!!a.roles || chosen.has(a.id)}
-                    onChange={() => setChosen((cur) => new Set(cur).add(a.id))} /> Only chosen roles</label>
-                  {(a.roles || chosen.has(a.id)) && [...new Set([...roles, ...(a.roles ?? [])])].map((r) => (
-                    <label key={r} className="context-role"><input type="checkbox" checked={a.roles?.includes(r) ?? false} onChange={() => toggleRole(a, r)} /> {r}</label>
-                  ))}
-                  <span className="hint">Agents without access are not shown it at all, and are not told it exists. Anything an agent has already said in the discussion stays visible to the others.</span>
-                </fieldset>
+                <RolePicker name={`who-${a.id}`} legend={`Who can read ${a.name}`} roles={roles} value={a.roles ?? null} chosen={chosen.has(a.id)}
+                  onEveryone={() => setRoles(a, null)} onChoose={() => setChosen((cur) => new Set(cur).add(a.id))} onToggle={(r) => toggleRole(a, r)} />
               )}
             </li>
           ))}
@@ -131,6 +149,14 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
         <button type="button" className="btn sm" disabled={busy} aria-expanded={adding === 'folder'} onClick={() => { setAdding(adding === 'folder' ? null : 'folder'); setValue(''); setError(null) }}>Add folder</button>
         <button type="button" className="btn sm" disabled={busy} aria-expanded={adding === 'url'} onClick={() => { setAdding(adding === 'url' ? null : 'url'); setValue(''); setError(null) }}>Add link</button>
       </div>
+
+      <button type="button" className="link-btn" aria-expanded={openWho} onClick={() => setOpenWho(!openWho)}>
+        {newRoles?.length ? `New items: only ${newRoles.join(', ')}` : newChosen ? 'New items: only chosen roles' : 'New items: everyone can read'}
+      </button>
+      {openWho && (
+        <RolePicker name="who-new" legend="Who can read what you add next" roles={roles} value={newRoles?.length ? newRoles : null} chosen={newChosen}
+          onEveryone={() => { setNewRoles(null); setNewChosen(false); setError(null) }} onChoose={() => setNewChosen(true)} onToggle={toggleNewRole} />
+      )}
 
       {adding && (
         <form className="context-add" onSubmit={submit}>

@@ -30,18 +30,21 @@ export const listAttachments = (taskId: string) =>
 const room = (sessionId: string) => (sessionId ? `&session_id=${encodeURIComponent(sessionId)}` : '')
 const roomOnly = (sessionId: string) => (sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '')
 
-export const attachFile = (taskId: string, file: File, sessionId: string) =>
-  fetch(`/tasks/${taskId}/attachments/file?name=${encodeURIComponent(file.name)}${room(sessionId)}`, {
+// `roles` limits who can read it from the start (omit for everyone); sent only when given.
+const roleParams = (roles?: string[] | null) => (roles ? roles.map((r) => `&roles=${encodeURIComponent(r)}`).join('') : '')
+
+export const attachFile = (taskId: string, file: File, sessionId: string, roles?: string[] | null) =>
+  fetch(`/tasks/${taskId}/attachments/file?name=${encodeURIComponent(file.name)}${room(sessionId)}${roleParams(roles)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/octet-stream' },
     body: file,
   }).then((r) => ok<Attachment>(r))
 
-export const attachFolder = (taskId: string, path: string, sessionId: string) =>
-  fetch(`/tasks/${taskId}/attachments/folder${roomOnly(sessionId)}`, json({ path })).then((r) => ok<Attachment>(r))
+export const attachFolder = (taskId: string, path: string, sessionId: string, roles?: string[] | null) =>
+  fetch(`/tasks/${taskId}/attachments/folder${roomOnly(sessionId)}`, json(roles ? { path, roles } : { path })).then((r) => ok<Attachment>(r))
 
-export const attachUrl = (taskId: string, url: string, sessionId: string) =>
-  fetch(`/tasks/${taskId}/attachments/url${roomOnly(sessionId)}`, json({ url })).then((r) => ok<Attachment>(r))
+export const attachUrl = (taskId: string, url: string, sessionId: string, roles?: string[] | null) =>
+  fetch(`/tasks/${taskId}/attachments/url${roomOnly(sessionId)}`, json(roles ? { url, roles } : { url })).then((r) => ok<Attachment>(r))
 
 export const removeAttachment = (taskId: string, id: string, sessionId: string) =>
   fetch(`/tasks/${taskId}/attachments/${id}${roomOnly(sessionId)}`, { method: 'DELETE' }).then((r) => ok<null>(r))

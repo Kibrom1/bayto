@@ -315,6 +315,22 @@ async def _put_roles(c, tid, roles):
                        headers={"content-type": "application/octet-stream"})
 
 
+async def test_folder_and_link_can_be_restricted_when_they_are_created(live_sessionmaker, monkeypatch, tmp_path):
+    async def fake_fetch(url):
+        return "Vendor terms", "Data stays in the EU.", False
+    monkeypatch.setattr(cx, "fetch_url", fake_fetch)
+    role = f"lawyer{uuid.uuid4().hex[:5]}"
+    await _agent(role)
+    make_tree(tmp_path / "proj")
+    async with _client() as c:
+        tid = await _task(c)
+        f = await c.post(f"/tasks/{tid}/attachments/folder", json={"path": str(tmp_path / "proj"), "roles": [role]})
+        u = await c.post(f"/tasks/{tid}/attachments/url", json={"url": "https://example.com/terms", "roles": [role]})
+        assert f.status_code == 201 and f.json()["roles"] == [role]
+        assert u.status_code == 201 and u.json()["roles"] == [role]
+        assert sorted(a["roles"][0] for a in (await c.get(f"/tasks/{tid}/attachments")).json()) == [role, role]
+
+
 async def test_bad_roles_are_refused_and_nothing_is_stored(live_sessionmaker):
     good = f"dev{uuid.uuid4().hex[:5]}"
     await _agent(good)

@@ -63,7 +63,7 @@
 .context-who legend { font-size: 0.85rem; padding: 0 0.25rem; }
 .context-role { padding-left: 1.4rem; }
 .context-list .muted { margin-left: auto; white-space: nowrap; font-size: 0.85rem; }
-.context-list .link-btn, .context-actions + .context-add .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; text-decoration: underline; color: var(--ink-2, var(--ink)); cursor: pointer; }
+.context-list .link-btn, .context-actions + .context-add .link-btn, .context-actions ~ .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; text-decoration: underline; color: var(--ink-2, var(--ink)); cursor: pointer; }
 .context-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .context-add { margin-top: var(--space-3); display: grid; gap: 0.3rem; }
 .context-add label { font-size: 0.9rem; font-weight: 600; }
