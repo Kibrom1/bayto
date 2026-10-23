@@ -8,7 +8,7 @@ from orchestrator.models import Base, Message, Report
 def test_all_expected_tables_present():
     assert set(Base.metadata.tables) == {
         "task", "agent", "mode", "session", "session_agent", "sandbox", "turn", "artifact",
-        "message", "report", "usage_ledger", "task_attachment",
+        "message", "report", "usage_ledger", "task_attachment", "attachment_chunk_vec",
     }
 
 

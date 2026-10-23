@@ -9,6 +9,7 @@ function json(body: unknown, status = 200) {
 const NOTES = { id: 'a1', kind: 'file', name: 'notes.md', source: null, chars: 1200, truncated: false, created_at: '2026-10-21T00:00:00Z' }
 
 let items: any[]
+let retrieval: any = { semantic_retrieval: false, ready: true, provider: 'openai', model: 'text-embedding-3-small', needs: null }
 let calls: { method: string; url: string; body?: any }[]
 
 function mockApi(refuse?: { url: string; detail: string }) {
@@ -23,6 +24,10 @@ function mockApi(refuse?: { url: string; detail: string }) {
     if (url.includes('/attachments/file')) { const a = { ...NOTES, id: 'f' + items.length, name: 'notes.md' }; items = [...items, a]; return json(a, 201) }
     if (url.includes('/attachments/folder')) { const a = { ...NOTES, id: 'd1', kind: 'folder', name: 'docs', source: '/p/docs', chars: 30000 }; items = [...items, a]; return json(a, 201) }
     if (url.includes('/attachments/url')) { const a = { ...NOTES, id: 'u1', kind: 'url', name: 'Vendor terms', source: 'https://e.com', chars: 800 }; items = [...items, a]; return json(a, 201) }
+    if (url.endsWith('/tasks/t1/retrieval')) {
+      if (method === 'PUT') retrieval = { ...retrieval, semantic_retrieval: JSON.parse(String(init?.body)).semantic_retrieval }
+      return json(retrieval)
+    }
     if (method === 'PATCH') { const id = url.split('/attachments/')[1].split('?')[0]; const roles = JSON.parse(String(init?.body)).roles; items = items.map((a) => (a.id === id ? { ...a, roles } : a)); return json(items.find((a) => a.id === id)) }
     if (method === 'DELETE') { items = items.filter((a) => !url.includes('/' + a.id)); return new Response(null, { status: 204 }) }
     return json({ detail: 'nope' }, 404)
@@ -235,5 +240,26 @@ describe('ContextCard who can read, when adding', () => {
     await user.click(screen.getByRole('button', { name: /^add$/i }))
     await screen.findByText('Vendor terms')
     expect(calls.find((c) => c.url.includes('/attachments/url'))!.body).toEqual({ url: 'https://e.com', roles: ['lawyer'] })
+  })
+})
+
+describe('ContextCard semantic search switch', () => {
+  it('says what turning it on sends out, and saves the choice', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    render(<ContextCard taskId="t1" sessionId="s1" />)
+    const box = await screen.findByLabelText(/find passages by meaning \(sends your documents' text to an embedding provider\)/i)
+    expect(box).not.toBeChecked()
+    await user.click(box)
+    await waitFor(() => expect(box).toBeChecked())
+    expect(calls.find((c) => c.method === 'PUT' && c.url.endsWith('/retrieval'))?.body).toEqual({ semantic_retrieval: true })
+  })
+
+  it('tells you what to set when no embedding provider is configured', async () => {
+    mockApi()
+    retrieval = { semantic_retrieval: false, ready: false, provider: null, model: null, needs: 'OPENAI_API_KEY or OLLAMA_HOST' }
+    render(<ContextCard taskId="t1" sessionId="s1" />)
+    expect(await screen.findByText(/set OPENAI_API_KEY or OLLAMA_HOST on the orchestrator/)).toBeInTheDocument()
+    retrieval = { semantic_retrieval: false, ready: true, provider: 'openai', model: 'text-embedding-3-small', needs: null }
   })
 })

@@ -43,10 +43,11 @@ def _block(a: _Attachment, body: str, excerpt: str = "") -> str:
     return f'<attachment kind="{a.kind}" name="{_label(a.name)}"{where}{excerpt}>\n{_safe(body)}\n</attachment>'
 
 
-def _excerpts(items: list[_Attachment], budget: int, query: str) -> list[str] | None:
+def _excerpts(items: list[_Attachment], budget: int, query: str,
+              semantic: list[list[float]] | None = None) -> list[str] | None:
     """Blocks made of the best-matching chunks of each attachment, or None when nothing in them matches the
     query (the caller then cuts at the head, as before). Small attachments go in whole; the rest share what is left."""
-    ranked = rank([a.content for a in items], query)
+    ranked = rank([a.content for a in items], query, semantic)
     if not any(c.score > 0 for group in ranked for c in group):
         return None
     left = budget - sum(len(a.content) for a in items if len(a.content) <= WHOLE_BELOW)
@@ -92,16 +93,19 @@ def visible_to(attachments: Iterable[_Attachment], seat: str | None) -> list[_At
 
 
 def attachment_prompt(attachments: Iterable[_Attachment], budget: int = PROMPT_BUDGET_CHARS, query: str | None = None,
-                      seat: str | None = None) -> str:
+                      seat: str | None = None, semantic: list[list[float]] | None = None) -> str:
     """`query` is what this seat is about to work on. When everything fits it changes nothing; when it does not,
     the parts of each attachment that match the query are shown instead of just the start.
     `seat` is the role about to speak: attachments it may not see are dropped first, before ranking and before
-    the budget is shared, so they leave no trace (not in the excerpts, not in "Not shown")."""
+    the budget is shared, so they leave no trace (not in the excerpts, not in "Not shown").
+    `semantic` is the optional precomputed cosine similarity of each chunk to the query (semantic.py computes it, async,
+    for the attachments this seat may read). It must be shaped like those visible attachments' chunks; a shape that
+    does not fit is ignored and ranking is by keyword alone."""
     items = visible_to(attachments, seat)
     if not items:
         return ""
     if query and sum(len(a.content) for a in items) > budget:
-        picked = _excerpts(items, budget, query)
+        picked = _excerpts(items, budget, query, semantic)
         if picked is not None:
             return "\n\n".join([HEADER, *picked, "Only the parts most relevant to your role and the current discussion are "
                                    "shown, marked […]. Ask the moderator if you need another part."])

@@ -3,8 +3,11 @@
 Attachments are cut to a shared character budget (attachment_prompt.py). Cutting each one at the head means a
 seat never sees the clause or function it was asked about if it sits late in a long file. Here the attachment is
 split into chunks and ranked against a query (the seat's brief, the task and the latest discussion) with BM25, a
-plain keyword score. No embeddings and no database: attachments are capped at 100,000 characters, so ranking at
-prompt time is cheap, and nothing needs re-indexing when an attachment changes.
+plain keyword score. By default there are no embeddings and no database: attachments are capped at 100,000
+characters, so ranking at prompt time is cheap, and nothing needs re-indexing when an attachment changes.
+
+A task can opt in to a semantic stage (semantic.py). It hands `rank` the cosine similarity of each chunk to the query,
+and the score becomes a hybrid of the two (see HYBRID_*). `rank` itself stays synchronous and does no I/O.
 """
 from __future__ import annotations
 
@@ -18,6 +21,15 @@ _WORD = re.compile(r"[a-z0-9_]{3,}")
 _STOP = frozenset("""the and for are but not you all can had her was one our out has have this that with from they been
 their there would about which when what will your into than then them these those also each more most some such only
 over very just should could must may might shall any how why who its his she him did does done being were while""".split())
+
+
+# Hybrid score = KEYWORD_WEIGHT * (BM25 / best BM25) + SEMANTIC_WEIGHT * (cosine scaled to 0..1 across the candidate
+# chunks: the least similar chunk is 0, the most similar 1). Both parts are 0..1, so the weights mean what they say.
+# Semantic leads because the point of the stage is the passage that shares no words with the query; BM25 still counts
+# so an exact term (a clause number, a function name) is not drowned out by a vague similarity. Plain constants,
+# not tuned on data: they have only been exercised with fake vectors (docs/decisions.md).
+KEYWORD_WEIGHT = 0.4
+SEMANTIC_WEIGHT = 0.6
 
 
 @dataclass(frozen=True)
@@ -51,8 +63,10 @@ def split_chunks(text: str, size: int = CHUNK_CHARS) -> list[str]:
     return [c for c in chunks if c.strip()]
 
 
-def rank(texts: list[str], query: str) -> list[list[Chunk]]:
-    """Chunks of each text, scored against the query. Same shape as `texts`; scores are 0 when nothing matches."""
+def rank(texts: list[str], query: str, semantic: list[list[float]] | None = None) -> list[list[Chunk]]:
+    """Chunks of each text, scored against the query. Same shape as `texts`; scores are 0 when nothing matches.
+    `semantic`, when given, is the cosine similarity of every chunk to the query, shaped like the result (one list per
+    text, one number per chunk). A wrong shape is ignored, never trusted: the keyword score alone is used."""
     q = Counter(tokens(query))
     pieces = [[(i, c) for i, c in enumerate(split_chunks(t))] for t in texts]
     docs = [(a, i, c, tokens(c)) for a, group in enumerate(pieces) for i, c in group]
@@ -67,4 +81,16 @@ def rank(texts: list[str], query: str) -> list[list[Chunk]]:
                 idf = math.log(1 + (n - df[w] + 0.5) / (df[w] + 0.5))
                 score += idf * tf[w] * 2.2 / (tf[w] + 1.2 * (0.25 + 0.75 * len(toks) / avg))
         out[a].append(Chunk(a, i, c, score))
+    if semantic is not None and [len(g) for g in out] == [len(g) for g in semantic]:
+        return _hybrid(out, semantic)
     return out
+
+
+def _hybrid(ranked: list[list[Chunk]], semantic: list[list[float]]) -> list[list[Chunk]]:
+    best = max((c.score for g in ranked for c in g), default=0.0)
+    flat = [v for g in semantic for v in g]
+    low, span = (min(flat), max(flat) - min(flat)) if flat else (0.0, 0.0)
+    return [[Chunk(c.attachment, c.ordinal, c.text,
+                   KEYWORD_WEIGHT * (c.score / best if best > 0 else 0.0)
+                   + SEMANTIC_WEIGHT * ((semantic[a][i] - low) / span if span > 1e-9 else 0.0))
+             for i, c in enumerate(group)] for a, group in enumerate(ranked)]
