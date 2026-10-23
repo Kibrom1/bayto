@@ -3,6 +3,7 @@
 below need no DB; the POST /sessions tests need `live_sessionmaker` (real Postgres) and
 skip cleanly when none is reachable, same as the rest of this suite (see conftest.py).
 """
+import uuid
 from pathlib import Path
 
 import httpx
@@ -116,6 +117,26 @@ async def test_create_session_accepts_a_null_or_omitted_model(live_sessionmaker,
     assert resp.status_code == 201, resp.text
     models = {sa["agent_id"]: sa["model"] for sa in resp.json()["session_agents"]}
     assert models[str(agent_ids[0])] is None and models[str(agent_ids[1])] is None
+
+
+async def test_create_session_audits_each_seats_resolved_model(live_sessionmaker, monkeypatch, span_exporter):
+    from audit_helpers import audit_events
+
+    monkeypatch.setenv("BAYTO_MODES_DIR", str(FIXTURES))
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    async with _client() as client:
+        resp = await client.post("/sessions", json={
+            "task_id": str(task_id), "mode_id": str(mode_id),
+            "roster": [{"agent_id": str(agent_ids[0]), "model": "claude-opus-5-5"},
+                       {"agent_id": str(agent_ids[1]), "model": None}],
+        })
+    assert resp.status_code == 201, resp.text
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+
+    [created] = audit_events(span_exporter, session_id=session_id, action="session.created")
+    models = {row["agent_id"]: row["model"] for row in created.detail["roster"]}
+    assert models[str(agent_ids[0])] == "claude-opus-5-5"
+    assert models[str(agent_ids[1])] is None
 
 
 async def test_create_session_rejects_an_unknown_model(live_sessionmaker, monkeypatch):

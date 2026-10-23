@@ -178,7 +178,8 @@ async def create_session(
             db.add(sa)
             session_agents.append(sa)
             roster_log.append({"agent_id": str(entry.agent_id), "name": agent_row.name, "role": agent_row.role,
-                               "version": agent_row.version, "kind": agent_row.kind})
+                               "version": agent_row.version, "kind": agent_row.kind,
+                               "model": sa.model or agent_row.model})
 
         audit.emit(action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
                            task_id=req.task_id, session_id=session_row.id, subject_type="session", subject_id=session_row.id,
