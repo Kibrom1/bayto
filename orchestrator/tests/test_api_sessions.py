@@ -1227,3 +1227,25 @@ async def test_a_build_roster_must_have_all_four_roles(client, live_sessionmaker
     assert "tester" in err["detail"] and "reviewer" in err["detail"]
     full = await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id), "roster": seats(agent_ids)})
     assert full.status_code == 201
+
+
+async def test_a_provider_seat_that_fails_after_retries_pauses_for_a_human_instead_of_crashing(client, live_sessionmaker, tmp_path, monkeypatch):
+    from orchestrator.providers import ProviderError
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    monkeypatch.setenv("BAYTO_EXTRA_MODELS", "openai/gpt-x:GPT X:small:0.05")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    asked = []
+
+    class _Down:
+        async def complete(self, **kw):
+            asked.append(1)
+            raise ProviderError("openai answered 503: overloaded (gave up after 3 attempts)")
+
+    monkeypatch.setattr("orchestrator.moderator.runner.provider_for", lambda pid: _Down())
+    resp = await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id),
+                                                "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0, "model": "openai/gpt-x"}]})
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    _wire_fakes(FakeSandboxProvider(on_wake=lambda role: None))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "needs_human", timeout=10.0)
+    assert asked == [1]  # one turn attempt (retries live inside the adapter), no re-ask on another path

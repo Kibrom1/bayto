@@ -25,6 +25,8 @@
   --warn-soft: #fff1cc;
   --danger: #a82a40;
   --danger-soft: #fde5e9;
+  --jump-bg: #12152e;   /* the room's "Jump to latest" pill; contrast is checked in jumpContrast.test.ts */
+  --jump-ink: #ffffff;
 
   --radius: 10px;
   --radius-sm: 8px;
@@ -72,6 +74,8 @@
     --warn-soft: #3a2c0b;
     --danger: #ff9aa8;
     --danger-soft: #3d1a22;
+    --jump-bg: #f5b301;
+    --jump-ink: #12152e;
     --shadow: none;
   }
 }
