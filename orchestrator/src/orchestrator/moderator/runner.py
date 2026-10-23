@@ -216,6 +216,7 @@ class ModeratorRunner:
         self._consecutive_quiet_rounds = 0
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
+        self._grant_seat: str | None = None  # whose turn it is; picks which parts of long attachments to show
         self._grant_notes = ""  # human notes this grant's prompt carries; set once per grant (see _human_notes_for)
         # M2.12: phase machine state
         self._current_phase_index = 0
@@ -652,6 +653,7 @@ class ModeratorRunner:
                 await self._mirror_sync()
             except Exception:
                 log.exception("session %s: mirror sync before a grant failed; continuing", self._session_id)
+        self._grant_seat = participant
         self._grant_notes = await self._human_notes_for(participant)
         context = await self._build_context(view)
         await self._conversation.send(sender=self._mode.moderator or "moderator", to=[participant],
@@ -852,8 +854,22 @@ class ModeratorRunner:
                 select(TaskAttachment).where(TaskAttachment.task_id == task.id)
                 .order_by(TaskAttachment.created_at))).scalars().all()
         if attachments:
-            lines.append(attachment_prompt(attachments))
+            lines.append(attachment_prompt(attachments, query=await self._attachment_query(task, row.rolling_summary)))
         return "\n".join(lines)
+
+    async def _attachment_query(self, task, summary: str | None) -> str | None:
+        """What the seat about to speak is working on: its own brief, the task, and the discussion so far. Used only
+        to choose which parts of long attachments to show, so a seat reading a contract sees the clauses its role
+        cares about. None (show the start of each, as before) when no seat is known."""
+        if not self._grant_seat:
+            return None
+        async with self._sessionmaker() as session:
+            agent = (await session.execute(
+                select(Agent.stance, Agent.system_prompt)
+                .join(SessionAgent, Agent.id == SessionAgent.agent_id)
+                .where(SessionAgent.session_id == self._session_id, Agent.role == self._grant_seat))).first()
+        parts = [task.title, task.brief or "", task.success_criteria or "", summary or "", *(agent or ())]
+        return " ".join(p for p in parts if p)
 
     async def _human_notes_for(self, participant: str) -> str:
         """What the human said since `participant` was last given the floor, as a prompt block ('' if nothing).
