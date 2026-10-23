@@ -50,7 +50,7 @@ class SynthesisResult(BaseModel):
 
 class Synthesizer(Protocol):
     async def synthesize(self, view: ConversationView, summary: str, all_turns: list[TurnSummary],
-                          synthesis_prompt_hint: str | None = None) -> SynthesisResult: ...
+                          synthesis_prompt_hint: str | None = None, model: str | None = None) -> SynthesisResult: ...
 
 
 class SynthesizerError(RuntimeError):
@@ -109,7 +109,8 @@ class AnthropicSynthesizer:
         self._client = client or AsyncAnthropic()
 
     async def synthesize(self, view: ConversationView, summary: str, all_turns: list[TurnSummary],
-                          synthesis_prompt_hint: str | None = None) -> SynthesisResult:
+                          synthesis_prompt_hint: str | None = None, model: str | None = None) -> SynthesisResult:
+        model = model or self._model  # a session may pick its own writer; otherwise the app-wide model
         with tracer.start_as_current_span(
             "moderator.synthesize", attributes={"bayto.session_id": str(view.session_id)}
         ) as span:
@@ -117,14 +118,14 @@ class AnthropicSynthesizer:
             if synthesis_prompt_hint:
                 system = f"{system} {synthesis_prompt_hint}"
             response = await self._client.messages.create(
-                model=self._model,
+                model=model,
                 max_tokens=4096,
                 system=system,
                 messages=[{"role": "user", "content": _user_content(view, summary, all_turns)}],
                 tools=[_tool_definition()],
                 tool_choice={"type": "tool", "name": TOOL_NAME},
             )
-            span.set_attribute("gen_ai.request.model", self._model)
+            span.set_attribute("gen_ai.request.model", model)
             if getattr(response, "usage", None) is not None:
                 span.set_attribute("gen_ai.usage.input_tokens", response.usage.input_tokens)
                 span.set_attribute("gen_ai.usage.output_tokens", response.usage.output_tokens)
@@ -136,7 +137,9 @@ class FakeSynthesizer:
 
     def __init__(self, result: SynthesisResult) -> None:
         self._result = result
+        self.models: list[str | None] = []  # the per-session model each call asked for (tests read this)
 
     async def synthesize(self, view: ConversationView, summary: str, all_turns: list[TurnSummary],
-                          synthesis_prompt_hint: str | None = None) -> SynthesisResult:
+                          synthesis_prompt_hint: str | None = None, model: str | None = None) -> SynthesisResult:
+        self.models.append(model)
         return self._result

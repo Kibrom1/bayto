@@ -107,3 +107,6 @@ A seat can run on a model other than its agent's default (setup page select, sen
 
 ## 2026-10-23: failure reasons are stored; child programs get no OTEL variables
 A failed session's reason is now saved on the session row (`failure_reason`, migration `a7b8c9d0e1f2`), so the room still shows it after an orchestrator restart; before, it lived only in memory. Programs the orchestrator starts (`claude`, `sbx`, `dev-team/run.sh`) no longer inherit `OTEL_*` variables: the orchestrator exports its own telemetry in-process over gRPC, and children pointed at the same endpoint over HTTP filled the log with `BadStatusLine` retries. The second change is a diagnosis from the log, not yet confirmed on a real run.
+
+## 2026-10-23: a session can pick the model that writes its synthesis
+`synthesis_model` on the session (migration `b8c9d0e1f2a3`), chosen in setup as "Final write-up model", validated against the catalogue, copied by Continue, and passed to the synthesizer for that call; empty means the app-wide `BAYTO_SYNTHESIS_MODEL`. The rolling summary and hand-raise models are still app-wide.

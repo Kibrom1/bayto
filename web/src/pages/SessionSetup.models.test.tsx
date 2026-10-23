@@ -61,9 +61,11 @@ describe('per-seat models on the setup screen', () => {
     await user.selectOptions(screen.getByLabelText('Model for Optimist'), 'claude-opus-5-5') // 1.8x
     expect(estimate()).toBe('~$1.00') // 0.1 + 0.9
 
+    await user.selectOptions(screen.getByLabelText('Final write-up model'), 'claude-opus-5-5')
     await user.click(screen.getByRole('button', { name: /start session/i }))
     await screen.findByText('room page')
     const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/sessions'))!
+    expect(post.body.synthesis_model).toBe('claude-opus-5-5')
     expect(post.body.roster).toEqual([
       { agent_id: 'a1', seat_order: 0, model: 'claude-haiku-5-5' },
       { agent_id: 'a2', seat_order: 1, model: 'claude-opus-5-5' },
@@ -79,5 +81,6 @@ describe('per-seat models on the setup screen', () => {
     await screen.findByText('room page')
     const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/sessions'))!
     expect(post.body.roster.every((r: any) => !('model' in r))).toBe(true)
+    expect('synthesis_model' in post.body).toBe(false)
   })
 })

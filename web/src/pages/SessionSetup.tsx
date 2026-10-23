@@ -75,6 +75,7 @@ export function SessionSetup() {
   const [modeId, setModeId] = useState('')
   const [agentIds, setAgentIds] = useState<string[]>([])
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null) // null until loaded, or if the server has no /models
+  const [synthesisModel, setSynthesisModel] = useState('') // '' = the app default
   const [seatModels, setSeatModels] = useState<Record<string, string>>({}) // agent id -> chosen model; absent = the agent's default
   const [dollars, setDollars] = useState('5')
   const [tokens, setTokens] = useState('200000')
@@ -231,6 +232,7 @@ export function SessionSetup() {
         task_id: taskId,
         mode_id: modeId,
         roster: agentIds.map((agent_id, seat_order) => ({ agent_id, seat_order, ...(seatModels[agent_id] ? { model: seatModels[agent_id] } : {}) })),
+        ...(synthesisModel ? { synthesis_model: synthesisModel } : {}),
         budget: {
           tokens: tokens ? parseInt(tokens, 10) : undefined,
           dollars: cap > 0 ? cap : undefined,
@@ -376,6 +378,16 @@ export function SessionSetup() {
                   </li>
                 ))}
               </ol>
+            )}
+            {catalog && catalog.models.length > 0 && roster.length > 0 && (
+              <div className="field">
+                <label htmlFor="synthesis-model">Final write-up model</label>
+                <select id="synthesis-model" value={synthesisModel} onChange={(e) => setSynthesisModel(e.target.value)}>
+                  <option value="">App default</option>
+                  {catalog.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+                <span className="hint">Writes the summary when the session ends. A large model here can write up what smaller seats discussed.</span>
+              </div>
             )}
           </section>
 

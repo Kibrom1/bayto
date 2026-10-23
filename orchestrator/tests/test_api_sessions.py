@@ -1097,3 +1097,28 @@ async def test_a_failed_sessions_reason_survives_a_restart(client, live_sessionm
     session_failures.pop(sid, None)  # as after a restart
     body = (await client.get(f"/sessions/{sid}")).json()["session"]
     assert body["failure_reason"] == "while creating the sandbox: SandboxCommandError: boom"
+
+
+async def test_a_session_can_choose_the_model_that_writes_its_synthesis(client, live_sessionmaker, tmp_path):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    body = {"task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]}
+    bad = await client.post("/sessions", json={**body, "synthesis_model": "gpt-9"})
+    assert bad.status_code == 422 and bad.json()["detail"]["error"]["field"] == "synthesis_model"
+
+    resp = await client.post("/sessions", json={**body, "synthesis_model": "claude-opus-5-5"})
+    assert resp.status_code == 201 and resp.json()["session"]["synthesis_model"] == "claude-opus-5-5"
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    box = {"id": session_id}
+
+    async def on_wake(role):
+        await asyncio.sleep(0.2)
+        await _auto_responder(tmp_path / "sessions", box)(role)
+
+    _wire_fakes(FakeSandboxProvider(on_wake=on_wake))
+    fake = FakeSynthesizer(SynthesisResult(content_json={"ok": True}, source_turn_ids=[]))
+    app.dependency_overrides[get_synthesizer] = lambda: fake
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "active")
+    await client.post(f"/sessions/{session_id}/stop", json={"synthesize": True})
+    await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
+    assert fake.models == ["claude-opus-5-5"]  # the writer the session asked for, not the app default

@@ -144,6 +144,8 @@ class Session(Base):
     stop_reason: Mapped[str | None] = mapped_column(String)
     # Why a session failed (already scrubbed of secrets). Kept in the database so it survives an orchestrator restart.
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    # Model that writes the final synthesis for this session; null = the app-wide default (BAYTO_SYNTHESIS_MODEL).
+    synthesis_model: Mapped[str | None] = mapped_column(String)
     fallback_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False) # M2.12: reactive fallback flag
     # Archived: hidden from the task board and left out of the context later sessions on the task are given.
     # The record (transcript, cost) is kept; delete removes it.

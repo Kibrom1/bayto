@@ -1096,9 +1096,10 @@ class ModeratorRunner:
             task_text = await self._task_text()
             if task_text:  # so the artifact answers the task, in the output type that was asked for
                 hint = f"{hint}\n\n{task_text}" if hint else task_text
+            extra = {"model": row.synthesis_model} if row.synthesis_model else {}  # the session's own writer, if set
             result = await self._synthesizer.synthesize(
                 view, row.rolling_summary or "", all_turns,
-                synthesis_prompt_hint=hint,
+                synthesis_prompt_hint=hint, **extra,
             )
 
             session.add(Artifact(session_id=self._session_id, type="synthesis",
