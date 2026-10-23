@@ -7,7 +7,9 @@ import os
 import re
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+
+from ..auth import api_token, is_authenticated
 from pydantic import BaseModel
 
 log = logging.getLogger(__name__)
@@ -41,8 +43,10 @@ def feedback_url() -> str | None:
 
 class AppConfigOut(BaseModel):
     feedback_url: str | None = None
+    auth_required: bool = False
+    authenticated: bool = True  # true when auth is off, so the UI needs no special case
 
 
 @router.get("/app-config", response_model=AppConfigOut)
-async def app_config() -> AppConfigOut:
-    return AppConfigOut(feedback_url=feedback_url())
+async def app_config(request: Request) -> AppConfigOut:
+    return AppConfigOut(feedback_url=feedback_url(), auth_required=api_token() is not None, authenticated=is_authenticated(request))

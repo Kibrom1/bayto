@@ -54,6 +54,7 @@ Build mode works on a repository you choose, on its own branch. A test command i
 - **Restarts.** If the app restarts while a discussion is running, the session is marked Interrupted. Use **Continue with the same team** in the room to carry on in a new session.
 - **Attached folders** are read as a text copy. Files that look like they hold passwords or keys are left out, but do not attach folders you would not paste into a chat.
 - **Attached links** must be public web pages.
+- **Exposing the port beyond localhost.** By default Bayto has no sign-in and is meant for your own machine. If you must reach it from elsewhere, set `BAYTO_API_TOKEN` (a long random string) before starting the orchestrator: every route except `/healthz`, `/app-config` and `/auth/login` then needs `Authorization: Bearer <token>` or the session cookie the web app's sign-in page sets. This is one shared secret, not user accounts, and **not a replacement for a proper reverse proxy**. You still need TLS in front (without it the token and cookie travel in clear text) and should keep `BAYTO_ALLOWED_HOSTS` set to your host name. Failed sign-ins are slowed down, and the token is never passed to the programs Bayto starts.
 
 ## 5. What we would like to hear
 
