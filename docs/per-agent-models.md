@@ -10,7 +10,8 @@ Status: proposal (2026-10-22). Nothing in this document is built yet except what
 | 2. Seat model select in setup; estimate from each seat's model; model shown under each seat in the room | Done |
 | 3. Default model on a custom agent (create, edit, dialog, audit) | Done |
 | 4a. Per-session synthesis model (`synthesis_model` on the session, "Final write-up model" in setup) | Done |
-| 4b. Provider adapter for discussion seats (OpenAI, Gemini, Ollama) | Done: see "Setting up a provider" below. Local model gateway (Route A) not started |
+| 4b. Provider adapter for discussion seats (OpenAI, Gemini, Ollama) | Done: see "Setting up a provider" below |
+| 4c. Local model gateway (Route A), discussion seats only | Built, not run against a real gateway: see "Setting up a gateway" below |
 
 Estimate: each seat costs the usual per-seat figure ($0.50, or $3 for Build) times its model's `usd_per_turn` divided by the default model's, so Haiku is about 0.2x and Opus about 1.8x. The catalogue figures are planning numbers, not prices. `POST /sessions/{id}/continue` copies stored models without validating them, so older ids keep working. The seeded agents still carry the legacy `claude-sonnet-5`, shown as "Default (claude-sonnet-5)" in the seat select.
 
@@ -188,3 +189,39 @@ Other providers are for discussion seats only. Build seats and the final write-u
 Models are listed with `BAYTO_EXTRA_MODELS`, comma separated: `id:label:tier:usd_per_turn[:price_in:price_out]`. The id is `<provider>/<model>`, for example `openai/gpt-4o-mini:GPT-4o mini:small:0.05:0.15:0.6`. The two optional prices are USD per million input and output tokens, used to record each turn's real cost. A model whose provider has no key shows in the picker as disabled with the variable it needs. Keys are read from the environment only, are never sent to a sandbox, and a provider error is shown without the request. `BAYTO_PROVIDER_TIMEOUT` (seconds, default 120) bounds each call.
 
 A seat on another provider never falls back to a different model: if the call fails the session pauses for a human with the provider's message. Billing for these seats is on that provider's account, not your Claude subscription.
+
+## Setting up a gateway
+
+Route A: an Anthropic-compatible gateway (LiteLLM, or Ollama's Anthropic-compatible endpoint) sits in front of other models. A seat on a gateway model still runs `claude -p` in the sandbox, so it keeps its tools and read-only file access; only the endpoint its `claude` process talks to changes. **This was built and tested with fakes only (unit tests, a fake sandbox provider, and the sandbox turn script run with a stand-in `claude`). It has not been run against a real gateway, a real `sbx` sandbox or a real non-Claude model.** Treat tool use through a gateway as unproven until someone tries it.
+
+| Set on the orchestrator | Meaning |
+|---|---|
+| `BAYTO_GATEWAY_URL` | The gateway's http(s) address **as the sandbox sees it** (for example `http://host.docker.internal:4000`), not `localhost`. Required. |
+| `BAYTO_GATEWAY_TOKEN` | The key the gateway expects. Optional. Without one a placeholder is sent, never your Claude login. |
+| `BAYTO_STREAMING_TURNS=1` | Required. A gateway seat runs as a headless streamed turn; the long-lived seat path has nowhere to put a per-seat environment. |
+
+List each model in `BAYTO_EXTRA_MODELS` with the id `gateway/<name>`, where `<name>` is the model name the gateway knows (no `:`, which the list format uses as a separator): `gateway/qwen3:Qwen3 (gateway):small:0`. The picker shows it as "Qwen3 (Gateway)", disabled with the variable it needs until the gateway is set up. `GET /models` reports `provider: "gateway"`, `provider_label: "Gateway"`, `ready` and `needs`.
+
+LiteLLM example (`config.yaml`), then `litellm --config config.yaml --port 4000`:
+
+```yaml
+model_list:
+  - model_name: qwen3                 # the <name> in gateway/qwen3
+    litellm_params:
+      model: ollama_chat/qwen3        # any model LiteLLM supports
+      api_base: http://127.0.0.1:11434
+general_settings:
+  master_key: sk-bayto-local          # then BAYTO_GATEWAY_TOKEN=sk-bayto-local
+```
+
+How it works, from the code:
+
+- **What reaches the sandbox.** `LocalSbxSandboxProvider.run_turn` runs `sbx exec -i <sandbox> bash -lc <script> _ <role>`; the host's own environment does not reach the process inside, and the model comes from `team.tsv`. For a gateway seat the runner passes `env={ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN}` and `model=<name>` to `run_turn`, which runs `TURN_SCRIPT_OVERRIDE` instead: the values arrive on stdin ahead of the prompt (never in the command line, so not in `ps` or error text), only `ANTHROPIC_*` names are accepted, `ANTHROPIC_API_KEY` is unset first so a key already in the sandbox is not sent to the gateway, and `claude --model` gets the bare name. Every other seat calls `run_turn` exactly as before.
+- **Secrets.** `child_env()` strips `BAYTO_GATEWAY_URL` and `BAYTO_GATEWAY_TOKEN` from everything the orchestrator starts (`sbx`, `dev-team/run.sh`, helper `claude` calls); the token goes only into the one seat's turn. It is not logged, not in an audit event (the roster records `gateway/<name>` only), and an error from that turn has the token redacted before it reaches the room.
+- **Network.** Role files are written with the gateway host in `team_needs.network` for gateway seats only. The sandbox allow-list is the union over its seats, so the whole team's sandbox can then reach that host; the token still goes to the gateway seat's process alone.
+- **No silent fallback.** A gateway seat is never woken through the long-lived seat path, never switched to the Ollama fallback after a platform-limit error, and never retried on another model. A missing gateway address, streamed turns switched off, or a failed turn pauses the session for a human with the reason.
+- **Cost.** `claude` computes `total_cost_usd` from its own price table, which does not know gateway models, so the recorded cost may be wrong or zero. The catalogue's `usd_per_turn` is a planning figure only.
+
+Why Build seats and the final write-up stay on Claude (`422 provider_not_supported`, same as the other providers): Build seats are long-lived processes started by `start-team` from `team.tsv`, where there is no per-seat environment (the override exists only on the headless streamed turn), and Build leans on tool use that small or translated models do badly and on a permission model tuned for Claude. The final write-up runs through the process-wide `llm/claude_cli.py`, which has no per-call environment. Both could be extended later; neither is safe to enable by changing a catalogue entry.
+
+Not verified: that `sbx exec` passes stdin through to the script the way the stand-in test assumes (the existing streamed turns rely on it, so likely), that the gateway host is reachable from the sandbox with the allow-list written, what `start-team` does with an idle seat whose `team.tsv` model is `gateway/<name>`, and that tool calls survive the gateway's translation.
