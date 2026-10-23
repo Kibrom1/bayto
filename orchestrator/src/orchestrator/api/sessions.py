@@ -25,6 +25,7 @@ from .. import audit
 from ..models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
+from ..models_catalog import is_known_model
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_login_check, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import _retire_runtime, factory_root, launch_runner, session_failures, session_stages
@@ -167,6 +168,9 @@ async def create_session(
             if (mode_row.name != "build" and (agent_row.role or "").startswith("build-")):
                 raise HTTPException(422, detail=_error("invalid_agent", f"{agent_row.name} only works in a Build session",
                                                         "roster.agent_id"))
+            if not is_known_model(entry.model):
+                raise HTTPException(422, detail=_error("invalid_model", f"{entry.model} is not a known model",
+                                                        "roster.model"))
             sa = SessionAgent(session_id=session_row.id, agent_id=entry.agent_id,
                                agent_version=agent_row.version,  # snapshotted server-side, never client-supplied
                                seat_order=entry.seat_order, muted=entry.muted, harness=entry.harness,
