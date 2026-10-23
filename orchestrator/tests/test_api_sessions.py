@@ -1033,10 +1033,14 @@ async def test_an_interrupted_session_can_be_continued_with_the_same_team(client
     assert [sa["agent_id"] for sa in body["session_agents"]] == [str(a) for a in agent_ids]
 
 
+BUILD_FOUR = ("build-architect", "build-developer", "build-tester", "build-reviewer")
+
+
 async def test_a_build_session_needs_a_test_command(client, live_sessionmaker, monkeypatch):
     monkeypatch.setattr("orchestrator.api.sessions.resolve_mode", lambda name: None)  # no build.yaml in the fixtures
-    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, mode_name="build", roles=("build-developer",))
-    body = {"task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]}
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, mode_name="build", roles=BUILD_FOUR)
+    body = {"task_id": str(task_id), "mode_id": str(mode_id),
+            "roster": [{"agent_id": str(a), "seat_order": i} for i, a in enumerate(agent_ids)]}
     refused = await client.post("/sessions", json=body)
     assert refused.status_code == 422
     assert refused.json()["detail"]["error"]["code"] == "test_command_required"
@@ -1205,3 +1209,21 @@ async def test_sse_message_meta_says_which_attachment_parts_the_seat_read(client
     assert [r["name"] for r in report] == ["big.txt", "notes.md"]
     assert report[0]["mode"] in {"excerpt", "start"} and report[0]["total"] > 20 and report[1]["mode"] == "whole"
     assert answers[0]["meta"]["tokens_in"] == 1
+
+
+async def test_a_build_roster_must_have_all_four_roles(client, live_sessionmaker, monkeypatch):
+    """The setup page already blocks a short Build roster; the API must too, or the pipeline stalls at the first
+    missing seat."""
+    monkeypatch.setattr("orchestrator.api.sessions.resolve_mode", lambda name: None)
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, mode_name="build", roles=BUILD_FOUR)
+    async with live_sessionmaker() as db:
+        task = await db.get(Task, task_id)
+        task.workspace = {"repo_path": "/x", "base_branch": "main", "test_command": "uv run pytest"}
+        await db.commit()
+    seats = lambda ids: [{"agent_id": str(a), "seat_order": i} for i, a in enumerate(ids)]
+    short = await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id), "roster": seats(agent_ids[:2])})
+    err = short.json()["detail"]["error"]
+    assert short.status_code == 422 and err["code"] == "build_roles_required" and err["field"] == "roster"
+    assert "tester" in err["detail"] and "reviewer" in err["detail"]
+    full = await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id), "roster": seats(agent_ids)})
+    assert full.status_code == 201

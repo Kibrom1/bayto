@@ -189,6 +189,15 @@ async def create_session(
                                "version": agent_row.version, "kind": agent_row.kind,
                                "model": sa.model or agent_row.model})
 
+        if mode_row.name == "build":
+            from ..build_policy import BUILD_ROLES
+            missing = sorted(BUILD_ROLES - {r["role"] for r in roster_log})
+            if missing:  # the setup page already blocks this; a direct API client must not get a pipeline that stalls
+                raise HTTPException(422, detail=_error(
+                    "build_roles_required",
+                    "Build needs all four roles; missing: " + ", ".join(m.replace("build-", "") for m in missing),
+                    "roster"))
+
         audit.emit(action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
                            task_id=req.task_id, session_id=session_row.id, subject_type="session", subject_id=session_row.id,
                            detail={"mode": mode_row.name, "budget": session_row.budget, "roster": roster_log,

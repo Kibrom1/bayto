@@ -113,7 +113,9 @@ with sync_playwright() as p:
         page.get_by_role("button", name="Start session").click(); page.wait_for_timeout(500)
         check("setup", "Start without choosing a mode is refused with a clear message", "choose a mode" in page.inner_text("body").lower() and "/room/" not in page.url)
         page.locator(".mode-card").filter(has_text="Debate").click()
-        page.get_by_role("button", name="Start session").click(); page.wait_for_timeout(5000)
+        page.get_by_role("button", name="Start session").click()
+        try: page.wait_for_url("**/room/**", timeout=20000)  # a fixed sleep was timing-dependent
+        except Exception: pass
         check("setup", "starting a session navigates to its room", "/room/" in page.url, page.url + " | " + page.inner_text("body")[-300:])
     setup()
 
@@ -123,7 +125,10 @@ with sync_playwright() as p:
         except Exception: pass
         page.screenshot(path=str(OUT / "06-room-failed.png"))
         body = page.inner_text("body").lower()
-        check("room", "Pause and End buttons are disabled on a failed session", all(page.get_by_role("button", name=n).first.is_disabled() for n in ("Pause", "End & synthesize")))
+        # a failed session offers Archive/Delete instead of Pause/End; either way it must not be pausable
+        pause = page.get_by_role("button", name="Pause"); end = page.get_by_role("button", name="End & synthesize")
+        check("room", "a failed session cannot be paused or ended (buttons absent or disabled)",
+              all(b_.count() == 0 or b_.first.is_disabled() for b_ in (pause, end)))
         check("room", "room shows the session ended/failed (no sandbox here), with a reason", ("failed" in body or "ended" in body or "couldn" in body or "error" in body), body[:300])
         ta = page.locator("textarea")
         check("room", "message box is disabled once the session cannot take messages", ta.count() == 0 or ta.first.is_disabled(), ta.count())
@@ -164,7 +169,7 @@ with sync_playwright() as p:
     @section("a11y")
     def a11y():
         page.goto(WEB + "/"); page.wait_for_load_state("networkidle")
-        noname = page.evaluate("""() => [...document.querySelectorAll('button,a,input,select,textarea')].filter(e => !(e.getAttribute('aria-label') || e.innerText?.trim() || e.labels?.length || e.getAttribute('title') || e.getAttribute('aria-labelledby'))).length""")
+        noname = page.evaluate("""() => [...document.querySelectorAll('button,a,input,select,textarea')].filter(e => !(e.getAttribute('aria-label') || e.textContent?.trim() || e.labels?.length || e.getAttribute('title') || e.getAttribute('aria-labelledby'))).length""")
         check("a11y", "every button, link and field on the board has an accessible name", noname == 0, noname)
         check("a11y", "page has one h1", page.locator("h1").count() == 1, page.locator("h1").count())
         check("a11y", "html lang is set", bool(page.evaluate("document.documentElement.lang")))
