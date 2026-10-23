@@ -14,14 +14,20 @@ const MODELS = {
   ],
 }
 const AGENT = (id: string, name: string) => ({ id, name, role: name.toLowerCase(), system_prompt: 'x', stance: 's', model: 'claude-sonnet-5-5', kind: 'native', custom: false })
+const OTHER = [
+  { id: 'openai/gpt-x', label: 'GPT X', tier: 'small', usd_per_turn: 0.05, default: false, provider: 'openai', provider_label: 'OpenAI', ready: true, needs: null },
+  { id: 'gemini/gem-1', label: 'Gem 1', tier: 'small', usd_per_turn: 0.05, default: false, provider: 'gemini', provider_label: 'Google Gemini', ready: false, needs: 'GEMINI_API_KEY' },
+]
+let models: any = MODELS
 const calls: { method: string; url: string; body: any }[] = []
 
 beforeEach(() => {
   calls.length = 0
+  models = MODELS
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     calls.push({ method: init?.method ?? 'GET', url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-    if (url.endsWith('/models')) return json(MODELS)
+    if (url.endsWith('/models')) return json(models)
     if (url.endsWith('/tasks')) return json([{ id: 'task-1', title: 't', brief: null, output_type: 'memo', workspace: null }])
     if (url.endsWith('/modes')) return json([{ id: 'm1', name: 'debate', floor_policy: 'round-robin' }])
     if (url.endsWith('/agents/templates')) return json([AGENT('a1', 'Skeptic'), AGENT('a2', 'Optimist')])
@@ -82,5 +88,20 @@ describe('per-seat models on the setup screen', () => {
     const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/sessions'))!
     expect(post.body.roster.every((r: any) => !('model' in r))).toBe(true)
     expect('synthesis_model' in post.body).toBe(false)
+  })
+
+  it('names other providers, disables one that is not configured, and keeps the final write-up on Claude', async () => {
+    models = { ...MODELS, models: [...MODELS.models, ...OTHER] }
+    const user = userEvent.setup()
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    await user.click(await screen.findByRole('radio', { name: /^debate/i }))
+    await user.click(screen.getAllByRole('button', { name: /add to roster/i })[0])
+    const seat = await screen.findByLabelText('Model for Skeptic')
+    expect(within(seat).getByRole('option', { name: 'GPT X (OpenAI)' })).toBeEnabled()
+    expect(within(seat).getByRole('option', { name: /Gem 1.*set GEMINI_API_KEY first/ })).toBeDisabled()
+    const writer = screen.getByLabelText('Final write-up model')
+    expect(within(writer).queryByRole('option', { name: /GPT X/ })).toBeNull()
+    expect(within(writer).getByRole('option', { name: 'Opus 5.5' })).toBeInTheDocument()
   })
 })

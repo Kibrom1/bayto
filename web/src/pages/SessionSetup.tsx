@@ -10,7 +10,7 @@ import {
   type SessionCreateRequest,
 } from '../api/sessions'
 import { agentHue, initials } from '../agentColor'
-import { costFactor, getModels, type ModelCatalog } from '../api/models'
+import { claudeOnly, costFactor, getModels, modelOptionText, type ModelCatalog } from '../api/models'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
@@ -370,7 +370,9 @@ export function SessionSetup() {
                       <select className="seat-model" aria-label={`Model for ${t.name}`} value={seatModels[t.id] ?? ''}
                         onChange={(e) => setSeatModels((m) => ({ ...m, [t.id]: e.target.value }))}>
                         <option value="">Default ({catalog.models.find((m) => m.id === t.model)?.label ?? t.model})</option>
-                        {catalog.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        {(isBuild ? claudeOnly(catalog.models) : catalog.models).map((m) => (
+                          <option key={m.id} value={m.id} disabled={m.ready === false}>{modelOptionText(m)}</option>
+                        ))}
                       </select>
                     )}
                     <button type="button" className="btn ghost sm" aria-label={`Move ${t.name} up`} disabled={i === 0} onClick={() => move(t.id, -1)}>↑</button>
@@ -384,9 +386,9 @@ export function SessionSetup() {
                 <label htmlFor="synthesis-model">Final write-up model</label>
                 <select id="synthesis-model" value={synthesisModel} onChange={(e) => setSynthesisModel(e.target.value)}>
                   <option value="">App default</option>
-                  {catalog.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  {claudeOnly(catalog.models).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
                 </select>
-                <span className="hint">Writes the summary when the session ends. A large model here can write up what smaller seats discussed.</span>
+                <span className="hint">Writes the summary when the session ends. A large model here can write up what smaller seats discussed. Claude models only.</span>
               </div>
             )}
           </section>

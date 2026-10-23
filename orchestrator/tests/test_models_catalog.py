@@ -71,7 +71,8 @@ async def test_get_models_returns_the_catalogue_and_default():
     assert ids == {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
     sonnet = next(m for m in body["models"] if m["id"] == "claude-sonnet-5-5")
     assert sonnet == {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5", "tier": "standard",
-                       "usd_per_turn": 0.5, "default": True}
+                       "usd_per_turn": 0.5, "default": True,
+                       "provider": "anthropic", "provider_label": "Anthropic", "ready": True, "needs": None}
 
 
 # ---------------------------------------------------------------- POST /sessions validation
@@ -179,3 +180,17 @@ async def test_continue_keeps_a_legacy_pre_catalog_model_id(live_sessionmaker, m
     assert models[str(agent_ids[0])] == "claude-sonnet-5"
     assert models[str(agent_ids[1])] == "claude-sonnet-5"
 
+
+
+def test_models_endpoint_reports_provider_readiness(monkeypatch):
+    from fastapi.testclient import TestClient
+    from orchestrator.api.model_catalog import router
+    from fastapi import FastAPI
+    monkeypatch.setenv("BAYTO_EXTRA_MODELS", "openai/gpt-x:GPT X:small:0.05,gemini/g1:G1:small:0.05")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    app = FastAPI(); app.include_router(router)
+    by_id = {m["id"]: m for m in TestClient(app).get("/models").json()["models"]}
+    assert by_id["claude-opus-5-5"]["ready"] and by_id["claude-opus-5-5"]["provider"] == "anthropic"
+    assert by_id["openai/gpt-x"]["ready"] and by_id["openai/gpt-x"]["provider_label"] == "OpenAI"
+    assert not by_id["gemini/g1"]["ready"] and by_id["gemini/g1"]["needs"] == "GEMINI_API_KEY"

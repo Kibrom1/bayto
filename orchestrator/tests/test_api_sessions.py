@@ -1122,3 +1122,52 @@ async def test_a_session_can_choose_the_model_that_writes_its_synthesis(client, 
     await client.post(f"/sessions/{session_id}/stop", json={"synthesize": True})
     await _wait_for_status(live_sessionmaker, session_id, "finished", timeout=10.0)
     assert fake.models == ["claude-opus-5-5"]  # the writer the session asked for, not the app default
+
+
+async def test_a_seat_on_an_unconfigured_or_unsupported_provider_is_refused(client, live_sessionmaker, monkeypatch):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    monkeypatch.setenv("BAYTO_EXTRA_MODELS", "openai/gpt-x:GPT X:small:0.05")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    seat = {"agent_id": str(agent_ids[0]), "seat_order": 0, "model": "openai/gpt-x"}
+    body = {"task_id": str(task_id), "mode_id": str(mode_id), "roster": [seat]}
+    resp = await client.post("/sessions", json=body)
+    assert resp.status_code == 422 and resp.json()["detail"]["error"]["code"] == "provider_not_configured"
+    assert "OPENAI_API_KEY" in resp.json()["detail"]["error"]["detail"]
+    # the final write-up is Claude-only even when the provider is ready
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    resp = await client.post("/sessions", json={**body, "roster": [{**seat, "model": None}], "synthesis_model": "openai/gpt-x"})
+    assert resp.status_code == 422 and resp.json()["detail"]["error"]["code"] == "provider_not_supported"
+    ok = await client.post("/sessions", json=body)
+    assert ok.status_code == 201
+
+
+async def test_a_seat_on_another_provider_answers_without_the_sandbox(client, live_sessionmaker, tmp_path, monkeypatch):
+    from orchestrator.providers import Completion
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    monkeypatch.setenv("BAYTO_EXTRA_MODELS", "openai/gpt-x:GPT X:small:0.05")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    asked = []
+
+    class _Fake:
+        async def complete(self, **kw):
+            asked.append(kw)
+            return Completion(text="from the other provider", tokens_in=7, tokens_out=3, cost=0.001)
+
+    monkeypatch.setattr("orchestrator.moderator.runner.provider_for", lambda pid: _Fake())
+    resp = await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id),
+                                                "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0, "model": "openai/gpt-x"}]})
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    woken = []
+
+    async def on_wake(role):
+        woken.append(role)
+
+    _wire_fakes(FakeSandboxProvider(on_wake=on_wake))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "active")
+    for _ in range(100):
+        if asked:
+            break
+        await asyncio.sleep(0.05)
+    assert asked and asked[0]["model"] == "gpt-x"  # the bare model id, sent to its own provider
+    assert woken == []  # the seat never ran in the sandbox

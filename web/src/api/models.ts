@@ -7,6 +7,10 @@ export interface ModelInfo {
   tier: string
   usd_per_turn: number
   default: boolean
+  provider?: string // 'anthropic' | 'openai' | 'gemini' | 'ollama'
+  provider_label?: string
+  ready?: boolean // false when the provider's key / host is not set on the server
+  needs?: string | null // what to set when not ready, e.g. OPENAI_API_KEY
 }
 
 export interface ModelCatalog {
@@ -32,3 +36,12 @@ export function costFactor(catalog: ModelCatalog | null, modelId: string | null 
 
 export const modelLabel = (catalog: ModelCatalog | null, id: string | null | undefined) =>
   id ? catalog?.models.find((m) => m.id === id)?.label ?? id : null
+
+/** Text for a model in a select: other providers are named, and an unconfigured one says what it needs. */
+export function modelOptionText(m: ModelInfo): string {
+  const from = m.provider && m.provider !== 'anthropic' ? ` (${m.provider_label ?? m.provider})` : ''
+  return m.ready === false ? `${m.label}${from} — set ${m.needs ?? 'its key'} first` : `${m.label}${from}`
+}
+
+/** Build seats and the final write-up run on Claude only; every other provider is for discussion seats. */
+export const claudeOnly = (models: ModelInfo[]): ModelInfo[] => models.filter((m) => !m.provider || m.provider === 'anthropic')

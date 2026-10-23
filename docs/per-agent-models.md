@@ -10,7 +10,7 @@ Status: proposal (2026-10-22). Nothing in this document is built yet except what
 | 2. Seat model select in setup; estimate from each seat's model; model shown under each seat in the room | Done |
 | 3. Default model on a custom agent (create, edit, dialog, audit) | Done |
 | 4a. Per-session synthesis model (`synthesis_model` on the session, "Final write-up model" in setup) | Done |
-| 4b. Provider adapter for discussion seats; local model gateway | Not started |
+| 4b. Provider adapter for discussion seats (OpenAI, Gemini, Ollama) | Done: see "Setting up a provider" below. Local model gateway (Route A) not started |
 
 Estimate: each seat costs the usual per-seat figure ($0.50, or $3 for Build) times its model's `usd_per_turn` divided by the default model's, so Haiku is about 0.2x and Opus about 1.8x. The catalogue figures are planning numbers, not prices. `POST /sessions/{id}/continue` copies stored models without validating them, so older ids keep working. The seeded agents still carry the legacy `claude-sonnet-5`, shown as "Default (claude-sonnet-5)" in the seat select.
 
@@ -173,3 +173,18 @@ Steps 1 to 3 are roughly one branch of work and add no migration: `Agent.model` 
 - Which model ids and tiers should be offered at launch, and what are their real per-turn costs? The figures above are planning numbers to be replaced with measured ones from real sessions.
 - Should Build lock its roles to a minimum tier?
 - Is a per-session synthesis model wanted, or is the global setting enough?
+
+
+## Setting up a provider
+
+Other providers are for discussion seats only. Build seats and the final write-up stay on Claude, and the server refuses (422 `provider_not_supported`) a Build roster or write-up that names another provider.
+
+| Provider | Set on the orchestrator | Notes |
+|---|---|---|
+| OpenAI | `OPENAI_API_KEY`, optionally `OPENAI_BASE_URL` | Any OpenAI-compatible endpoint works through the base URL. |
+| Google Gemini | `GEMINI_API_KEY` | |
+| Ollama (local) | `OLLAMA_HOST`, e.g. `http://127.0.0.1:11434` | No key, no charge; cost shows as unknown. |
+
+Models are listed with `BAYTO_EXTRA_MODELS`, comma separated: `id:label:tier:usd_per_turn[:price_in:price_out]`. The id is `<provider>/<model>`, for example `openai/gpt-4o-mini:GPT-4o mini:small:0.05:0.15:0.6`. The two optional prices are USD per million input and output tokens, used to record each turn's real cost. A model whose provider has no key shows in the picker as disabled with the variable it needs. Keys are read from the environment only, are never sent to a sandbox, and a provider error is shown without the request. `BAYTO_PROVIDER_TIMEOUT` (seconds, default 120) bounds each call.
+
+A seat on another provider never falls back to a different model: if the call fails the session pauses for a human with the provider's message. Billing for these seats is on that provider's account, not your Claude subscription.

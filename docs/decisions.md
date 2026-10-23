@@ -110,3 +110,7 @@ A failed session's reason is now saved on the session row (`failure_reason`, mig
 
 ## 2026-10-23: a session can pick the model that writes its synthesis
 `synthesis_model` on the session (migration `b8c9d0e1f2a3`), chosen in setup as "Final write-up model", validated against the catalogue, copied by Continue, and passed to the synthesizer for that call; empty means the app-wide `BAYTO_SYNTHESIS_MODEL`. The rolling summary and hand-raise models are still app-wide.
+
+## 2026-10-23: provider adapters for discussion seats
+OpenAI, Gemini and Ollama can run a discussion seat (`providers/`, model ids `<provider>/<model>`, keys from the environment only). The turn goes straight to the provider's HTTP API instead of through `claude -p` in a sandbox, so these seats have no tools and no file access: they only speak. Build and the final write-up refuse them. No fallback to another provider on failure; the session escalates to a human with the provider's message. Prices are optional per model; without them the turn's cost is recorded as unknown. Not verified against the live APIs, only against mocked responses.
+

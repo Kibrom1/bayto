@@ -58,6 +58,8 @@ from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
 from ..models import Session as SessionRow
 from ..models import SessionAgent, Task, TaskAttachment, Turn
+from ..models_catalog import get_model
+from ..providers import ProviderError, provider_for, split_model_id
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..sandbox.turns import TextDelta, ToolUse, TurnResult
@@ -685,15 +687,26 @@ class ModeratorRunner:
             queue = self._pubsub.subscribe(bounded=False)  # never drop the reply being awaited
             try:
                 streamed = False
+                external = None if self._pipeline else await self._external_seat(participant)
+                if external is not None:
+                    # A seat on another provider (OpenAI, Gemini, Ollama): the orchestrator asks it directly, text only.
+                    try:
+                        streamed = await self._provider_turn(view, participant, external)
+                    except ProviderError as exc:
+                        span.set_attribute("outcome", "provider_error")
+                        self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
+                        await self._escalate_to_human(view, f"{participant} could not get an answer from its model provider: {exc}")
+                        return
                 # Once the fallback is on, the streamed path (which always uses Claude) is skipped.
-                if getattr(self._sandbox_provider, "supports_streaming", False) and not use_fallback:
+                if (external is None and getattr(self._sandbox_provider, "supports_streaming", False)
+                        and not use_fallback):
                     try:
                         streamed = await self._stream_turn(view, participant)
                     except Exception:
                         log.exception("session %s: streaming turn for %s failed; using the seat path",
                                       self._session_id, participant)
                 try:
-                    if not streamed:
+                    if not streamed and external is None:
                         await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
                 except SandboxCommandError as e:
                     # Reactive Fallback: if we hit a platform limit (Weekly/Daily), switch to Ollama immediately
@@ -724,7 +737,7 @@ class ModeratorRunner:
                         await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=True)
                         response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
 
-                if response is None:
+                if response is None and external is None:  # a provider seat is never re-woken in the sandbox
                     # One retry: re-wake (not re-send -- the assignment is already sitting
                     # unread) and wait again, per the architect's "retry the same grant once
                     # more."
@@ -747,6 +760,42 @@ class ModeratorRunner:
             await self._record_turn(view, participant, response)
 
         await self._update_rolling_summary()
+
+    async def _external_seat(self, participant: str) -> tuple[str, str, str] | None:
+        """(provider id, bare model id, system brief) when this seat runs on a non-Claude provider, else None."""
+        async with self._sessionmaker() as session:
+            row = (await session.execute(
+                select(SessionAgent.model, Agent.model, Agent.system_prompt, Agent.stance)
+                .join(Agent, Agent.id == SessionAgent.agent_id)
+                .where(SessionAgent.session_id == self._session_id, Agent.role == participant,
+                       SessionAgent.removed_at.is_(None)))).first()
+        if row is None:
+            return None
+        model = row[0] or row[1]
+        provider, bare = split_model_id(model or "")
+        if provider == "anthropic":
+            return None
+        system = "\n\n".join(x for x in (row[2], f"Stance: {row[3]}" if row[3] else "") if x)
+        return provider, model, system or "You are one participant in a multi-agent discussion."
+
+    async def _provider_turn(self, view: ConversationView, participant: str, seat: tuple[str, str, str]) -> bool:
+        """Ask the seat's own provider for its turn and send the answer like a streamed one. A failure raises
+        ProviderError: there is no fallback to another provider, because a seat quietly answered by a different
+        model than the one chosen would be worse than a visible failure."""
+        provider_id, model, system = seat
+        _, bare = split_model_id(model)
+        info = get_model(model)
+        prompt = await self._build_context(view)
+        completion = await provider_for(provider_id).complete(
+            model=bare, system=system, prompt=prompt,
+            price_in=info.price_in if info else None, price_out=info.price_out if info else None)
+        sid = str(self._session_id)
+        self._pubsub.publish({"type": "turn_done", "data": {"session_id": sid, "from": participant}})
+        await self._conversation.send(
+            sender=participant, to=[self._mode.moderator or "moderator"], kind="answer", body=completion.text,
+            meta={"tokens_in": completion.tokens_in, "tokens_out": completion.tokens_out, "cost": completion.cost,
+                  "provider": provider_id})
+        return True
 
     async def _stream_turn(self, view: ConversationView, participant: str) -> bool:
         """Headless live turn: runs the seat's model with the assignment as the prompt and

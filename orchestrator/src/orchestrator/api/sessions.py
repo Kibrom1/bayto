@@ -25,7 +25,8 @@ from .. import audit
 from ..models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
-from ..models_catalog import is_known_model
+from ..models_catalog import seat_model_problem
+from ..providers import provider_id_of
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_login_check, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import _retire_runtime, factory_root, launch_runner, session_failures, session_stages
@@ -143,9 +144,9 @@ async def create_session(
         mode_row = await db.get(Mode, req.mode_id)
         if mode_row is None:
             raise HTTPException(422, detail=_error("invalid_mode", "mode not found", "mode_id"))
-        if not is_known_model(req.synthesis_model):
-            raise HTTPException(422, detail=_error("invalid_model", f"{req.synthesis_model} is not a known model",
-                                                    "synthesis_model"))
+        problem = seat_model_problem(req.synthesis_model, synthesis=True)
+        if problem:
+            raise HTTPException(422, detail=_error(problem[0], problem[1], "synthesis_model"))
         if mode_row.name == "build":
             task_row = await db.get(Task, req.task_id)
             if not (task_row.workspace or {}).get("test_command"):
@@ -173,9 +174,11 @@ async def create_session(
             if (mode_row.name != "build" and (agent_row.role or "").startswith("build-")):
                 raise HTTPException(422, detail=_error("invalid_agent", f"{agent_row.name} only works in a Build session",
                                                         "roster.agent_id"))
-            if not is_known_model(entry.model):
-                raise HTTPException(422, detail=_error("invalid_model", f"{entry.model} is not a known model",
-                                                        "roster.model"))
+            problem = seat_model_problem(entry.model, build=mode_row.name == "build")
+            if not problem and not entry.model and provider_id_of(agent_row.model) != "anthropic":
+                problem = seat_model_problem(agent_row.model, build=mode_row.name == "build")  # the agent's own default
+            if problem:
+                raise HTTPException(422, detail=_error(problem[0], problem[1], "roster.model"))
             sa = SessionAgent(session_id=session_row.id, agent_id=entry.agent_id,
                                agent_version=agent_row.version,  # snapshotted server-side, never client-supplied
                                seat_order=entry.seat_order, muted=entry.muted, harness=entry.harness,
