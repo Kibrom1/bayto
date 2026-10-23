@@ -1106,7 +1106,7 @@ class ModeratorRunner:
     async def _note_attachments(self, participant: str, turn_id: uuid.UUID, envelope_data: dict) -> None:
         """Audit entry for what this turn's prompt showed of each attachment (names and passage numbers, never text),
         and the same report on the seat's message when the seat wrote it itself (streamed and provider turns carry it
-        already). Best effort: it must never fail a recorded turn."""
+        already), stored and published as a `message_meta` event so the room shows it live. Best effort: it must never fail a recorded turn."""
         report = self._attachment_report
         if not report:
             return
@@ -1118,6 +1118,11 @@ class ModeratorRunner:
                 if message is not None and "attachments" not in (message.meta or {}):
                     message.meta = {**(message.meta or {}), "attachments": report}
                     await session.commit()
+                    # The message itself reached the room (from the mirror) before it was recorded here, without the
+                    # report: tell the room, so the "Read:" note shows live and a reload shows the same thing.
+                    self._pubsub.publish({"type": "message_meta", "data": {
+                        "session_id": str(self._session_id), "message_id": message_id, "from": participant,
+                        "meta": {"attachments": report}}})
             audit.emit(action="turn.attachments", summary=f"{participant} read {len(report)} attachment(s)",
                        task_id=task_id, session_id=self._session_id, actor="system", subject_type="turn", subject_id=turn_id,
                        detail={"seat": participant, "attachments": report})

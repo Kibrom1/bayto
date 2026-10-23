@@ -97,6 +97,42 @@ describe('BaytoRoom', () => {
     expect(screen.getAllByText(/^Read:/)).toHaveLength(1)
   })
 
+  it('shows the Read note live when it arrives after the message, with no reload', async () => {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 't', mode_id: 'debate', status: 'running', started_at: null, ended_at: null,
+      round: 1, budget: null, usage: { tokens_in: 1, tokens_out: 1, cost: 0 },
+      turn_counts: [{ participant: 'lawyer', agent_id: 'a1', turns: 1 }] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText(/bayto room/i, undefined, { timeout: 5000 })
+    Element.prototype.scrollIntoView = vi.fn()
+    const source = (globalThis as any).EventSource.instances.at(-1)
+    const named = (name: string, data: object) => {
+      const call = source.addEventListener.mock.calls.filter((c: any[]) => c[0] === name).at(-1)
+      act(() => call[1]({ data: JSON.stringify(data) }))
+    }
+    act(() => source.onmessage({ data: JSON.stringify({ kind: 'answer', to: ['moderator'], from: 'lawyer',
+      message_id: 'm1', seq: 1, body: 'first view', meta: { tokens_in: 3 } }) }))
+    expect(await screen.findByText('first view')).toBeInTheDocument()
+    expect(screen.queryByText(/^Read:/)).not.toBeInTheDocument()
+    named('message_meta', { message_id: 'm1', from: 'lawyer', meta: { attachments: [
+      { name: 'contract.txt', mode: 'excerpt', parts: [3, 7], total: 41 }] } })
+    expect(await screen.findByText('Read: contract.txt parts 3, 7 of 41')).toBeInTheDocument()
+    expect(screen.getByText('first view')).toBeInTheDocument()
+    // a report for a message that has not arrived yet is held and applied when it does
+    named('message_meta', { message_id: 'm2', from: 'lawyer', meta: { attachments: [{ name: 'notes.md', mode: 'whole', parts: [], total: 2 }] } })
+    act(() => source.onmessage({ data: JSON.stringify({ kind: 'answer', to: ['moderator'], from: 'lawyer',
+      message_id: 'm2', seq: 2, body: 'second view', meta: {} }) }))
+    expect(await screen.findByText('Read: notes.md (whole)')).toBeInTheDocument()
+  })
+
   it('says why a finished session ended', async () => {
     const body = JSON.stringify({ session: {
       id: 'session-123', task_id: 't', mode_id: 'debate', status: 'finished', started_at: null, ended_at: null,

@@ -792,7 +792,8 @@ async def session_events(
     sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
 ) -> EventSourceResponse:
     """Message events (unnamed, with `id: <seq>`) plus the named live events `rolling_summary`,
-    `turn_delta`, `turn_tool`, `turn_done` and `turn_error`.
+    `turn_delta`, `turn_tool`, `turn_done`, `turn_error` and `message_meta` (the attachment report
+    added to an already-sent message's meta).
 
     Replay: `since_seq` (or, on an automatic browser reconnect, the `Last-Event-ID` header, which
     takes precedence) replays every stored message after that seq first; `since_seq=0` replays the whole
@@ -863,7 +864,7 @@ async def session_events(
                     if seq is not None:
                         out["id"] = str(seq)
                     yield out
-                elif kind in ("rolling_summary", "turn_delta", "turn_tool", "turn_done", "turn_error"):
+                elif kind in ("rolling_summary", "turn_delta", "turn_tool", "turn_done", "turn_error", "message_meta"):
                     yield {"event": kind, "data": json.dumps(event["data"])}
         finally:
             if queue is not None:

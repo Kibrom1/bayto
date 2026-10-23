@@ -1471,3 +1471,78 @@ async def test_the_final_write_up_sees_only_open_attachments_even_after_a_restri
     await runner._finish(await runner._build_view(), "max-rounds")
     assert len(hints) == 1
     assert "Shared notes." in hints[0] and "PENALTY-CLAUSE-17" not in hints[0] and "contract.md" not in hints[0]
+
+async def _file_transport_turn_events(tmp_path, live_sessionmaker, *, attachments):
+    """Runs one file-transport turn (the sandbox writes the answer envelope) for seat "a" and returns
+    (events published during it, stored answer meta)."""
+    from orchestrator.models import TaskAttachment
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(Session, session_id)).task_id
+        for name, text in attachments:
+            db.add(TaskAttachment(task_id=task_id, kind="file", name=name, source=None, content=text, truncated=False))
+        await db.commit()
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "my view", meta={"tokens_in": 1})
+
+    runner, transport, mirror, _ = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mk_mode_config(), policy=RoundRobinFloorPolicy(), on_wake=on_wake)
+    queue = runner._pubsub.subscribe(bounded=False)
+    await runner.run_once()
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    async with live_sessionmaker() as db:
+        row = (await db.execute(select(MessageRow).where(MessageRow.kind == "answer"))).scalars().one()
+    return events, row
+
+
+async def test_a_file_transport_turn_publishes_the_read_report_live(tmp_path, live_sessionmaker):
+    secret = "SECRET-TEXT-NEVER-IN-EVENT"
+    events, row = await _file_transport_turn_events(
+        tmp_path, live_sessionmaker, attachments=[("notes.md", f"Shared notes. {secret}")])
+    patched = [e for e in events if e["type"] == "message_meta"]
+    assert len(patched) == 1
+    data = patched[0]["data"]
+    assert data["message_id"] == row.message_id and data["from"] == "a"
+    assert data["meta"]["attachments"] == row.meta["attachments"]  # live and stored (reload) agree
+    assert [(r["name"], r["mode"]) for r in data["meta"]["attachments"]] == [("notes.md", "whole")]
+    assert secret not in json.dumps(patched)  # names, modes and passage numbers only
+    # it comes after the message event the room already has, never before
+    kinds = [e["type"] for e in events]
+    assert kinds.index("message") < kinds.index("message_meta")
+
+
+async def test_a_turn_with_no_attachments_publishes_no_meta_event(tmp_path, live_sessionmaker):
+    events, row = await _file_transport_turn_events(tmp_path, live_sessionmaker, attachments=[])
+    assert not [e for e in events if e["type"] == "message_meta"]
+    assert "attachments" not in (row.meta or {})
+
+
+async def test_the_live_report_leaves_out_attachments_hidden_from_the_seat(tmp_path, live_sessionmaker):
+    from orchestrator.models import TaskAttachment
+    session_id = await _make_session(live_sessionmaker)
+    await _seat(live_sessionmaker, session_id, "a", 0)
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(Session, session_id)).task_id
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="contract.md", source=None, content="x", truncated=False, roles=["lawyer"]))
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="notes.md", source=None, content="y", truncated=False))
+        await db.commit()
+
+    async def on_wake(role):
+        await _respond(transport, mirror, role, "my view")
+
+    runner, transport, mirror, _ = mk_runner(
+        tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+        mode=mk_mode_config(), policy=RoundRobinFloorPolicy(), on_wake=on_wake)
+    queue = runner._pubsub.subscribe(bounded=False)
+    await runner.run_once()
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    patched = [e for e in events if e["type"] == "message_meta"]
+    assert [r["name"] for r in patched[0]["data"]["meta"]["attachments"]] == ["notes.md"]
+    assert "contract.md" not in json.dumps(patched)
