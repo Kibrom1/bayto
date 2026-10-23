@@ -16,6 +16,9 @@ export function useSessionEvents(sessionId: string, sessionStatus?: string) {
   const [live, setLive] = useState<Record<string, LiveTurn>>({})
   const [connected, setConnected] = useState(false)
   const lastSeq = useRef(0)
+  // `message_meta` (the attachment report added to a message after it was sent) can in principle beat the message
+  // itself; keep it until the message arrives.
+  const pendingMeta = useRef<Record<string, any>>({})
 
   useEffect(() => {
     // since_seq=0 (first connect) replays the stored transcript, so opening or reloading the room
@@ -31,7 +34,10 @@ export function useSessionEvents(sessionId: string, sessionStatus?: string) {
         const data = JSON.parse(event.data)
         if (typeof data.seq === 'number') lastSeq.current = Math.max(lastSeq.current, data.seq)
         // A reconnect can replay a message we already have; message_id makes that harmless.
-        setMessages((prev) => (prev.some((m) => m.message_id === data.message_id) ? prev : [...prev, data]))
+        const waiting = pendingMeta.current[data.message_id]
+        if (waiting) delete pendingMeta.current[data.message_id]
+        const full = waiting ? { ...data, meta: { ...(data.meta ?? {}), ...waiting } } : data
+        setMessages((prev) => (prev.some((m) => m.message_id === data.message_id) ? prev : [...prev, full]))
         // The finished message replaces that speaker's in-progress bubble.
         setLive((prev) => {
           if (!(data.from in prev)) return prev
@@ -70,6 +76,15 @@ export function useSessionEvents(sessionId: string, sessionStatus?: string) {
     named('turn_tool', (data) =>
       setLive((prev) => ({ ...prev, [data.from]: { text: prev[data.from]?.text ?? '', tool: data.name } })),
     )
+    named('message_meta', (data) => {
+      setMessages((prev) => {
+        if (!prev.some((m) => m.message_id === data.message_id)) {
+          pendingMeta.current[data.message_id] = data.meta
+          return prev
+        }
+        return prev.map((m) => (m.message_id === data.message_id ? { ...m, meta: { ...(m.meta ?? {}), ...data.meta } } : m))
+      })
+    })
     named('turn_error', (data) =>
       setLive((prev) => {
         const { [data.from]: _failed, ...rest } = prev
