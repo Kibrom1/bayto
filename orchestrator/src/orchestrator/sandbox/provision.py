@@ -20,6 +20,7 @@ from pathlib import Path
 
 import yaml
 
+from ..child_env import child_env
 from .provider import SandboxProviderError, SeatSpec
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -81,8 +82,8 @@ async def provision_team_sandbox(name: str, seats: list[SeatSpec], *, repo_root:
     try:
         roles_dir, roster_file = work / "roles", work / "roster.txt"
         write_catalog(seats, roles_dir, roster_file)
-        env = {**os.environ, "ROSTER": str(roster_file), "BAYTO_ROLES_DIR": str(roles_dir),
-               "SESSION": "none", "NO_SWITCH": "1"}
+        env = child_env({"ROSTER": str(roster_file), "BAYTO_ROLES_DIR": str(roles_dir),
+                         "SESSION": "none", "NO_SWITCH": "1"})
         if workspace:
             env["BAYTO_WORKSPACE_REPO"] = workspace
         async with _BUILD_LOCK:

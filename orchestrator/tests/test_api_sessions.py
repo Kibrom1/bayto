@@ -1078,3 +1078,22 @@ async def test_room_roster_reports_each_seats_model(client, live_sessionmaker):
     counts = {c["agent_id"]: c["model"] for c in (await client.get(f"/sessions/{sid}")).json()["session"]["turn_counts"]}
     assert counts[str(agent_ids[0])] == "claude-haiku-5-5"   # the seat's own choice wins
     assert counts[str(agent_ids[1])] == "claude-opus-5-5"     # otherwise the agent's default
+
+
+async def test_a_failed_sessions_reason_survives_a_restart(client, live_sessionmaker):
+    """The in-memory reason is lost when the orchestrator restarts; the stored one is not."""
+    from orchestrator.api.runtime import session_failures
+    from orchestrator.models import Session
+
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0])}]})
+    sid = uuid.UUID(resp.json()["session"]["id"])
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, sid)
+        row.status = "failed"
+        row.failure_reason = "while creating the sandbox: SandboxCommandError: boom"
+        await db.commit()
+    session_failures.pop(sid, None)  # as after a restart
+    body = (await client.get(f"/sessions/{sid}")).json()["session"]
+    assert body["failure_reason"] == "while creating the sandbox: SandboxCommandError: boom"

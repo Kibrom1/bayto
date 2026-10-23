@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+
+from ..child_env import child_env
 import shutil
 import tempfile
 import time
@@ -178,7 +180,7 @@ class ClaudeCliClient:
         if shutil.which(self._binary) is None:
             raise ClaudeCliError(f"`{self._binary}` not found on PATH; install Claude Code and log in "
                                  "(or set BAYTO_CLAUDE_BIN)")
-        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        env = {k: v for k, v in child_env().items() if k != "ANTHROPIC_API_KEY"}
         argv = [self._binary, "-p", prompt, "--model", model, "--output-format", "json",
                 "--append-system-prompt", system, "--max-turns", "1", "--tools", ""]
         # Run from an empty directory so no project CLAUDE.md or settings leak into the moderator.
