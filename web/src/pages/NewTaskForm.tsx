@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent } from 'react'
-import type { TaskCreateRequest } from '../api/tasks'
+import { SEMANTIC_LABEL, type TaskCreateRequest } from '../api/tasks'
 import { EMPTY_WORKSPACE, WorkspaceFields, workspaceBody, type WorkspaceDraft } from '../components/WorkspaceFields'
 import { Modal } from '../components/Dialog'
 
@@ -17,6 +17,7 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
   const [brief, setBrief] = useState('')
   const [outputType, setOutputType] = useState('')
   const [successCriteria, setSuccessCriteria] = useState('')
+  const [semantic, setSemantic] = useState(false)
   const titleId = useId()
   const briefId = useId()
   const outputTypeId = useId()
@@ -39,6 +40,7 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
       brief: brief.trim(),
       output_type: outputType.trim(),
       success_criteria: successCriteria.trim() || null,
+      ...(semantic ? { semantic_retrieval: true } : {}),
       ...(build ? { workspace: workspaceBody(ws) } : {}),
     })
   }
@@ -80,6 +82,14 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
             <label htmlFor={successCriteriaId}>Success criteria (optional)</label>
             <textarea id={successCriteriaId} value={successCriteria} onChange={(e) => setSuccessCriteria(e.target.value)} rows={2}
               placeholder="How will you judge a good answer?" />
+          </div>
+
+          <div className="field build-toggle">
+            <label>
+              <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />{' '}
+              {SEMANTIC_LABEL}
+            </label>
+            <span className="hint">Off by default. Only used when attached documents are too long to send whole. Needs OPENAI_API_KEY or OLLAMA_HOST on the orchestrator; without one, keyword search is used.</span>
           </div>
 
           <div className="field build-toggle">

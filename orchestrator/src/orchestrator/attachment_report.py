@@ -20,12 +20,13 @@ _BLOCK = re.compile(r'<attachment kind="[^"]*" name="([^"]*)"[^>]*?(?: excerpt="
 
 
 def attachment_report(attachments: Iterable[_Attachment], budget: int = PROMPT_BUDGET_CHARS,
-                      query: str | None = None, seat: str | None = None) -> tuple[str, list[dict]]:
+                      query: str | None = None, seat: str | None = None,
+                      semantic: list[list[float]] | None = None) -> tuple[str, list[dict]]:
     """(prompt text, report). Report entries, in attachment order:
     {"name", "mode": "whole" | "excerpt" | "start" | "not_shown", "parts": [passage numbers, 1-based], "total": passages}.
     "start" is the old head cut (no passage numbers); "whole" lists no parts."""
     items = visible_to(attachments, seat)  # what this seat may not read is not in the prompt, the report or the audit
-    text = attachment_prompt(items, budget=budget, query=query, seat=seat)
+    text = attachment_prompt(items, budget=budget, query=query, seat=seat, semantic=semantic)
     blocks = list(_BLOCK.finditer(text))
     report, at = [], 0
     for a in items:

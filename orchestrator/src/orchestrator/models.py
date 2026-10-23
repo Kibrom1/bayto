@@ -52,6 +52,9 @@ class Task(Base):
     # M2.8: POST /tasks's response includes created_at, which product-design.md's original
     # task(...) column list doesn't have -- added to fulfill that literal response contract
     # (see docs/decisions.md, 2026-09-30).
+    # Opt-in semantic stage for attachment retrieval (docs/per-agent-context-rag.md, P4). Off by default: when on,
+    # attachment text is sent to the embedding provider (see semantic.py).
+    semantic_retrieval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                   default=lambda: datetime.now(timezone.utc))
 
@@ -79,6 +82,21 @@ class TaskAttachment(Base):
         CheckConstraint("kind in ('file', 'folder', 'url')", name="ck_task_attachment_kind"),
         Index("ix_task_attachment_task_id", "task_id"),
     )
+
+
+class AttachmentChunkVec(Base):
+    """Cached embedding of one chunk of an attachment (retrieval.split_chunks ordinal), filled lazily by semantic.py.
+    A row is only trusted when its content_hash and model match the chunk and the model in use now; otherwise it is
+    recomputed, so editing an attachment or switching the embedding model needs no explicit invalidation."""
+
+    __tablename__ = "attachment_chunk_vec"
+
+    attachment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("task_attachment.id", ondelete="CASCADE"), primary_key=True)
+    ordinal: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String, nullable=False)   # sha256 of the chunk text
+    model: Mapped[str] = mapped_column(String, nullable=False)          # "<provider>:<model>"
+    vec: Mapped[list[float]] = mapped_column(JSONB, nullable=False)     # no pgvector: a plain list of floats
 
 
 class Agent(Base):

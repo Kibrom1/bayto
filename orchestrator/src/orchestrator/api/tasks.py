@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .. import audit
 from ..models import Artifact, Session, Task, TaskAttachment, UsageLedger
+from ..providers.embeddings import NEEDS, embedding_model, embedding_provider
 from ..build_policy import parse_test_command, permission_summary, suggest_test_command, validate_extra_commands
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
@@ -104,6 +105,8 @@ class TaskCreateRequest(BaseModel):
     success_criteria: text(CRITERIA_MAX) | None = None
     owner_id: uuid.UUID | None = None
     workspace: WorkspaceIn | None = None
+    # Opt in to meaning-based ranking of long attachments. Sends attachment text to the embedding provider.
+    semantic_retrieval: bool = False
 
 
 class TaskOut(BaseModel):
@@ -114,6 +117,7 @@ class TaskOut(BaseModel):
     success_criteria: str | None
     owner_id: uuid.UUID | None
     workspace: dict | None = None
+    semantic_retrieval: bool = False
     created_at: datetime
 
 
@@ -129,12 +133,14 @@ async def create_task(
     workspace = await _validated_workspace(req.workspace) if req.workspace is not None else None
     async with sessionmaker() as db:
         row = Task(title=req.title, brief=req.brief, output_type=req.output_type,
-                    success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace)
+                    success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace,
+                    semantic_retrieval=req.semantic_retrieval)
         db.add(row)
         await db.flush()
         audit.emit(action="task.created", summary=f"Created task {row.title}", task_id=row.id,
                            subject_type="task", subject_id=row.id,
-                           detail={"title": row.title, "output_type": row.output_type, "build": workspace is not None})
+                           detail={"title": row.title, "output_type": row.output_type, "build": workspace is not None,
+                                   "semantic_retrieval": row.semantic_retrieval})
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
@@ -159,6 +165,56 @@ async def set_task_workspace(
         await db.commit()
         await db.refresh(row)
         return TaskCreateResponse(task=TaskOut.model_validate(row, from_attributes=True))
+
+
+# ---------------------------------------------------------------- semantic retrieval switch
+
+class RetrievalIn(BaseModel):
+    semantic_retrieval: bool
+
+
+class RetrievalOut(BaseModel):
+    semantic_retrieval: bool
+    ready: bool            # an embedding provider is configured on this machine
+    provider: str | None   # "openai" | "ollama" | None
+    model: str | None
+    needs: str | None      # what to set when not ready
+
+
+def _retrieval_out(task: Task) -> RetrievalOut:
+    provider = embedding_provider()
+    return RetrievalOut(semantic_retrieval=task.semantic_retrieval, ready=provider is not None, provider=provider,
+                        model=embedding_model(provider) if provider else None, needs=None if provider else NEEDS)
+
+
+@router.get("/tasks/{task_id}/retrieval", response_model=RetrievalOut)
+async def get_task_retrieval(task_id: uuid.UUID,
+                             sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> RetrievalOut:
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
+        return _retrieval_out(row)
+
+
+@router.put("/tasks/{task_id}/retrieval", response_model=RetrievalOut)
+async def set_task_retrieval(task_id: uuid.UUID, req: RetrievalIn,
+                             sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> RetrievalOut:
+    """Turn the semantic stage on or off. Takes effect on each seat's next turn (the prompt is rebuilt every turn).
+    Allowed whether or not an embedding provider is set up: without one, turns quietly rank by keyword."""
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
+        if row.semantic_retrieval != req.semantic_retrieval:
+            row.semantic_retrieval = req.semantic_retrieval
+            audit.emit(action="task.semantic_retrieval_set",
+                       summary=("Turned on" if req.semantic_retrieval else "Turned off") + f" semantic retrieval for {row.title}",
+                       task_id=row.id, subject_type="task", subject_id=row.id,
+                       detail={"semantic_retrieval": req.semantic_retrieval})
+        await db.commit()
+        await db.refresh(row)
+        return _retrieval_out(row)
 
 
 # ---------------------------------------------------------------- DELETE /tasks/{id}
@@ -201,6 +257,7 @@ class TaskListOut(BaseModel):
     last_session_id: uuid.UUID | None
     output_artifact_id: uuid.UUID | None
     workspace: dict | None = None  # Build mode: {repo_path, base_branch, test_command}
+    semantic_retrieval: bool = False
 
 
 @router.get("/tasks", response_model=list[TaskListOut])
@@ -232,6 +289,7 @@ async def list_tasks(sessionmaker: async_sessionmaker = Depends(get_db_sessionma
                 status=last_session.status if last_session is not None else None,
                 last_session_id=last_session.id if last_session is not None else None,
                 output_artifact_id=output_artifact_id, workspace=task.workspace,
+                semantic_retrieval=task.semantic_retrieval,
             ))
         return out
 

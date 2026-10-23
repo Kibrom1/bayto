@@ -1,5 +1,6 @@
 """M2.8: POST /tasks. M3.1 adds GET /tasks. Real Postgres (task rows), no sbx or
 Anthropic needed."""
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -213,3 +214,32 @@ async def test_usage_report_aggregates_ledger_entries_across_sessions(live_sessi
     assert session_ids == {str(session_a.id), str(session_b.id)}
     for entry in body["ledger"]:
         assert set(entry.keys()) == {"session_id", "tokens_in", "tokens_out", "cost", "timestamp"}
+
+
+# ---------------------------------------------------------------- semantic retrieval switch
+
+async def test_semantic_retrieval_is_off_by_default_and_can_be_set_on_create(live_sessionmaker, monkeypatch):
+    for var in ("OPENAI_API_KEY", "OLLAMA_HOST"):
+        monkeypatch.delenv(var, raising=False)
+    from orchestrator.app import app
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        base = {"title": "T", "brief": "B", "output_type": "decision"}
+        off = (await c.post("/tasks", json=base)).json()["task"]
+        on = (await c.post("/tasks", json={**base, "semantic_retrieval": True})).json()["task"]
+        assert off["semantic_retrieval"] is False and on["semantic_retrieval"] is True
+        listed = {t["id"]: t for t in (await c.get("/tasks")).json()}
+        assert listed[on["id"]]["semantic_retrieval"] is True and listed[off["id"]]["semantic_retrieval"] is False
+        # switch it later; the answer says whether a provider is set up
+        got = (await c.get(f"/tasks/{off['id']}/retrieval")).json()
+        assert got == {"semantic_retrieval": False, "ready": False, "provider": None, "model": None,
+                       "needs": "OPENAI_API_KEY or OLLAMA_HOST"}
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        put = (await c.put(f"/tasks/{off['id']}/retrieval", json={"semantic_retrieval": True})).json()
+        assert put == {"semantic_retrieval": True, "ready": True, "provider": "openai",
+                       "model": "text-embedding-3-small", "needs": None}
+        assert "sk-test" not in json.dumps(put)
+        assert (await c.put(f"/tasks/{off['id']}/retrieval", json={"semantic_retrieval": False})).json()["semantic_retrieval"] is False
+        missing = uuid.uuid4()
+        assert (await c.get(f"/tasks/{missing}/retrieval")).status_code == 404
+        assert (await c.put(f"/tasks/{missing}/retrieval", json={"semantic_retrieval": True})).status_code == 404
+        assert (await c.put(f"/tasks/{off['id']}/retrieval", json={"semantic_retrieval": "yes please"})).status_code == 422

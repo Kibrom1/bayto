@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
   attachFile, attachFolder, attachUrl, listAttachments, removeAttachment, setAttachmentRoles, type Attachment,
 } from '../api/attachments'
+import { SEMANTIC_LABEL, getRetrieval, setRetrieval, type RetrievalSetting } from '../api/tasks'
 import { RolePicker } from './RolePicker'
 
 const KIND_LABEL = { file: 'File', folder: 'Folder', url: 'Link' } as const
@@ -30,12 +31,28 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
   const [openWho, setOpenWho] = useState(false) // the "who can read what I add next" picker
   const [newRoles, setNewRoles] = useState<string[] | null>(null) // null: everyone
   const [newChosen, setNewChosen] = useState(false) // "Only chosen roles" picked, nothing ticked yet
+  const [retrieval, setRetrievalState] = useState<RetrievalSetting | null>(null) // null: unknown, the switch is hidden
   const fileRef = useRef<HTMLInputElement>(null)
   const inputId = useId()
 
   useEffect(() => {
     listAttachments(taskId).then((list) => setItems(Array.isArray(list) ? list : [])).catch((e) => { setItems([]); setError(e instanceof Error ? e.message : String(e)) })
   }, [taskId])
+
+  useEffect(() => {
+    let live = true
+    ;(async () => { try { const r = await getRetrieval(taskId); if (live) setRetrievalState(r) } catch { /* switch stays hidden */ } })()
+    return () => { live = false }
+  }, [taskId])
+
+  async function toggleSemantic(on: boolean) {
+    setError(null)
+    try {
+      setRetrievalState(await setRetrieval(taskId, on))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   // The roles to send with an add: none for Everyone. "Only chosen roles" with nothing ticked is refused here
   // (the API would answer 422 roles_invalid) so nothing is added by mistake.
@@ -171,6 +188,18 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
             ? 'Text, Markdown and code files only. Hidden files, keys, passwords and dependency folders are left out.'
             : 'Public pages only. Addresses on this computer or your network are refused.'}</span>
         </form>
+      )}
+
+      {retrieval && (
+        <div className="field">
+          <label>
+            <input type="checkbox" checked={retrieval.semantic_retrieval} onChange={(e) => toggleSemantic(e.target.checked)} />{' '}
+            {SEMANTIC_LABEL}
+          </label>
+          <span className="hint">{retrieval.ready
+            ? `Used only when the attachments are too long to send whole. ${retrieval.provider === 'ollama' ? 'Their text is sent to your Ollama host.' : 'Their text is sent to the OpenAI embeddings endpoint.'} Any failure falls back to keyword search.`
+            : `Not set up: set ${retrieval.needs} on the orchestrator and restart. Until then keyword search is used.`}</span>
+        </div>
       )}
 
       {busy && !adding && <p className="hint" role="status">Reading…</p>}

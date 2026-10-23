@@ -189,6 +189,8 @@ Other providers are for discussion seats only. Build seats and the final write-u
 
 Models are listed with `BAYTO_EXTRA_MODELS`, comma separated: `id:label:tier:usd_per_turn[:price_in:price_out]`. The id is `<provider>/<model>`, for example `openai/gpt-4o-mini:GPT-4o mini:small:0.05:0.15:0.6`. The two optional prices are USD per million input and output tokens, used to record each turn's real cost. A model whose provider has no key shows in the picker as disabled with the variable it needs. Keys are read from the environment only, are removed from the environment of every program Bayto starts (`claude`, `sbx`, git, gh), and a provider error is shown without the request. `BAYTO_PROVIDER_TIMEOUT` (seconds, default 120) bounds each call.
 
+Embeddings for the optional semantic attachment search reuse these settings: `OPENAI_API_KEY` (model `BAYTO_EMBEDDING_MODEL`, default `text-embedding-3-small`) or `OLLAMA_HOST` (model `BAYTO_OLLAMA_EMBEDDING_MODEL`, default `nomic-embed-text`); `BAYTO_EMBEDDING_PROVIDER=openai|ollama` forces one. Nothing is sent unless a task turns on semantic retrieval; then the text of the attachments (and the search query) goes to that provider. See docs/per-agent-context-rag.md.
+
 A seat on another provider never falls back to a different model: if the call fails the session pauses for a human with the provider's message. Billing for these seats is on that provider's account, not your Claude subscription.
 
 ## Setting up a gateway

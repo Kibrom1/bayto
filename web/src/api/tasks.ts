@@ -13,6 +13,8 @@ export interface Task {
   output_artifact_id: string | null
   // Build mode: the local repository the team may change. Null for discussion-only tasks.
   workspace?: Workspace | null
+  // Opt-in meaning-based search of long attachments; sends document text to the embedding provider.
+  semantic_retrieval?: boolean
 }
 
 export interface Workspace {
@@ -40,6 +42,34 @@ export interface TaskCreateRequest {
   output_type: string
   success_criteria?: string | null
   workspace?: Workspace | null
+  semantic_retrieval?: boolean
+}
+
+export interface RetrievalSetting {
+  semantic_retrieval: boolean
+  ready: boolean // an embedding provider is set up on the orchestrator
+  provider: string | null
+  model: string | null
+  needs: string | null // what to set when not ready
+}
+
+/** The shared wording of the switch: the cost of turning it on is stated where it is chosen. */
+export const SEMANTIC_LABEL = "Find passages by meaning (sends your documents' text to an embedding provider)"
+
+export async function getRetrieval(taskId: string): Promise<RetrievalSetting> {
+  const res = await fetch(`/tasks/${taskId}/retrieval`)
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  return res.json()
+}
+
+export async function setRetrieval(taskId: string, semantic: boolean): Promise<RetrievalSetting> {
+  const res = await fetch(`/tasks/${taskId}/retrieval`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ semantic_retrieval: semantic }),
+  })
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  return res.json()
 }
 
 export async function listTasks(): Promise<Task[]> {

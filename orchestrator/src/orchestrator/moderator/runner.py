@@ -53,7 +53,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
 from .. import audit
+from ..attachment_prompt import PROMPT_BUDGET_CHARS, visible_to
 from ..attachment_report import attachment_report
+from ..semantic import semantic_scores
 from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
 from ..models import Session as SessionRow
@@ -917,8 +919,16 @@ class ModeratorRunner:
                 .order_by(TaskAttachment.created_at))).scalars().all()
         shown, self._attachment_report = "", []
         if attachments:
+            query = await self._attachment_query(task, row.rolling_summary)
+            semantic = None
+            if task.semantic_retrieval and query:
+                # Only what this seat may read, and only when the budget forces a choice of passages: nothing else
+                # is ever sent to the embedding provider. Any failure leaves `semantic` None (keyword ranking).
+                readable = visible_to(attachments, self._grant_seat)
+                if sum(len(a.content) for a in readable) > PROMPT_BUDGET_CHARS:
+                    semantic = await semantic_scores(self._sessionmaker, readable, query)
             shown, self._attachment_report = attachment_report(
-                attachments, query=await self._attachment_query(task, row.rolling_summary), seat=self._grant_seat)
+                attachments, query=query, seat=self._grant_seat, semantic=semantic)
             if shown:  # empty when every attachment is hidden from this seat
                 lines.append(shown)
         return "\n".join(lines)

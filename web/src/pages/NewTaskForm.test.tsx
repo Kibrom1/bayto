@@ -101,3 +101,23 @@ describe('NewTaskForm in Build mode', () => {
     expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('workspace')
   })
 })
+
+describe('NewTaskForm semantic search', () => {
+  it('is off unless ticked, and the label says document text leaves the machine', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(<NewTaskForm submitting={false} error={null} onSubmit={onSubmit} onCancel={() => {}} />)
+    await fillBasics(user)
+    await user.type(screen.getByLabelText('Output type'), 'decision')
+    await user.click(screen.getByRole('button', { name: 'Create task' }))
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('semantic_retrieval')
+    cleanup()
+    onSubmit.mockClear()
+    render(<NewTaskForm submitting={false} error={null} onSubmit={onSubmit} onCancel={() => {}} />)
+    await fillBasics(user)
+    await user.type(screen.getByLabelText('Output type'), 'decision')
+    await user.click(screen.getByLabelText(/sends your documents' text to an embedding provider/i))
+    await user.click(screen.getByRole('button', { name: 'Create task' }))
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ semantic_retrieval: true })
+  })
+})
