@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
-  attachFile, attachFolder, attachUrl, listAttachments, removeAttachment, type Attachment,
+  attachFile, attachFolder, attachUrl, listAttachments, removeAttachment, setAttachmentRoles, type Attachment,
 } from '../api/attachments'
 
 const KIND_LABEL = { file: 'File', folder: 'Folder', url: 'Link' } as const
@@ -15,12 +15,15 @@ function size(chars: number) {
 
 // Reference material for a task. Agents read a text snapshot taken when it is attached; they never get the
 // folder, the file or the network.
-export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId: string }) {
+// `roles` are the seats in this session; an attachment can be limited to some of them ("the contract is for the lawyer only").
+export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string; sessionId: string; roles?: string[] }) {
   const [items, setItems] = useState<Attachment[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [adding, setAdding] = useState<Adding>(null)
   const [value, setValue] = useState('')
+  const [picking, setPicking] = useState<string | null>(null) // the attachment whose visibility is open
+  const [chosen, setChosen] = useState<Set<string>>(new Set()) // attachments set to "chosen roles" before any role is ticked
   const fileRef = useRef<HTMLInputElement>(null)
   const inputId = useId()
 
@@ -64,6 +67,24 @@ export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId: 
     }
   }
 
+  async function setRoles(a: Attachment, next: string[] | null) {
+    setError(null)
+    try {
+      const saved = await setAttachmentRoles(taskId, a.id, next, sessionId)
+      setItems((cur) => (cur ?? []).map((x) => (x.id === a.id ? saved : x)))
+      setChosen((cur) => { const n = new Set(cur); if (next === null) n.delete(a.id); return n })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  function toggleRole(a: Attachment, role: string) {
+    const now = a.roles ?? []
+    const next = now.includes(role) ? now.filter((r) => r !== role) : [...now, role]
+    if (next.length === 0) { setError('Keep at least one role, or choose Everyone.'); return }
+    setRoles(a, next)
+  }
+
   const total = (items ?? []).reduce((n, a) => n + a.chars, 0)
   const perTurn = Math.min(total, PROMPT_BUDGET_CHARS)
 
@@ -80,7 +101,23 @@ export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId: 
               <span className="chip">{KIND_LABEL[a.kind]}</span>
               <span className="context-name" title={a.source ?? a.name}>{a.name}</span>
               <span className="muted">{size(a.chars)}{a.truncated ? ' · shortened' : ''}</span>
+              <button type="button" className="link-btn" aria-label={`Who can read ${a.name}`} aria-expanded={picking === a.id}
+                onClick={() => setPicking(picking === a.id ? null : a.id)}>
+                {a.roles ? `Only ${a.roles.join(', ')}` : 'Everyone'}
+              </button>
               <button type="button" className="link-btn" aria-label={`Remove ${a.name}`} onClick={() => remove(a)}>Remove</button>
+              {picking === a.id && (
+                <fieldset className="context-who">
+                  <legend>Who can read {a.name}</legend>
+                  <label><input type="radio" name={`who-${a.id}`} checked={!a.roles && !chosen.has(a.id)} onChange={() => setRoles(a, null)} /> Everyone</label>
+                  <label><input type="radio" name={`who-${a.id}`} checked={!!a.roles || chosen.has(a.id)}
+                    onChange={() => setChosen((cur) => new Set(cur).add(a.id))} /> Only chosen roles</label>
+                  {(a.roles || chosen.has(a.id)) && [...new Set([...roles, ...(a.roles ?? [])])].map((r) => (
+                    <label key={r} className="context-role"><input type="checkbox" checked={a.roles?.includes(r) ?? false} onChange={() => toggleRole(a, r)} /> {r}</label>
+                  ))}
+                  <span className="hint">Agents without access are not shown it at all, and are not told it exists. Anything an agent has already said in the discussion stays visible to the others.</span>
+                </fieldset>
+              )}
             </li>
           ))}
         </ul>

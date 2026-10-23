@@ -854,7 +854,10 @@ class ModeratorRunner:
                 select(TaskAttachment).where(TaskAttachment.task_id == task.id)
                 .order_by(TaskAttachment.created_at))).scalars().all()
         if attachments:
-            lines.append(attachment_prompt(attachments, query=await self._attachment_query(task, row.rolling_summary)))
+            shown = attachment_prompt(attachments, query=await self._attachment_query(task, row.rolling_summary),
+                                      seat=self._grant_seat)
+            if shown:  # empty when every attachment is hidden from this seat
+                lines.append(shown)
         return "\n".join(lines)
 
     async def _attachment_query(self, task, summary: str | None) -> str | None:
@@ -1158,6 +1161,7 @@ class ModeratorRunner:
             )).scalars().all()
             all_turns = [await self._to_turn_summary(session, t) for t in all_turns_rows]
             hint = self._mode.synthesis_prompt_hint
+            self._grant_seat = None  # the write-up is no seat's turn: only open attachments go in
             task_text = await self._task_text()
             if task_text:  # so the artifact answers the task, in the output type that was asked for
                 hint = f"{hint}\n\n{task_text}" if hint else task_text

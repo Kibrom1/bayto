@@ -70,6 +70,8 @@ class TaskAttachment(Base):
     source: Mapped[str | None] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Roles allowed to see it; null means everyone. Filtered before ranking (attachment_prompt.py).
+    roles: Mapped[list[str] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                   default=lambda: datetime.now(timezone.utc))
 

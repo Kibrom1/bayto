@@ -474,7 +474,7 @@ export function BaytoRoom() {
           })}
         </section>
 
-          {(canSend || paused) && session.task_id && sessionId && <ContextCard taskId={session.task_id} sessionId={sessionId} />}
+          {(canSend || paused) && session.task_id && sessionId && <ContextCard taskId={session.task_id} sessionId={sessionId} roles={roster.map((tc) => tc.participant).filter((p): p is string => !!p)} />}
 
           <div className="rail-block">
           <div className="mod-card">

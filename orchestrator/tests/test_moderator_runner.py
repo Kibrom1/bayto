@@ -1406,3 +1406,37 @@ async def test_task_text_includes_attached_context_as_reference_material(tmp_pat
     text = await runner._task_text()
     assert text.startswith("Task: T\nExpected output: memo")
     assert "REFERENCE MATERIAL" in text and 'name="terms.md"' in text and "Data stays in the EU." in text
+
+
+async def test_a_role_restricted_attachment_reaches_only_that_seat_in_discussion_and_build(tmp_path, live_sessionmaker):
+    from orchestrator.models import Session as SessionRow, TaskAttachment
+    session_id = await _make_session(live_sessionmaker)
+    await _set_task(live_sessionmaker, session_id, title="T", brief=None, output_type="memo", success_criteria=None)
+    await _seat(live_sessionmaker, session_id, "lawyer", 1)
+    await _seat(live_sessionmaker, session_id, "developer", 2)
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(SessionRow, session_id)).task_id
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="contract.md", source=None, content="PENALTY-CLAUSE-17 applies.",
+                              truncated=False, roles=["lawyer"]))
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="notes.md", source=None, content="Shared notes.", truncated=False))
+        await db.commit()
+    for pipeline in (False, True):
+        runner, *_ = mk_runner(tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+                               mode=mk_mode_config(), policy=RoundRobinFloorPolicy())
+        runner._pipeline = pipeline
+        view = await runner._build_view()
+        runner._grant_seat = "lawyer"
+        assert "PENALTY-CLAUSE-17" in await runner._build_context(view)
+        runner._grant_seat = "developer"
+        dev = await runner._build_context(view)
+        assert "PENALTY-CLAUSE-17" not in dev and "contract.md" not in dev and "Shared notes." in dev
+        runner._grant_seat = None
+        nobody = await runner._build_context(view)
+        assert "PENALTY-CLAUSE-17" not in nobody and "Shared notes." in nobody
+    # all attachments hidden: no reference block at all
+    runner._grant_seat = "developer"
+    async with live_sessionmaker() as db:
+        from sqlalchemy import update
+        await db.execute(update(TaskAttachment).where(TaskAttachment.task_id == task_id).values(roles=["lawyer"]))
+        await db.commit()
+    assert "REFERENCE MATERIAL" not in await runner._task_text()

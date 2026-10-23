@@ -23,6 +23,7 @@ function mockApi(refuse?: { url: string; detail: string }) {
     if (url.includes('/attachments/file')) { const a = { ...NOTES, id: 'f' + items.length, name: 'notes.md' }; items = [...items, a]; return json(a, 201) }
     if (url.includes('/attachments/folder')) { const a = { ...NOTES, id: 'd1', kind: 'folder', name: 'docs', source: '/p/docs', chars: 30000 }; items = [...items, a]; return json(a, 201) }
     if (url.includes('/attachments/url')) { const a = { ...NOTES, id: 'u1', kind: 'url', name: 'Vendor terms', source: 'https://e.com', chars: 800 }; items = [...items, a]; return json(a, 201) }
+    if (method === 'PATCH') { const id = url.split('/attachments/')[1].split('?')[0]; const roles = JSON.parse(String(init?.body)).roles; items = items.map((a) => (a.id === id ? { ...a, roles } : a)); return json(items.find((a) => a.id === id)) }
     if (method === 'DELETE') { items = items.filter((a) => !url.includes('/' + a.id)); return new Response(null, { status: 204 }) }
     return json({ detail: 'nope' }, 404)
   })
@@ -105,5 +106,53 @@ describe('ContextCard in a room', () => {
     await userEvent.click(await screen.findByRole('button', { name: /remove terms/i }))
     expect(calls).toContain('POST /tasks/t1/attachments/url?session_id=s1')
     await vi.waitFor(() => expect(calls).toContain('DELETE /tasks/t1/attachments/a1?session_id=s1'))
+  })
+})
+
+describe('ContextCard visibility', () => {
+  async function withFile(user: ReturnType<typeof userEvent.setup>) {
+    mockApi()
+    render(<ContextCard taskId="t1" sessionId="s1" roles={['lawyer', 'developer']} />)
+    await user.upload(await screen.findByLabelText('Choose files to attach'), new File(['# hi'], 'notes.md', { type: 'text/markdown' }))
+    await screen.findByText('notes.md')
+  }
+
+  it('shows an open attachment as Everyone and limits it to chosen roles', async () => {
+    const user = userEvent.setup()
+    await withFile(user)
+    const toggle = screen.getByRole('button', { name: /who can read notes\.md/i })
+    expect(toggle).toHaveTextContent('Everyone')
+    await user.click(toggle)
+    await user.click(screen.getByRole('radio', { name: /only chosen roles/i }))
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false) // nothing is saved until a role is ticked
+    await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Only lawyer'))
+    const patch = calls.find((c) => c.method === 'PATCH')!
+    expect(patch.url).toBe('/tasks/t1/attachments/f0?session_id=s1')
+    expect(patch.body).toEqual({ roles: ['lawyer'] })
+    await user.click(screen.getByRole('checkbox', { name: 'developer' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Only lawyer, developer'))
+  })
+
+  it('goes back to Everyone, and will not save an empty choice', async () => {
+    const user = userEvent.setup()
+    await withFile(user)
+    await user.click(screen.getByRole('button', { name: /who can read notes\.md/i }))
+    await user.click(screen.getByRole('radio', { name: /only chosen roles/i }))
+    await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
+    await screen.findByText('Only lawyer')
+    await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/at least one role/i)
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1)
+    await user.click(screen.getByRole('radio', { name: 'Everyone' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Everyone'))
+    expect(calls.filter((c) => c.method === 'PATCH').pop()!.body).toEqual({ roles: null })
+  })
+
+  it('shows a restricted attachment returned by the server', async () => {
+    mockApi()
+    items = [{ ...NOTES, id: 'c1', name: 'contract.md', roles: ['lawyer'] }]
+    render(<ContextCard taskId="t1" sessionId="s1" roles={['lawyer', 'developer']} />)
+    expect(await screen.findByRole('button', { name: /who can read contract\.md/i })).toHaveTextContent('Only lawyer')
   })
 })

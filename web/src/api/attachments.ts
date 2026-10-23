@@ -7,6 +7,7 @@ export interface Attachment {
   source: string | null
   chars: number
   truncated: boolean
+  roles?: string[] | null // null or missing: everyone can read it
   created_at: string
 }
 
@@ -43,3 +44,11 @@ export const attachUrl = (taskId: string, url: string, sessionId: string) =>
 
 export const removeAttachment = (taskId: string, id: string, sessionId: string) =>
   fetch(`/tasks/${taskId}/attachments/${id}${roomOnly(sessionId)}`, { method: 'DELETE' }).then((r) => ok<null>(r))
+
+// Who can read it: null for everyone, or the roles that can. Takes effect on each agent's next turn.
+export const setAttachmentRoles = (taskId: string, id: string, roles: string[] | null, sessionId: string) =>
+  fetch(`/tasks/${taskId}/attachments/${id}${roomOnly(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roles }),
+  }).then((r) => ok<Attachment>(r))
