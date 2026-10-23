@@ -1046,3 +1046,35 @@ async def test_a_build_session_needs_a_test_command(client, live_sessionmaker, m
         await db.commit()
     ok = await client.post("/sessions", json=body)
     assert ok.status_code == 201, ok.text
+
+
+async def test_agent_default_model_is_validated_edited_and_reset(client, live_sessionmaker):
+    from orchestrator.seed import AGENT_MODEL
+    ok = await client.post("/agents", json={"name": "Lawyer", "stance": "careful", "instructions": "Review the terms.",
+                                             "model": "claude-opus-5-5"})
+    assert ok.status_code == 201 and ok.json()["model"] == "claude-opus-5-5"
+    bad = await client.post("/agents", json={"name": "Clerk", "stance": "x", "instructions": "y", "model": "gpt-9"})
+    assert bad.status_code == 422 and bad.json()["detail"]["error"]["code"] == "invalid_model"
+    aid = ok.json()["id"]
+    assert (await client.patch(f"/agents/{aid}", json={"model": "claude-haiku-5-5"})).json()["model"] == "claude-haiku-5-5"
+    assert (await client.patch(f"/agents/{aid}", json={"stance": "firm"})).json()["model"] == "claude-haiku-5-5"  # untouched
+    assert (await client.patch(f"/agents/{aid}", json={"model": "nope"})).status_code == 422
+    assert (await client.patch(f"/agents/{aid}", json={"model": None})).json()["model"] == AGENT_MODEL  # reset
+
+
+async def test_room_roster_reports_each_seats_model(client, live_sessionmaker):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    created = await client.post("/sessions", json={"task_id": str(task_id), "mode_id": str(mode_id), "roster": [
+        {"agent_id": str(agent_ids[0]), "seat_order": 0, "model": "claude-haiku-5-5"},
+        {"agent_id": str(agent_ids[1]), "seat_order": 1}]})
+    assert created.status_code == 201, created.text
+    sid = uuid.UUID(created.json()["session"]["id"])
+    async with live_sessionmaker() as db:
+        for n, aid in enumerate(agent_ids):
+            db.add(Turn(session_id=sid, seq=n, speaker_id=aid, round=1))
+        agent_b = await db.get(Agent, agent_ids[1])
+        agent_b.model = "claude-opus-5-5"
+        await db.commit()
+    counts = {c["agent_id"]: c["model"] for c in (await client.get(f"/sessions/{sid}")).json()["session"]["turn_counts"]}
+    assert counts[str(agent_ids[0])] == "claude-haiku-5-5"   # the seat's own choice wins
+    assert counts[str(agent_ids[1])] == "claude-opus-5-5"     # otherwise the agent's default

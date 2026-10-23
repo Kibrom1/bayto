@@ -68,6 +68,7 @@ export interface TurnCountOut {
   participant: string | null
   agent_id: string
   turns: number
+  model?: string | null
 }
 
 export interface SessionDetailOut {

@@ -11,6 +11,7 @@ export default defineConfig({
       '/modes': 'http://127.0.0.1:8000',
       '/agents': 'http://127.0.0.1:8000',
       '/workspaces': 'http://127.0.0.1:8000',
+      '/models': 'http://127.0.0.1:8000',
       '/control': {
         target: 'http://127.0.0.1:8787',
         rewrite: (path) => path.replace(/^\/control/, ''),

@@ -4,6 +4,7 @@ export interface AgentDraft {
   name: string
   stance: string
   instructions: string
+  model?: string // '' = the standard default
 }
 
 async function send(method: string, path: string, body?: unknown) {
@@ -16,6 +17,6 @@ async function send(method: string, path: string, body?: unknown) {
   return res.status === 204 ? null : res.json()
 }
 
-export const createAgent = (d: AgentDraft) => send('POST', '/agents', { ...d, preset: 'discussion' })
-export const updateAgent = (id: string, d: AgentDraft) => send('PATCH', `/agents/${id}`, d)
+export const createAgent = (d: AgentDraft) => send('POST', '/agents', { ...d, model: d.model || null, preset: 'discussion' })
+export const updateAgent = (id: string, d: AgentDraft) => send('PATCH', `/agents/${id}`, { ...d, model: d.model || null })
 export const archiveAgent = (id: string) => send('DELETE', `/agents/${id}`)

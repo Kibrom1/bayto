@@ -71,7 +71,7 @@ describe('Custom agents on the setup screen', () => {
 
     expect(await screen.findByText('Custom')).toBeInTheDocument()
     const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/agents'))!
-    expect(post.body).toEqual({ name: 'Compliance', stance: 'risk-averse', instructions: 'Check every plan against the rules.', preset: 'discussion' })
+    expect(post.body).toEqual({ name: 'Compliance', stance: 'risk-averse', instructions: 'Check every plan against the rules.', model: null, preset: 'discussion' })
     expect(screen.getAllByText('Compliance').length).toBeGreaterThan(1) // in the explorer and on the roster
   })
 

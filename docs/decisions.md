@@ -101,3 +101,6 @@ Added for the first small pilot: `scripts/bayto-doctor.sh` (read-only preflight 
 
 ## 2026-10-23: Build permissions made explicit
 A Build task could start with no test command, which left the developer and tester unable to run any tests (live run: $4 and 8.9M tokens spent asking for a permission a chat reply cannot grant). Now: POST /sessions refuses a Build session without a test command (`test_command_required`); the repository preflight suggests one from the repo's files and returns a per-role permission table built from the same function the session uses; the tester gets only the test command (extra commands go to the developer); a `blocked` verdict pauses with a message saying how permissions work; the setup page edits the task's workspace for existing tasks too.
+
+## 2026-10-23: per-seat and per-agent models
+A seat can run on a model other than its agent's default (setup page select, sent as `roster[].model`), and a custom agent has a default model (dialog, `model` on create and update, reset by sending null). Both are checked against the catalogue (`422 invalid_model`); stored values are never re-checked. The setup estimate scales each seat by its model's planning cost relative to the default, and the room shows each seat's model. Providers other than Claude are still not supported.

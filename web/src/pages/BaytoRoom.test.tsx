@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BaytoRoom, friendlyFailure, splitVerdict, stopReasonText } from './BaytoRoom'
 
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => (
     new Response(
       JSON.stringify({
         session: {
@@ -25,7 +25,7 @@ beforeEach(() => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       },
-    ),
+    )),
   ))
 
   class FakeEventSource {

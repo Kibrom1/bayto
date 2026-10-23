@@ -10,6 +10,7 @@ import {
   type SessionCreateRequest,
 } from '../api/sessions'
 import { agentHue, initials } from '../agentColor'
+import { costFactor, getModels, type ModelCatalog } from '../api/models'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
@@ -73,6 +74,8 @@ export function SessionSetup() {
 
   const [modeId, setModeId] = useState('')
   const [agentIds, setAgentIds] = useState<string[]>([])
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null) // null until loaded, or if the server has no /models
+  const [seatModels, setSeatModels] = useState<Record<string, string>>({}) // agent id -> chosen model; absent = the agent's default
   const [dollars, setDollars] = useState('5')
   const [tokens, setTokens] = useState('200000')
   const [touched, setTouched] = useState(false)
@@ -106,6 +109,8 @@ export function SessionSetup() {
       })
       .catch(() => {})
   }, [taskId])
+
+  useEffect(() => { getModels().then(setCatalog).catch(() => {}) }, [])
 
   useEffect(() => {
     Promise.all([getModes(), getAgentTemplates()])
@@ -179,7 +184,9 @@ export function SessionSetup() {
   )
 
   const cap = parseFloat(dollars)
-  const estimate = roster.length * (isBuild ? BUILD_COST_PER_SEAT : COST_PER_SEAT)
+  // Each seat costs the usual per-seat figure times how its model compares with the default (Opus about 2x, Haiku about 0.2x).
+  const seatModel = (t: AgentTemplate) => seatModels[t.id] || t.model
+  const estimate = roster.reduce((sum, t) => sum + (isBuild ? BUILD_COST_PER_SEAT : COST_PER_SEAT) * costFactor(catalog, seatModel(t)), 0)
   const pct = cap > 0 ? Math.round((estimate / cap) * 100) : null
 
   const problems: string[] = []
@@ -223,7 +230,7 @@ export function SessionSetup() {
       const req: SessionCreateRequest = {
         task_id: taskId,
         mode_id: modeId,
-        roster: agentIds.map((agent_id, seat_order) => ({ agent_id, seat_order })),
+        roster: agentIds.map((agent_id, seat_order) => ({ agent_id, seat_order, ...(seatModels[agent_id] ? { model: seatModels[agent_id] } : {}) })),
         budget: {
           tokens: tokens ? parseInt(tokens, 10) : undefined,
           dollars: cap > 0 ? cap : undefined,
@@ -357,6 +364,13 @@ export function SessionSetup() {
                   <li key={t.id}>
                     <span className="seat">{i + 1}</span>
                     <span className="roster-name">{t.name}</span>
+                    {catalog && catalog.models.length > 0 && (
+                      <select className="seat-model" aria-label={`Model for ${t.name}`} value={seatModels[t.id] ?? ''}
+                        onChange={(e) => setSeatModels((m) => ({ ...m, [t.id]: e.target.value }))}>
+                        <option value="">Default ({catalog.models.find((m) => m.id === t.model)?.label ?? t.model})</option>
+                        {catalog.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                      </select>
+                    )}
                     <button type="button" className="btn ghost sm" aria-label={`Move ${t.name} up`} disabled={i === 0} onClick={() => move(t.id, -1)}>↑</button>
                     <button type="button" className="btn ghost sm" aria-label={`Move ${t.name} down`} disabled={i === roster.length - 1} onClick={() => move(t.id, 1)}>↓</button>
                   </li>
@@ -416,7 +430,8 @@ export function SessionSetup() {
 
       {agentDialog && (
         <AgentDialog
-          initial={agentDialog.edit ? { name: agentDialog.edit.name, stance: agentDialog.edit.stance, instructions: agentDialog.edit.system_prompt } : undefined}
+          initial={agentDialog.edit ? { name: agentDialog.edit.name, stance: agentDialog.edit.stance, instructions: agentDialog.edit.system_prompt, model: agentDialog.edit.model } : undefined}
+          models={catalog}
           submitting={agentBusy}
           error={agentError}
           onSubmit={saveAgent}

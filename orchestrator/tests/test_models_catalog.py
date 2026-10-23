@@ -178,3 +178,4 @@ async def test_continue_keeps_a_legacy_pre_catalog_model_id(live_sessionmaker, m
     models = {sa["agent_id"]: sa["model"] for sa in resp.json()["session_agents"]}
     assert models[str(agent_ids[0])] == "claude-sonnet-5"
     assert models[str(agent_ids[1])] == "claude-sonnet-5"
+

@@ -629,6 +629,7 @@ class TurnCountOut(BaseModel):
     # participants by role -- see runner.py's module docstring), not enforced here.
     agent_id: uuid.UUID
     turns: int
+    model: str | None = None  # what this seat runs on: its own choice for the session, else the agent's default
 
 
 class SessionDetailOut(BaseModel):
@@ -667,6 +668,11 @@ async def get_session(
         # time (M2.7) -- this just surfaces whatever's already persisted, no new definition.
         max_round = await db.scalar(select(func.max(Turn.round)).where(Turn.session_id == session_id))
 
+        seat_models = {aid: sa_model or agent_model for aid, sa_model, agent_model in (await db.execute(
+            select(SessionAgent.agent_id, SessionAgent.model, Agent.model)
+            .join(Agent, Agent.id == SessionAgent.agent_id)
+            .where(SessionAgent.session_id == session_id))).all()}
+
         turn_counts_rows = (await db.execute(
             select(Agent.role, Agent.id, func.count(Turn.id))
             .select_from(Turn)
@@ -680,7 +686,7 @@ async def get_session(
         id=row.id, task_id=row.task_id, mode_id=row.mode_id, status=row.status,
         started_at=row.started_at, ended_at=row.ended_at, round=max_round or 0, budget=row.budget, archived_at=row.archived_at,
         usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
-        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
+        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count, model=seat_models.get(agent_id))
                      for role, agent_id, count in turn_counts_rows],
         failure_reason=session_failures.get(session_id) if row.status == "failed" else None,
         stage=session_stages.get(session_id) if row.status == "starting" else None,
