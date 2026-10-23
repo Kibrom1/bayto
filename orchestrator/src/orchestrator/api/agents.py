@@ -27,9 +27,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .. import audit
 from ..models import Agent
+from ..models_catalog import is_known_model
 from ..seed import AGENT_MODEL
 from .deps import get_db_sessionmaker
-from .types import text
+from .types import LABEL_MAX, text
 
 router = APIRouter()
 
@@ -91,12 +92,19 @@ class AgentCreate(BaseModel):
     stance: text(STANCE_MAX)
     instructions: text(INSTRUCTIONS_MAX)
     preset: Literal["discussion"] = DEFAULT_PRESET
+    model: text(LABEL_MAX) | None = None  # the agent's default model; null means the standard default
 
 
 class AgentUpdate(BaseModel):
     name: text(NAME_MAX) | None = None
     stance: text(STANCE_MAX) | None = None
     instructions: text(INSTRUCTIONS_MAX) | None = None
+    model: text(LABEL_MAX) | None = None  # sending null resets to the standard default; leaving it out changes nothing
+
+
+def _check_model(model: str | None) -> None:
+    if not is_known_model(model):
+        raise HTTPException(422, detail=_error("invalid_model", f"{model} is not a known model", "model"))
 
 
 @router.get("/agents/templates", response_model=list[AgentOut])
@@ -132,17 +140,18 @@ async def _check_name_and_role(db, name: str, *, exclude: uuid.UUID | None = Non
 
 @router.post("/agents", status_code=201, response_model=AgentOut)
 async def create_agent(req: AgentCreate, sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> AgentOut:
+    _check_model(req.model)
     async with sessionmaker() as db:
         role = await _check_name_and_role(db, req.name)
         row = Agent(
             kind=KIND_CUSTOM, name=req.name, role=role, system_prompt=req.instructions, stance=req.stance,
-            model=AGENT_MODEL, params_json={"preset": req.preset}, tools=list(PRESETS[req.preset]["tools"]), version="1",
+            model=req.model or AGENT_MODEL, params_json={"preset": req.preset}, tools=list(PRESETS[req.preset]["tools"]), version="1",
         )
         db.add(row)
         await db.flush()
         audit.emit(action="agent.created", summary=f"Created custom agent {row.name}",
                            subject_type="agent", subject_id=row.id,
-                           detail={"name": row.name, "role": row.role, "stance": row.stance, "preset": req.preset,
+                           detail={"name": row.name, "role": row.role, "stance": row.stance, "preset": req.preset, "model": row.model,
                                    "tools": row.tools, "instructions_chars": len(req.instructions),
                                    "instructions_sha256": audit.sha256(req.instructions)})
         await db.commit()
@@ -162,9 +171,16 @@ async def _get_custom(db, agent_id: uuid.UUID) -> Agent:
 @router.patch("/agents/{agent_id}", response_model=AgentOut)
 async def update_agent(agent_id: uuid.UUID, req: AgentUpdate,
                        sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> AgentOut:
+    if "model" in req.model_fields_set:
+        _check_model(req.model)
     async with sessionmaker() as db:
         row = await _get_custom(db, agent_id)
         changed = []
+        if "model" in req.model_fields_set:
+            new_model = req.model or AGENT_MODEL
+            if new_model != row.model:
+                row.model = new_model
+                changed.append("model")
         if req.name is not None and req.name != row.name:
             # The role is the agent's identity in transcripts and the moderator's addressing, so a rename keeps it.
             await _check_name_and_role(db, req.name, exclude=row.id, check_role=False)
@@ -179,7 +195,7 @@ async def update_agent(agent_id: uuid.UUID, req: AgentUpdate,
         row.version = str(int(row.version or "1") + 1)
         audit.emit(action="agent.updated", summary=f"Edited agent {row.name} ({', '.join(changed) or 'no change'})",
                            subject_type="agent", subject_id=row.id,
-                           detail={"changed": changed, "version": row.version,
+                           detail={"changed": changed, "version": row.version, "model": row.model,
                                    "instructions_sha256": audit.sha256(row.system_prompt or "")})
         await db.commit()
         await db.refresh(row)

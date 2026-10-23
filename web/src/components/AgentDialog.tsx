@@ -1,9 +1,11 @@
 import { useId, useState, type FormEvent } from 'react'
 import type { AgentDraft } from '../api/agents'
+import type { ModelCatalog } from '../api/models'
 import { Modal } from './Dialog'
 
 interface Props {
   initial?: AgentDraft
+  models?: ModelCatalog | null
   submitting: boolean
   error: string | null
   onSubmit: (draft: AgentDraft) => void
@@ -12,10 +14,12 @@ interface Props {
 
 // Create or edit a custom agent. The permission line is fixed text, not a control: the server decides what a
 // custom agent may do, and today that is one preset.
-export function AgentDialog({ initial, submitting, error, onSubmit, onCancel }: Props) {
+export function AgentDialog({ initial, models, submitting, error, onSubmit, onCancel }: Props) {
   const [name, setName] = useState(initial?.name ?? '')
   const [stance, setStance] = useState(initial?.stance ?? '')
   const [instructions, setInstructions] = useState(initial?.instructions ?? '')
+  const [model, setModel] = useState(models?.models.some((m) => m.id === initial?.model) ? initial?.model ?? '' : '')
+  const modelId = useId()
   const nameId = useId()
   const stanceId = useId()
   const instrId = useId()
@@ -24,7 +28,7 @@ export function AgentDialog({ initial, submitting, error, onSubmit, onCancel }: 
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    onSubmit({ name: name.trim(), stance: stance.trim(), instructions: instructions.trim() })
+    onSubmit({ name: name.trim(), stance: stance.trim(), instructions: instructions.trim(), model })
   }
 
   return (
@@ -49,6 +53,16 @@ export function AgentDialog({ initial, submitting, error, onSubmit, onCancel }: 
             <textarea id={instrId} value={instructions} onChange={(e) => setInstructions(e.target.value)} required rows={6} maxLength={4000}
               placeholder="What this agent knows, what it cares about, and how it should argue." />
           </div>
+          {models && models.models.length > 0 && (
+            <div className="field">
+              <label htmlFor={modelId}>Default model</label>
+              <select id={modelId} value={model} onChange={(e) => setModel(e.target.value)}>
+                <option value="">Standard ({models.models.find((m) => m.id === models.default)?.label ?? 'default'})</option>
+                {models.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+              <span className="hint">Used whenever this agent is seated. You can still pick a different model for a seat in a session.</span>
+            </div>
+          )}
           <div className="field">
             <span className="label">Permissions</span>
             <span className="hint"><strong>Discussion only.</strong> Takes part in the conversation and can read the project folder. It cannot change files, run commands or use the network.</span>

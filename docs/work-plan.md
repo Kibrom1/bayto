@@ -173,6 +173,7 @@ Done, committed, waiting for a push and PR:
 - [x] Human messages sent mid-session now reach the agents' next prompt, once per agent (`a047dc6`, 447 orchestrator tests). Before this, an interject was recorded but its text never reached any agent.
 - [x] The message box turns itself off for ended, paused and starting sessions instead of returning a 409 (`d17ff84`, 42 web tests).
 - [x] Usage-report returns 404 for unknown tasks and zero-fills sessionless ones (`6011c53`, made by the Build team; PR #111 had a merge conflict, resolved on `fix/usage-report-404`).
+- [x] Per-agent models step 1: model catalogue, GET /models, seat-model validation (422 invalid_model), and audit detail carrying each seat's resolved model (see per-agent-models.md) (25d3dbd, 0435e48, 588 orchestrator tests).
 
 Open (from the 2026-10-18 analysis, see [analysis-2026-10-18.md](analysis-2026-10-18.md)):
 

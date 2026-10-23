@@ -2,6 +2,17 @@
 
 Status: proposal (2026-10-22). Nothing in this document is built yet except what the "What exists" section lists.
 
+## Status (2026-10-23)
+
+| Step | State |
+| --- | --- |
+| 1. Catalogue, `GET /models`, `invalid_model` on `POST /sessions`, model in the `session.created` audit roster | Done |
+| 2. Seat model select in setup; estimate from each seat's model; model shown under each seat in the room | Done |
+| 3. Default model on a custom agent (create, edit, dialog, audit) | Done |
+| 4. Provider adapter for discussion seats; local model gateway; per-session synthesis model | Not started |
+
+Estimate: each seat costs the usual per-seat figure ($0.50, or $3 for Build) times its model's `usd_per_turn` divided by the default model's, so Haiku is about 0.2x and Opus about 1.8x. The catalogue figures are planning numbers, not prices. `POST /sessions/{id}/continue` copies stored models without validating them, so older ids keep working. The seeded agents still carry the legacy `claude-sonnet-5`, shown as "Default (claude-sonnet-5)" in the seat select.
+
 ## Goal
 
 Let a person choose which model, and later which provider, each agent uses: for example the Architect on a large model, the Tester on a small, cheap one, and (later) the Lawyer on a model that runs locally. Defaults stay as they are, so nobody has to choose.

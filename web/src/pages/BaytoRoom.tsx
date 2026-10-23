@@ -25,6 +25,7 @@ import { ChangeSet } from './ChangeSet'
 import { ContextCard } from '../components/ContextCard'
 import { Synthesis } from './Synthesis'
 import { agentHue, initials } from '../agentColor'
+import { getModels, modelLabel, type ModelCatalog } from '../api/models'
 import { TableRing } from '../components/TableRing'
 import './BaytoRoom.css'
 
@@ -73,6 +74,8 @@ export function BaytoRoom() {
   const [taskTitle, setTaskTitle] = useState<string | null>(null)
   const [modeName, setModeName] = useState<string | null>(null)
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null) // model names for the roster; raw ids show without it
+  useEffect(() => { getModels().then(setCatalog).catch(() => {}) }, [])
   const [draft, setDraft] = useState('')
   const [target, setTarget] = useState('*')
   const [sending, setSending] = useState(false)
@@ -463,7 +466,7 @@ export function BaytoRoom() {
                 <span className="avatar" aria-hidden="true">{initials(info.name)}</span>
                 <div>
                   <div className="roster-name">{info.name}</div>
-                  <div className="roster-sub">{info.stance ? `${info.stance} · ` : ''}{tc.turns} {tc.turns === 1 ? 'turn' : 'turns'}</div>
+                  <div className="roster-sub">{info.stance ? `${info.stance} · ` : ''}{tc.model ? `${modelLabel(catalog, tc.model)} · ` : ''}{tc.turns} {tc.turns === 1 ? 'turn' : 'turns'}</div>
                 </div>
                 {role in live && <span className="speaking" role="img" aria-label="Speaking now" />}
               </div>

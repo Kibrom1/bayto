@@ -25,6 +25,7 @@ from .. import audit
 from ..models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
+from ..models_catalog import is_known_model
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_login_check, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import _retire_runtime, factory_root, launch_runner, session_failures, session_stages
@@ -167,6 +168,9 @@ async def create_session(
             if (mode_row.name != "build" and (agent_row.role or "").startswith("build-")):
                 raise HTTPException(422, detail=_error("invalid_agent", f"{agent_row.name} only works in a Build session",
                                                         "roster.agent_id"))
+            if not is_known_model(entry.model):
+                raise HTTPException(422, detail=_error("invalid_model", f"{entry.model} is not a known model",
+                                                        "roster.model"))
             sa = SessionAgent(session_id=session_row.id, agent_id=entry.agent_id,
                                agent_version=agent_row.version,  # snapshotted server-side, never client-supplied
                                seat_order=entry.seat_order, muted=entry.muted, harness=entry.harness,
@@ -174,7 +178,8 @@ async def create_session(
             db.add(sa)
             session_agents.append(sa)
             roster_log.append({"agent_id": str(entry.agent_id), "name": agent_row.name, "role": agent_row.role,
-                               "version": agent_row.version, "kind": agent_row.kind})
+                               "version": agent_row.version, "kind": agent_row.kind,
+                               "model": sa.model or agent_row.model})
 
         audit.emit(action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
                            task_id=req.task_id, session_id=session_row.id, subject_type="session", subject_id=session_row.id,
@@ -624,6 +629,7 @@ class TurnCountOut(BaseModel):
     # participants by role -- see runner.py's module docstring), not enforced here.
     agent_id: uuid.UUID
     turns: int
+    model: str | None = None  # what this seat runs on: its own choice for the session, else the agent's default
 
 
 class SessionDetailOut(BaseModel):
@@ -662,6 +668,11 @@ async def get_session(
         # time (M2.7) -- this just surfaces whatever's already persisted, no new definition.
         max_round = await db.scalar(select(func.max(Turn.round)).where(Turn.session_id == session_id))
 
+        seat_models = {aid: sa_model or agent_model for aid, sa_model, agent_model in (await db.execute(
+            select(SessionAgent.agent_id, SessionAgent.model, Agent.model)
+            .join(Agent, Agent.id == SessionAgent.agent_id)
+            .where(SessionAgent.session_id == session_id))).all()}
+
         turn_counts_rows = (await db.execute(
             select(Agent.role, Agent.id, func.count(Turn.id))
             .select_from(Turn)
@@ -675,7 +686,7 @@ async def get_session(
         id=row.id, task_id=row.task_id, mode_id=row.mode_id, status=row.status,
         started_at=row.started_at, ended_at=row.ended_at, round=max_round or 0, budget=row.budget, archived_at=row.archived_at,
         usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
-        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count)
+        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count, model=seat_models.get(agent_id))
                      for role, agent_id, count in turn_counts_rows],
         failure_reason=session_failures.get(session_id) if row.status == "failed" else None,
         stage=session_stages.get(session_id) if row.status == "starting" else None,
