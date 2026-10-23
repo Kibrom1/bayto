@@ -30,7 +30,7 @@ from fastapi import FastAPI
 
 from acp import Envelope  # noqa: F401  (proves acp is a real dependency, kept from M1)
 
-from .api import (agents_router, attachments_router, model_catalog_router, modes_router, pull_request_router,
+from .api import (agents_router, app_config_router, attachments_router, model_catalog_router, modes_router, pull_request_router,
                   sessions_router, tasks_router)
 from .api.runtime import launch_runner
 from .db import get_sessionmaker
@@ -133,6 +133,7 @@ app.include_router(sessions_router)
 app.include_router(modes_router)
 app.include_router(agents_router)
 app.include_router(model_catalog_router)
+app.include_router(app_config_router)
 
 
 @app.get("/healthz")
