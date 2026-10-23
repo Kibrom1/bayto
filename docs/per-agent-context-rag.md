@@ -1,6 +1,6 @@
 # Per-agent context with retrieval (RAG)
 
-Status: first part built (2026-10-23): per-seat selection of attachment passages. It differs from the plan below in one way: chunks are made and ranked with BM25 in the orchestrator when the prompt is built (`retrieval.py`, `attachment_prompt.py`), not stored in an `attachment_chunk` table with Postgres full-text search. Attachments are capped at 100,000 characters, so this is cheap, needs no migration or backfill, and stays correct when an attachment changes. A table becomes worth it if attachments grow far beyond the cap or embeddings are added. Small attachments (under 4,000 characters) are always sent whole; with no query or no keyword match the old behaviour (start of each attachment) applies. Not built: role visibility per attachment, "context used" notes, embeddings. Written 2026-10-23.
+Status: first part built (2026-10-23): per-seat selection of attachment passages. It differs from the plan below in one way: chunks are made and ranked with BM25 in the orchestrator when the prompt is built (`retrieval.py`, `attachment_prompt.py`), not stored in an `attachment_chunk` table with Postgres full-text search. Attachments are capped at 100,000 characters, so this is cheap, needs no migration or backfill, and stays correct when an attachment changes. A table becomes worth it if attachments grow far beyond the cap or embeddings are added. Small attachments (under 4,000 characters) are always sent whole; with no query or no keyword match the old behaviour (start of each attachment) applies. Role visibility per attachment is built too (2026-10-23, see below). Not built: "context used" notes, embeddings. Written 2026-10-23.
 
 ## Problem
 
@@ -55,6 +55,8 @@ Per-seat context requires `_build_context` to know who is about to speak. It alr
 ## Optional per-agent source scoping
 
 Separate from ranking: let a task mark an attachment as visible to **all** (default) or to **chosen roles**. This is the privacy-style control ("the contract is for the lawyer only"). It filters before ranking. UI: a role picker on each attachment. Ship after ranking works, because ranking alone already gives most of the value.
+
+Built (2026-10-23): `task_attachment.roles` (null means everyone; migration `c9d0e1f2a3b4`). Roles are set with `roles` when attaching a file, folder or link, and changed with `PATCH /tasks/{id}/attachments/{attachment_id}` (audited as `attachment.visibility_changed`). Roles must belong to existing agents. The filter runs first in `attachment_prompt` (`visible_to`), before ranking and before the budget is shared, so a hidden attachment does not appear in a seat's excerpts or in the "Not shown" line. With no seat known only open attachments are shown. Limits to know: a restricted attachment is not announced to the team (the note would name it), and what an agent says in the shared discussion is still read by the others, so this keeps the file out of other seats' prompts but cannot stop a lawyer from quoting it aloud.
 
 ## Earlier turns and earlier sessions (phase 3)
 

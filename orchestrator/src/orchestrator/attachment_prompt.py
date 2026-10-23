@@ -20,6 +20,7 @@ class _Attachment(Protocol):
     name: str
     source: str | None
     content: str
+    roles: list[str] | None = None
 
 
 HEADER = (
@@ -83,10 +84,19 @@ def _excerpts(items: list[_Attachment], budget: int, query: str) -> list[str] | 
     return [b for b in blocks if b]
 
 
-def attachment_prompt(attachments: Iterable[_Attachment], budget: int = PROMPT_BUDGET_CHARS, query: str | None = None) -> str:
+def visible_to(attachments: Iterable[_Attachment], seat: str | None) -> list[_Attachment]:
+    """Only what `seat` may read. An attachment with roles null is for everyone; one with roles is for those roles
+    only. With no seat known (None) only the open ones are shown, so a restricted one never leaks by default."""
+    return [a for a in attachments if getattr(a, "roles", None) is None or (seat is not None and seat in a.roles)]
+
+
+def attachment_prompt(attachments: Iterable[_Attachment], budget: int = PROMPT_BUDGET_CHARS, query: str | None = None,
+                      seat: str | None = None) -> str:
     """`query` is what this seat is about to work on. When everything fits it changes nothing; when it does not,
-    the parts of each attachment that match the query are shown instead of just the start."""
-    items = list(attachments)
+    the parts of each attachment that match the query are shown instead of just the start.
+    `seat` is the role about to speak: attachments it may not see are dropped first, before ranking and before
+    the budget is shared, so they leave no trace (not in the excerpts, not in "Not shown")."""
+    items = visible_to(attachments, seat)
     if not items:
         return ""
     if query and sum(len(a.content) for a in items) > budget:

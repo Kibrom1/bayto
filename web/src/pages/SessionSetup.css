@@ -57,8 +57,11 @@
 @media (pointer: coarse) { .agent-manage .link-btn { min-height: 44px; padding: 0 0.25rem; } }
 
 .context-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: 0.4rem; max-height: 14rem; overflow-y: auto; }
-.context-list li { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.context-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius); }
 .context-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-who { flex: 1 0 100%; display: grid; gap: 0.3rem; margin: 0.25rem 0 0; padding: 0.5rem 0.65rem; border: 1px solid var(--line); border-radius: var(--radius); }
+.context-who legend { font-size: 0.85rem; padding: 0 0.25rem; }
+.context-role { padding-left: 1.4rem; }
 .context-list .muted { margin-left: auto; white-space: nowrap; font-size: 0.85rem; }
 .context-list .link-btn, .context-actions + .context-add .link-btn { background: none; border: 0; padding: 0.2rem 0; font: inherit; font-size: 0.85rem; text-decoration: underline; color: var(--ink-2, var(--ink)); cursor: pointer; }
 .context-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }

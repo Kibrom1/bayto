@@ -6,8 +6,8 @@ import pytest
 
 from orchestrator import context_extract as cx
 from orchestrator.app import app
-from orchestrator.attachment_prompt import HEADER, PROMPT_BUDGET_CHARS, attachment_prompt
-from orchestrator.models import Mode, Session
+from orchestrator.attachment_prompt import HEADER, PROMPT_BUDGET_CHARS, attachment_prompt, visible_to
+from orchestrator.models import Agent, Mode, Session
 from test_context_extract import make_tree, pdf_bytes
 
 
@@ -243,3 +243,105 @@ async def test_removing_outside_a_room_is_refused(live_sessionmaker):
         r = await c.delete(f"/tasks/{tid}/attachments/{made['id']}")
         assert r.status_code == 422 and r.json()["detail"]["error"]["code"] == "room_required"
         assert len((await c.get(f"/tasks/{tid}/attachments")).json()) == 1
+
+
+# ---------------------------------------------------------------- who may see an attachment
+
+class R(A):
+    def __init__(self, name, content, roles):
+        super().__init__("file", name, content)
+        self.roles = roles
+
+
+def test_visible_to_filters_by_role_and_hides_restricted_ones_when_no_seat_is_known():
+    items = [R("open", "x", None), R("contract", "y", ["lawyer"]), R("both", "z", ["lawyer", "dev"])]
+    assert [a.name for a in visible_to(items, "lawyer")] == ["open", "contract", "both"]
+    assert [a.name for a in visible_to(items, "dev")] == ["open", "both"]
+    assert [a.name for a in visible_to(items, "pm")] == ["open"]
+    assert [a.name for a in visible_to(items, None)] == ["open"]
+    assert [a.name for a in visible_to([A("file", "plain", "t")], "dev")] == ["plain"]  # no roles attribute at all
+
+
+def test_a_hidden_attachment_leaves_no_trace_in_the_prompt():
+    secret = R("secret-contract", "CLAUSE-ALPHA " * 3000, ["lawyer"])
+    open_ = R("notes", "meeting notes " * 3000, None)
+    out = attachment_prompt([secret, open_], seat="dev", query="clause alpha")
+    assert "secret-contract" not in out and "CLAUSE-ALPHA" not in out and "notes" in out
+    assert "Not shown" not in out
+    # Tiny budget: the hidden one must not show up in the "Not shown" line or take a share of the budget.
+    many = [R(f"f{i}", "w" * 2000, None) for i in range(3)]
+    tight = attachment_prompt([secret, *many], budget=3_000, seat="dev")
+    assert "secret-contract" not in tight
+    assert attachment_prompt([secret], seat="dev") == ""
+    assert "secret-contract" in attachment_prompt([secret, open_], seat="lawyer")
+    assert "secret-contract" not in attachment_prompt([secret, open_])
+
+
+async def _agent(role: str):
+    async with _SM() as db:
+        db.add(Agent(kind="native", name=f"{role}-{uuid.uuid4().hex[:4]}", role=role))
+        await db.commit()
+
+
+async def test_roles_are_validated_stored_listed_and_audited(live_sessionmaker, caplog):
+    caplog.set_level("INFO", logger="bayto.audit")
+    role = f"lawyer{uuid.uuid4().hex[:5]}"
+    await _agent(role)
+    async with _client() as c:
+        tid = await _task(c)
+        made = await _put_roles(c, tid, [role, role])
+        assert made.status_code == 201, made.text
+        item = made.json()
+        assert item["roles"] == [role]
+        assert (await c.get(f"/tasks/{tid}/attachments")).json()[0]["roles"] == [role]
+        # a restricted attachment is not announced to the whole team
+        assert ROOM_RUNTIMES(tid).conversation.sent == []
+        # change it afterwards
+        r = await c.patch(f"/tasks/{tid}/attachments/{item['id']}", json={"roles": None})
+        assert r.status_code == 200 and r.json()["roles"] is None
+        r = await c.patch(f"/tasks/{tid}/attachments/{item['id']}", json={"roles": [role]})
+        assert r.json()["roles"] == [role]
+    log = caplog.text
+    assert log.count("attachment.visibility_changed") == 2 and "attachment.added" in log
+
+
+def ROOM_RUNTIMES(tid):
+    return app.state.session_runtimes[ROOMS[tid]]
+
+
+async def _put_roles(c, tid, roles):
+    return await c.put(f"/tasks/{tid}/attachments/file", params={"name": "contract.md", "roles": roles}, content=b"Termination: 30 days",
+                       headers={"content-type": "application/octet-stream"})
+
+
+async def test_bad_roles_are_refused_and_nothing_is_stored(live_sessionmaker):
+    good = f"dev{uuid.uuid4().hex[:5]}"
+    await _agent(good)
+    async with _client() as c:
+        tid = await _task(c)
+        for bad in (["nobody-has-this-role"], [good, "ghost"]):
+            r = await _put_roles(c, tid, bad)
+            assert r.status_code == 422 and r.json()["detail"]["error"]["code"] == "roles_invalid", bad
+        r = await c.post(f"/tasks/{tid}/attachments/folder", json={"path": "/tmp", "roles": []})
+        assert r.status_code == 422 and r.json()["detail"]["error"]["field"] == "roles"
+        r = await c.post(f"/tasks/{tid}/attachments/url", json={"url": "https://example.com/terms", "roles": ["ghost"]})
+        assert r.status_code == 422 and r.json()["detail"]["error"]["code"] == "roles_invalid"
+        r = await c.post(f"/tasks/{tid}/attachments/url", json={"url": "https://example.com/terms", "roles": [f"r{i}" for i in range(13)]})
+        assert r.status_code == 422
+        assert (await c.get(f"/tasks/{tid}/attachments")).json() == []
+        ok = await _put(c, tid, "open.md", b"hello")
+        assert ok.json()["roles"] is None
+        aid = ok.json()["id"]
+        for body in ({"roles": []}, {"roles": ["ghost"]}):
+            assert (await c.patch(f"/tasks/{tid}/attachments/{aid}", json=body)).status_code == 422
+        assert (await c.patch(f"/tasks/{tid}/attachments/{uuid.uuid4()}", json={"roles": None})).status_code == 404
+        assert (await c.get(f"/tasks/{tid}/attachments")).json()[0]["roles"] is None
+
+
+async def test_changing_who_can_read_needs_a_running_room(live_sessionmaker):
+    async with _client() as c:
+        tid = await _task(c)
+        aid = (await _put(c, tid, "n.md", b"x")).json()["id"]
+    async with _client(in_room=False) as c:
+        r = await c.patch(f"/tasks/{tid}/attachments/{aid}", json={"roles": None})
+        assert r.status_code == 422 and r.json()["detail"]["error"]["code"] == "room_required"
