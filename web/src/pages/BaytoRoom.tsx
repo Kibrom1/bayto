@@ -6,6 +6,7 @@ import {
   getModes,
   getSessionArtifacts,
   getSessionDetail,
+  exportSession,
   interjectSession,
   listTasks,
   archiveSession,
@@ -282,6 +283,7 @@ export function BaytoRoom() {
           ) : !finished && (
             <button type="button" className="btn" disabled={!canSend} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
           )}
+          <button type="button" className="btn" onClick={() => run(() => exportSession(sessionId!), 'Decision record downloaded')}>Export</button>
           {finished && messages.length > 0 && (
             <button type="button" className="btn" onClick={downloadTranscript}>Download transcript</button>
           )}
@@ -349,7 +351,9 @@ export function BaytoRoom() {
         </div>
       )}
       {!session.archived_at && session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
-        <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.</div>
+        <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.{' '}
+          <button type="button" className="btn" onClick={() => run(() => exportSession(sessionId!), 'Decision record downloaded')}>Export decision record</button>
+        </div>
       )}
       {status === 'orphaned' && (
         <div className="notice" role="status">

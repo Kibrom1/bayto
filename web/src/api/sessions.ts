@@ -239,3 +239,16 @@ export async function getSessionArtifacts(sessionId: string): Promise<ArtifactOu
   const body = await res.json()
   return Array.isArray(body?.artifacts) ? body.artifacts : []
 }
+
+/** Downloads the session as a Markdown decision record (GET /sessions/{id}/export?format=md). */
+export async function exportSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/sessions/${sessionId}/export?format=md`)
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'bayto-decision-record.md'
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(url)
+}

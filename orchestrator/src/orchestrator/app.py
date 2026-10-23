@@ -30,7 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from acp import Envelope  # noqa: F401  (proves acp is a real dependency, kept from M1)
 
-from .api import (agents_router, app_config_router, attachments_router, model_catalog_router, modes_router, pull_request_router,
+from .api import (agents_router, app_config_router, attachments_router, export_router, model_catalog_router, modes_router, pull_request_router,
                   sessions_router, tasks_router)
 from .api.runtime import launch_runner
 from .auth import auth_middleware, router as auth_router
@@ -132,6 +132,7 @@ async def _host_check(request, call_next):
 app.include_router(tasks_router)
 app.include_router(attachments_router)
 app.include_router(pull_request_router)
+app.include_router(export_router)
 app.include_router(sessions_router)
 app.include_router(modes_router)
 app.include_router(agents_router)
