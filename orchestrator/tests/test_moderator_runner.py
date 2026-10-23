@@ -1440,3 +1440,34 @@ async def test_a_role_restricted_attachment_reaches_only_that_seat_in_discussion
         await db.execute(update(TaskAttachment).where(TaskAttachment.task_id == task_id).values(roles=["lawyer"]))
         await db.commit()
     assert "REFERENCE MATERIAL" not in await runner._task_text()
+
+
+async def test_the_final_write_up_sees_only_open_attachments_even_after_a_restricted_seat_spoke(tmp_path, live_sessionmaker):
+    """_finish must not build the write-up as the last speaker: that seat's restricted files would leak into the
+    artifact every seat and the reader get. The hint handed to the synthesizer carries open attachments only."""
+    from orchestrator.models import Session as SessionRow, TaskAttachment
+    session_id = await _make_session(live_sessionmaker)
+    await _set_task(live_sessionmaker, session_id, title="T", brief=None, output_type="memo", success_criteria=None)
+    await _seat(live_sessionmaker, session_id, "lawyer", 1)
+    async with live_sessionmaker() as db:
+        task_id = (await db.get(SessionRow, session_id)).task_id
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="contract.md", source=None,
+                              content="PENALTY-CLAUSE-17 applies.", truncated=False, roles=["lawyer"]))
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="notes.md", source=None,
+                              content="Shared notes.", truncated=False))
+        await db.commit()
+    runner, *_ = mk_runner(tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id,
+                           mode=mk_mode_config(), policy=RoundRobinFloorPolicy())
+    hints = []
+    real = runner._synthesizer.synthesize
+
+    async def spy(view, summary, turns, synthesis_prompt_hint=None, **kw):
+        hints.append(synthesis_prompt_hint or "")
+        return await real(view, summary, turns, synthesis_prompt_hint=synthesis_prompt_hint, **kw)
+
+    runner._synthesizer.synthesize = spy
+    runner._grant_seat = "lawyer"  # the restricted seat spoke last
+    assert "PENALTY-CLAUSE-17" in await runner._task_text()  # sanity: that seat does see its file
+    await runner._finish(await runner._build_view(), "max-rounds")
+    assert len(hints) == 1
+    assert "Shared notes." in hints[0] and "PENALTY-CLAUSE-17" not in hints[0] and "contract.md" not in hints[0]
