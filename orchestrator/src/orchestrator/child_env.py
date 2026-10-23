@@ -14,8 +14,14 @@ import os
 
 _ORCHESTRATOR_ONLY = ("BAYTO_GATEWAY_URL", "BAYTO_GATEWAY_TOKEN")
 
+# Provider keys for discussion seats on OpenAI or Gemini (see providers/registry.py). Only the orchestrator's own HTTP
+# calls use them, read straight from its environment. No program it starts needs them, so none of them gets them:
+# `claude` and `sbx` would otherwise hand the key to whatever a seat runs, and git and gh have no use for it.
+# OLLAMA_HOST and OPENAI_BASE_URL are addresses, not secrets, and stay.
+_PROVIDER_SECRETS = ("OPENAI_API_KEY", "GEMINI_API_KEY")
+
 
 def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_") and k not in _ORCHESTRATOR_ONLY}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_") and k not in _ORCHESTRATOR_ONLY and k not in _PROVIDER_SECRETS}
     env.update(extra or {})
     return env

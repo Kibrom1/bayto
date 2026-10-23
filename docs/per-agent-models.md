@@ -186,7 +186,7 @@ Other providers are for discussion seats only. Build seats and the final write-u
 | Google Gemini | `GEMINI_API_KEY` | |
 | Ollama (local) | `OLLAMA_HOST`, e.g. `http://127.0.0.1:11434` | No key, no charge; cost shows as unknown. |
 
-Models are listed with `BAYTO_EXTRA_MODELS`, comma separated: `id:label:tier:usd_per_turn[:price_in:price_out]`. The id is `<provider>/<model>`, for example `openai/gpt-4o-mini:GPT-4o mini:small:0.05:0.15:0.6`. The two optional prices are USD per million input and output tokens, used to record each turn's real cost. A model whose provider has no key shows in the picker as disabled with the variable it needs. Keys are read from the environment only, are never sent to a sandbox, and a provider error is shown without the request. `BAYTO_PROVIDER_TIMEOUT` (seconds, default 120) bounds each call.
+Models are listed with `BAYTO_EXTRA_MODELS`, comma separated: `id:label:tier:usd_per_turn[:price_in:price_out]`. The id is `<provider>/<model>`, for example `openai/gpt-4o-mini:GPT-4o mini:small:0.05:0.15:0.6`. The two optional prices are USD per million input and output tokens, used to record each turn's real cost. A model whose provider has no key shows in the picker as disabled with the variable it needs. Keys are read from the environment only, are removed from the environment of every program Bayto starts (`claude`, `sbx`, git, gh), and a provider error is shown without the request. `BAYTO_PROVIDER_TIMEOUT` (seconds, default 120) bounds each call.
 
 A seat on another provider never falls back to a different model: if the call fails the session pauses for a human with the provider's message. Billing for these seats is on that provider's account, not your Claude subscription.
 

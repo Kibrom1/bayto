@@ -19,6 +19,8 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 
+from .child_env import child_env
+
 TIMEOUT_SECONDS = 120
 TITLE_MAX = 120
 BODY_MAX = 20_000
@@ -69,7 +71,7 @@ def draft(change_set: dict, task_title: str | None = None) -> dict:
 def _run(args: list[str], cwd: str) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS,
-                              stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                              stdin=subprocess.DEVNULL, env=child_env({"GIT_TERMINAL_PROMPT": "0"}))
     except FileNotFoundError:
         raise PullRequestError("tool_missing", f"'{args[0]}' is not installed on this machine.")
     except subprocess.TimeoutExpired:
