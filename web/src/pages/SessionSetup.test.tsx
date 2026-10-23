@@ -27,6 +27,11 @@ function mockApi(opts: { build?: boolean; workspace?: object | null } = {}) {
     if (url.endsWith('/tasks')) {
       return json([{ id: 'task-1', title: 't', brief: null, output_type: 'code change', workspace: opts.workspace ?? null }])
     }
+    if (url.endsWith('/workspaces/preflight')) {
+      return json({ ok: true, problems: [], repo_root: '/code/app', current_branch: 'main', dirty: false, dirty_files: [],
+        suggested_test_command: 'uv run pytest',
+        permissions: [{ role: 'build-tester', can_run: ['git status'], can_run_tests: false, note: 'Runs the tests.' }] })
+    }
     if (url.endsWith('/tasks/task-1/workspace') && init?.method === 'PUT') return json({ task: { id: 'task-1' } })
     if (url.endsWith('/modes')) return json(opts.build ? [...MODES, BUILD_MODE] : MODES)
     if (url.endsWith('/agents/templates')) return json(opts.build ? [...AGENTS, ...BUILD_AGENTS] : AGENTS)
@@ -116,7 +121,7 @@ describe('SessionSetup in Build mode', () => {
     expect(screen.getAllByText(/^Build (architect|developer|tester|reviewer)$/).length).toBeGreaterThanOrEqual(4)
     expect(screen.queryByText('Skeptic')).not.toBeInTheDocument()
     expect(screen.getByLabelText(/dollar cap/i)).toHaveValue(15)
-    expect(await screen.findByText('/code/app')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Repository path')).toHaveValue('/code/app')
     expect(screen.getByRole('button', { name: /start session/i })).toBeEnabled()
   })
 
@@ -131,6 +136,13 @@ describe('SessionSetup in Build mode', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/enter the repository path/i)
 
     await user.type(await screen.findByLabelText('Repository path'), '/code/app')
+    await user.click(screen.getByRole('button', { name: /start session/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/set a test command/i)
+
+    await user.click(screen.getByRole('button', { name: /check repository/i }))
+    await user.click(await screen.findByRole('button', { name: /use uv run pytest/i }))
+    expect(await screen.findByText(/cannot run tests/i)).toBeInTheDocument() // the table is from the check, before the command was set
+    expect(screen.getByLabelText('Test command')).toHaveValue('uv run pytest')
     await user.click(screen.getByRole('button', { name: /start session/i }))
 
     await waitFor(() => expect(screen.getByText('room page')).toBeInTheDocument())

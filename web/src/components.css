@@ -214,3 +214,7 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
   .row-menu summary { border: 1px solid var(--line); }
 }
 .chip.verdict { margin-top: 0.35rem; background: var(--surface-2); color: var(--ink-2); text-transform: none; }
+.perm-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.perm-table th, .perm-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line, #ddd); vertical-align: top; }
+.perm-table code { margin-right: 6px; }
+.warn-text { color: var(--warn, #b45309); }

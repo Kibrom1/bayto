@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .. import audit
 from ..models import Artifact, Session, Task, TaskAttachment, UsageLedger
-from ..build_policy import parse_test_command, validate_extra_commands
+from ..build_policy import parse_test_command, permission_summary, suggest_test_command, validate_extra_commands
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
 from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
@@ -41,6 +41,8 @@ class WorkspacePreflightOut(BaseModel):
     current_branch: str | None
     dirty: bool
     dirty_files: list[str]
+    suggested_test_command: str | None = None
+    permissions: list[dict] = Field(default_factory=list)
 
 
 def _report_out(rep: WorkspaceReport) -> WorkspacePreflightOut:
@@ -66,6 +68,10 @@ async def preflight(ws: WorkspaceIn) -> WorkspacePreflightOut:
     except ValueError as exc:
         out.ok = False
         out.problems = [{"code": "bad_allowed_commands", "detail": str(exc)}, *out.problems]
+    if out.repo_root:
+        out.suggested_test_command = await asyncio.to_thread(suggest_test_command, out.repo_root)
+    if out.ok:
+        out.permissions = permission_summary({"test_command": ws.test_command, "allowed_commands": ws.allowed_commands})
     return out
 
 

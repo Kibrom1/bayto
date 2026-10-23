@@ -140,6 +140,13 @@ async def create_session(
         mode_row = await db.get(Mode, req.mode_id)
         if mode_row is None:
             raise HTTPException(422, detail=_error("invalid_mode", "mode not found", "mode_id"))
+        if mode_row.name == "build":
+            task_row = await db.get(Task, req.task_id)
+            if not (task_row.workspace or {}).get("test_command"):
+                raise HTTPException(422, detail=_error(
+                    "test_command_required",
+                    "A Build session needs a test command: without one the developer and tester are not allowed "
+                    "to run any tests. Set it in the task's workspace settings.", "workspace"))
         try:
             resolve_mode(mode_row.name)  # eager, at create time -- see modes_registry.resolve_mode
         except (ModeNotFoundError, ModeParseError) as exc:

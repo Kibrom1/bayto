@@ -79,6 +79,48 @@ def validate_extra_commands(commands: list[str] | None) -> list[str]:
     return out
 
 
+def suggest_test_command(repo_path: str) -> str | None:
+    """A guess at the repo's test command from the files it contains, for the form to pre-fill. Never trusted:
+    the person confirms it, and parse_test_command still checks whatever they keep."""
+    from pathlib import Path
+    root = Path(repo_path)
+    # Look in the root and one level down (a monorepo keeps the Python project in a subfolder).
+    for base in [root, *sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith("."))] \
+            if root.is_dir() else []:
+        prefix = "" if base == root else f"cd {base.name} && "
+        if (base / "uv.lock").exists():
+            return prefix + "uv run pytest"
+        if (base / "pyproject.toml").exists() or (base / "pytest.ini").exists():
+            return prefix + "python -m pytest"
+        if (base / "package.json").exists():
+            return prefix + "npm test"
+        if (base / "Cargo.toml").exists():
+            return prefix + "cargo test"
+        if (base / "go.mod").exists():
+            return prefix + "go test ./..."
+    return None
+
+
+def permission_summary(workspace: dict | None) -> list[dict]:
+    """What each Build seat can run, for the setup page: [{role, can_run, cannot_run, note}]. Built from the same
+    function the session uses (build_seat_tools), so the page cannot disagree with what the seat is given."""
+    rows = []
+    for role, base, note in (
+        ("build-architect", (), "Plans and reads the code. No shell."),
+        ("build-developer", ("Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)",
+                             "Bash(git log:*)"), "Edits files and commits to the build branch."),
+        ("build-tester", ("Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"),
+         "Runs the test command and reports the exit code. Does not edit files."),
+        ("build-reviewer", ("Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"),
+         "Reads the diff. No shell beyond git read commands."),
+    ):
+        allow, _deny = build_seat_tools(role, base, workspace)
+        shell = [r[len("Bash("):-len(":*)")] for r in allow if r.startswith("Bash(")]
+        rows.append({"role": role, "can_run": shell, "note": note,
+                     "can_run_tests": any(not r.startswith("git ") for r in shell)})
+    return rows
+
+
 def command_rules(command: str | None, extra: list[str] | None = None) -> list[str]:
     rules: list[str] = []
     for cmd in [command, *(extra or [])]:
@@ -97,7 +139,10 @@ def build_seat_tools(role: str, base_tools: tuple[str, ...] | list[str],
         return tuple(base_tools), ()
     allow = list(base_tools)
     if role in RUNS_TESTS:
-        for rule in command_rules((workspace or {}).get("test_command"), (workspace or {}).get("allowed_commands")):
+        # The tester runs the test command and nothing else; the developer also gets the extra commands
+        # (a linter, a setup step). A seat that only checks should not be able to change the environment.
+        extra = (workspace or {}).get("allowed_commands") if role == "build-developer" else None
+        for rule in command_rules((workspace or {}).get("test_command"), extra):
             if rule not in allow:
                 allow.append(rule)
     return tuple(allow), BUILD_DENY
