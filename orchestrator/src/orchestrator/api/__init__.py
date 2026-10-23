@@ -8,8 +8,9 @@ from .model_catalog import router as model_catalog_router
 from .app_config import router as app_config_router
 from .modes import router as modes_router
 from .pull_request import router as pull_request_router
+from .search import router as search_router
 from .tasks import router as tasks_router
 from .sessions import router as sessions_router
 
 __all__ = ["tasks_router", "sessions_router", "modes_router", "agents_router", "attachments_router",
-           "pull_request_router", "model_catalog_router", "app_config_router"]
+           "pull_request_router", "model_catalog_router", "app_config_router", "search_router"]

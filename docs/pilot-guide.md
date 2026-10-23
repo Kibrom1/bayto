@@ -55,6 +55,7 @@ Build mode works on a repository you choose, on its own branch. A test command i
 - **Attached folders** are read as a text copy. Files that look like they hold passwords or keys are left out, but do not attach folders you would not paste into a chat.
 - **Attached links** must be public web pages.
 
+- **Search past discussions** on the task list finds words in earlier answers and syntheses (not attachments, private notes or archived sessions). Results open the room; they do not scroll to the message.
 ## 5. What we would like to hear
 
 After a real session, tell us:
