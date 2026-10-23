@@ -166,3 +166,74 @@ describe('ContextCard visibility', () => {
     expect(await screen.findByRole('button', { name: /who can read contract\.md/i })).toHaveTextContent('Only lawyer')
   })
 })
+
+describe('ContextCard who can read, when adding', () => {
+  const ROLES = ['lawyer', 'developer']
+  async function restrictTo(user: ReturnType<typeof userEvent.setup>, ...ticked: string[]) {
+    await user.click(screen.getByRole('button', { name: /new items/i }))
+    await user.click(screen.getByRole('radio', { name: /only chosen roles/i }))
+    for (const r of ticked) await user.click(screen.getByRole('checkbox', { name: r }))
+  }
+  const file = () => new File(['# hi'], 'notes.md', { type: 'text/markdown' })
+
+  it('sends roles with a restricted file, folder and link, then goes back to Everyone', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    render(<ContextCard taskId="t1" sessionId="s1" roles={ROLES} />)
+    await screen.findByRole('heading', { name: /context/i })
+
+    await restrictTo(user, 'lawyer', 'developer')
+    await user.upload(screen.getByLabelText('Choose files to attach'), file())
+    await screen.findByText('notes.md')
+    expect(calls.find((c) => c.method === 'PUT')!.url).toBe('/tasks/t1/attachments/file?name=notes.md&session_id=s1&roles=lawyer&roles=developer')
+    expect(screen.getByRole('button', { name: /new items/i })).toHaveTextContent('everyone can read') // reset after the add
+    expect(screen.queryByRole('radio', { name: /only chosen roles/i })).not.toBeInTheDocument()
+
+    await restrictTo(user, 'lawyer')
+    await user.click(screen.getByRole('button', { name: /add folder/i }))
+    await user.type(screen.getByLabelText(/folder path/i), '/p/docs')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByText('docs')
+    expect(calls.find((c) => c.url.includes('/attachments/folder'))!.body).toEqual({ path: '/p/docs', roles: ['lawyer'] })
+
+    await restrictTo(user, 'developer')
+    await user.click(screen.getByRole('button', { name: /add link/i }))
+    await user.type(screen.getByLabelText(/web address/i), 'https://e.com')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByText('Vendor terms')
+    expect(calls.find((c) => c.url.includes('/attachments/url'))!.body).toEqual({ url: 'https://e.com', roles: ['developer'] })
+  })
+
+  it('sends no roles by default', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    render(<ContextCard taskId="t1" sessionId="s1" roles={ROLES} />)
+    await user.upload(await screen.findByLabelText('Choose files to attach'), file())
+    await screen.findByText('notes.md')
+    await user.click(screen.getByRole('button', { name: /add link/i }))
+    await user.type(screen.getByLabelText(/web address/i), 'https://e.com')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByText('Vendor terms')
+    expect(calls.find((c) => c.method === 'PUT')!.url).toBe('/tasks/t1/attachments/file?name=notes.md&session_id=s1')
+    expect(calls.find((c) => c.url.includes('/attachments/url'))!.body).toEqual({ url: 'https://e.com' })
+  })
+
+  it('blocks an add when "Only chosen roles" has nothing ticked', async () => {
+    const user = userEvent.setup()
+    mockApi()
+    render(<ContextCard taskId="t1" sessionId="s1" roles={ROLES} />)
+    await screen.findByRole('heading', { name: /context/i })
+    await restrictTo(user)
+    await user.upload(screen.getByLabelText('Choose files to attach'), file())
+    expect(await screen.findByRole('alert')).toHaveTextContent(/tick at least one role/i)
+    await user.click(screen.getByRole('button', { name: /add link/i }))
+    await user.type(screen.getByLabelText(/web address/i), 'https://e.com')
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    expect(screen.getByRole('alert')).toHaveTextContent(/tick at least one role/i)
+    expect(calls.filter((c) => c.method !== 'GET')).toHaveLength(0)
+    await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+    await screen.findByText('Vendor terms')
+    expect(calls.find((c) => c.url.includes('/attachments/url'))!.body).toEqual({ url: 'https://e.com', roles: ['lawyer'] })
+  })
+})
