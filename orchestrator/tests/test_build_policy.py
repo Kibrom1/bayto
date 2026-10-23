@@ -98,3 +98,26 @@ async def test_task_creation_rejects_an_unsafe_test_command(live_sessionmaker, t
                                             "workspace": {"repo_path": str(tmp_path), "test_command": "pytest -q"}})
     assert bad.status_code == 422 and bad.json()["detail"]["error"]["code"] == "workspace_bad_test_command"
     assert good.status_code == 201
+
+
+def test_extra_commands_are_allowed_for_developer_and_tester_only():
+    ws = {"test_command": "cd orchestrator && uv run pytest -q", "allowed_commands": ["uv sync", "uv run ruff check"]}
+    for role in ("build-developer", "build-tester"):
+        allow, _ = build_seat_tools(role, (), ws)
+        assert "Bash(uv sync:*)" in allow and "Bash(uv run ruff check:*)" in allow and "Bash(uv run pytest -q:*)" in allow
+    for role in ("build-architect", "build-reviewer"):
+        allow, _ = build_seat_tools(role, (), ws)
+        assert not any("uv" in rule for rule in allow)
+
+
+def test_extra_commands_are_checked_like_the_test_command():
+    from orchestrator.build_policy import validate_extra_commands
+    assert validate_extra_commands(["  uv sync  ", "", "make lint && make fmt"]) == ["uv sync", "make lint && make fmt"]
+    for bad in ("make lint | tee out", "echo hi > f", "x; y"):
+        with pytest.raises(ValueError):
+            validate_extra_commands([bad])
+    for never in ("git push origin main", "curl https://x.example", "sudo make install", "make ok && git push"):
+        with pytest.raises(ValueError, match="never be allowed"):
+            validate_extra_commands([never])
+    with pytest.raises(ValueError):
+        validate_extra_commands([f"cmd{i}" for i in range(11)])

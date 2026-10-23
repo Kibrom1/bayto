@@ -11,13 +11,13 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .. import audit
 from ..models import Artifact, Session, Task, TaskAttachment, UsageLedger
-from ..build_policy import parse_test_command
+from ..build_policy import parse_test_command, validate_extra_commands
 from ..workspace import WorkspaceReport, preflight_workspace
 from .deps import get_db_sessionmaker
 from .types import BRIEF_MAX, CRITERIA_MAX, OUTPUT_TYPE_MAX, TITLE_MAX, text
@@ -30,6 +30,8 @@ class WorkspaceIn(BaseModel):
     repo_path: text(1024)
     base_branch: text(200) = "main"
     test_command: text(500) | None = None
+    # More commands the developer and tester may run (a linter, a setup step), checked like the test command.
+    allowed_commands: list[text(500)] = Field(default_factory=list, max_length=10)
 
 
 class WorkspacePreflightOut(BaseModel):
@@ -59,6 +61,11 @@ async def preflight(ws: WorkspaceIn) -> WorkspacePreflightOut:
         except ValueError as exc:
             out.ok = False
             out.problems = [{"code": "bad_test_command", "detail": str(exc)}, *out.problems]
+    try:
+        validate_extra_commands(ws.allowed_commands)
+    except ValueError as exc:
+        out.ok = False
+        out.problems = [{"code": "bad_allowed_commands", "detail": str(exc)}, *out.problems]
     return out
 
 
@@ -71,11 +78,17 @@ async def _validated_workspace(ws: WorkspaceIn) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail={"error": {
                 "code": "workspace_bad_test_command", "detail": str(exc), "field": "workspace"}})
+    try:
+        extra = validate_extra_commands(ws.allowed_commands)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error": {
+            "code": "workspace_bad_allowed_commands", "detail": str(exc), "field": "workspace"}})
     rep = await asyncio.to_thread(preflight_workspace, ws.repo_path, ws.base_branch)
     if not rep.ok:
         raise HTTPException(status_code=422, detail={"error": {
             "code": "workspace_" + rep.problems[0]["code"], "detail": rep.problems[0]["detail"], "field": "workspace"}})
-    return {"repo_path": rep.repo_root, "base_branch": ws.base_branch, "test_command": ws.test_command}
+    return {"repo_path": rep.repo_root, "base_branch": ws.base_branch, "test_command": ws.test_command,
+            "allowed_commands": extra}
 
 
 class TaskCreateRequest(BaseModel):

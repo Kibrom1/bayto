@@ -48,10 +48,46 @@ def parse_test_command(command: str) -> list[str]:
     return steps
 
 
-def command_rules(command: str | None) -> list[str]:
-    if not command:
-        return []
-    return [f"Bash({step}:*)" for step in parse_test_command(command)]
+MAX_EXTRA_COMMANDS = 10
+
+
+def _denied_heads() -> set[str]:
+    """First words (or word pairs) of the Bash commands every Build seat is denied, e.g. "git push", "curl"."""
+    heads = set()
+    for rule in BUILD_DENY:
+        if rule.startswith("Bash(") and rule.endswith(":*)"):
+            heads.add(rule[len("Bash("):-len(":*)")])
+    return heads
+
+
+def validate_extra_commands(commands: list[str] | None) -> list[str]:
+    """Extra commands the developer and tester may run, beyond the test command. Same syntax as the test command,
+    and nothing the deny list already refuses. Returns the cleaned list or raises ValueError saying why not."""
+    out: list[str] = []
+    for raw in commands or []:
+        cmd = raw.strip()
+        if not cmd:
+            continue
+        steps = parse_test_command(cmd)  # raises for pipes, redirects, ;, $( ) and empty steps
+        for step in steps:
+            for head in _denied_heads():
+                if step == head or step.startswith(head + " "):
+                    raise ValueError(f"'{step}' can never be allowed: Build seats may not run '{head}'")
+        out.append(cmd)
+    if len(out) > MAX_EXTRA_COMMANDS:
+        raise ValueError(f"at most {MAX_EXTRA_COMMANDS} extra commands")
+    return out
+
+
+def command_rules(command: str | None, extra: list[str] | None = None) -> list[str]:
+    rules: list[str] = []
+    for cmd in [command, *(extra or [])]:
+        if cmd:
+            for step in parse_test_command(cmd):
+                rule = f"Bash({step}:*)"
+                if rule not in rules:
+                    rules.append(rule)
+    return rules
 
 
 def build_seat_tools(role: str, base_tools: tuple[str, ...] | list[str],
@@ -61,7 +97,7 @@ def build_seat_tools(role: str, base_tools: tuple[str, ...] | list[str],
         return tuple(base_tools), ()
     allow = list(base_tools)
     if role in RUNS_TESTS:
-        for rule in command_rules((workspace or {}).get("test_command")):
+        for rule in command_rules((workspace or {}).get("test_command"), (workspace or {}).get("allowed_commands")):
             if rule not in allow:
                 allow.append(rule)
     return tuple(allow), BUILD_DENY

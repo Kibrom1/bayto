@@ -5,15 +5,17 @@ export interface WorkspaceDraft {
   repo_path: string
   base_branch: string
   test_command: string
+  allowed_commands: string // one command per line
 }
 
-export const EMPTY_WORKSPACE: WorkspaceDraft = { repo_path: '', base_branch: 'main', test_command: '' }
+export const EMPTY_WORKSPACE: WorkspaceDraft = { repo_path: '', base_branch: 'main', test_command: '', allowed_commands: '' }
 
 /** The request body for a draft: trimmed, with an empty test command sent as null. */
 export const workspaceBody = (d: WorkspaceDraft) => ({
   repo_path: d.repo_path.trim(),
   base_branch: d.base_branch.trim() || 'main',
   test_command: d.test_command.trim() || null,
+  allowed_commands: d.allowed_commands.split('\n').map((l) => l.trim()).filter(Boolean),
 })
 
 /** Repository, base branch and test command for Build mode, with a "Check repository" button. */
@@ -21,6 +23,7 @@ export function WorkspaceFields({ value, onChange, legend = 'Repository' }: { va
   const repoId = useId()
   const branchId = useId()
   const testId = useId()
+  const extraId = useId()
   const [checking, setChecking] = useState(false)
   const [report, setReport] = useState<WorkspaceReport | null>(null)
   const [checkError, setCheckError] = useState<string | null>(null)
@@ -61,6 +64,12 @@ export function WorkspaceFields({ value, onChange, legend = 'Repository' }: { va
         <input id={testId} value={value.test_command} onChange={(e) => onChange({ ...value, test_command: e.target.value })}
           placeholder="npm test   or   cd web && npm test" spellCheck={false} />
         <span className="hint">Plain commands joined with &amp;&amp;. No pipes, redirects or semicolons. The tester runs exactly this.</span>
+      </div>
+      <div className="field">
+        <label htmlFor={extraId}>Other allowed commands (optional)</label>
+        <textarea id={extraId} rows={2} value={value.allowed_commands} onChange={(e) => set({ allowed_commands: e.target.value })}
+          placeholder={'uv sync\nnpm run lint'} spellCheck={false} />
+        <span className="hint">One per line, same rules as the test command. The developer and tester may run these too. Commands like git push, curl and sudo are never allowed.</span>
       </div>
       <button type="button" className="btn sm check-btn" disabled={checking || value.repo_path.trim() === ''} onClick={check}>
         {checking ? 'Checking…' : 'Check repository'}

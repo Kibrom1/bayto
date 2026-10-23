@@ -19,6 +19,8 @@ export interface Workspace {
   repo_path: string
   base_branch: string
   test_command?: string | null
+  // More commands the developer and tester may run, beyond the test command.
+  allowed_commands?: string[]
 }
 
 export interface WorkspaceReport {
