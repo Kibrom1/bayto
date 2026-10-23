@@ -6,6 +6,8 @@ import {
 const KIND_LABEL = { file: 'File', folder: 'Folder', url: 'Link' } as const
 // What one turn can carry for all attachments together; mirrors the orchestrator's cap.
 const PROMPT_BUDGET_CHARS = 40_000
+// Under this an attachment is always sent whole, so counting its passages would only add noise.
+const WHOLE_BELOW_CHARS = 4_000
 
 type Adding = null | 'folder' | 'url'
 
@@ -100,7 +102,7 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
             <li key={a.id}>
               <span className="chip">{KIND_LABEL[a.kind]}</span>
               <span className="context-name" title={a.source ?? a.name}>{a.name}</span>
-              <span className="muted">{size(a.chars)}{a.truncated ? ' · shortened' : ''}</span>
+              <span className="muted">{size(a.chars)}{a.passages && a.chars > WHOLE_BELOW_CHARS ? ` · ${a.passages} passages` : ''}{a.truncated ? ' · shortened' : ''}</span>
               <button type="button" className="link-btn" aria-label={`Who can read ${a.name}`} aria-expanded={picking === a.id}
                 onClick={() => setPicking(picking === a.id ? null : a.id)}>
                 {a.roles ? `Only ${a.roles.join(', ')}` : 'Everyone'}

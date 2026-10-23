@@ -23,6 +23,7 @@ import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
 import { ContextCard } from '../components/ContextCard'
+import { ReadNote } from '../components/ReadNote'
 import { Synthesis } from './Synthesis'
 import { agentHue, initials } from '../agentColor'
 import { getModels, modelLabel, type ModelCatalog } from '../api/models'
@@ -391,6 +392,7 @@ export function BaytoRoom() {
                       </div>
                       <div className="msg-body">{splitVerdict(m.body).text}</div>
                       {splitVerdict(m.body).verdict && <span className="chip verdict">Verdict: {splitVerdict(m.body).verdict}</span>}
+                      {known && <ReadNote meta={m.meta} />}
                     </div>
                   </article>
                 )

@@ -6,6 +6,7 @@ export interface Attachment {
   name: string
   source: string | null
   chars: number
+  passages?: number
   truncated: boolean
   roles?: string[] | null // null or missing: everyone can read it
   created_at: string

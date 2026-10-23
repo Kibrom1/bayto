@@ -187,3 +187,7 @@
 
 .syn-minority { margin-top: var(--space-5); padding: 1.1rem 1.4rem; background: var(--danger-soft); border-radius: var(--radius-sm); }
 .syn-minority .syn-h { margin-top: 0; color: var(--danger); }
+
+.read-note { margin-top: 0.35rem; font-size: 0.8rem; color: var(--ink-3); max-width: 68ch; }
+.read-note summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.read-note ul { margin: 0.25rem 0 0; padding-left: 1.1rem; overflow-wrap: anywhere; }

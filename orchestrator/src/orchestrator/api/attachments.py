@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from .. import audit
 from .. import context_extract as cx
 from ..models import Agent, Session, Task, TaskAttachment
+from ..retrieval import split_chunks
 from .deps import get_db_sessionmaker
 from .types import text
 
@@ -43,6 +44,7 @@ class AttachmentOut(BaseModel):
     name: str
     source: str | None
     chars: int
+    passages: int  # how many parts it is split into when only some are shown to a seat
     truncated: bool
     roles: list[str] | None   # null: everyone can read it
     created_at: datetime
@@ -54,7 +56,8 @@ class AttachmentDetail(AttachmentOut):
 
 def _out(row: TaskAttachment) -> AttachmentOut:
     return AttachmentOut(id=row.id, kind=row.kind, name=row.name, source=row.source,
-                         chars=len(row.content), truncated=row.truncated, roles=row.roles, created_at=row.created_at)
+                         chars=len(row.content), passages=len(split_chunks(row.content)), truncated=row.truncated,
+                         roles=row.roles, created_at=row.created_at)
 
 
 class FolderIn(BaseModel):

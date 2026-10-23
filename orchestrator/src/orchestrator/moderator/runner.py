@@ -53,7 +53,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
 from .. import audit
-from ..attachment_prompt import attachment_prompt
+from ..attachment_report import attachment_report
 from ..models import Agent, Artifact, UsageLedger
 from ..models import Message as MessageRow
 from ..models import Session as SessionRow
@@ -217,6 +217,7 @@ class ModeratorRunner:
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
         self._grant_seat: str | None = None  # whose turn it is; picks which parts of long attachments to show
+        self._attachment_report: list[dict] = []  # what the last prompt showed of each attachment (names and passage numbers)
         self._grant_notes = ""  # human notes this grant's prompt carries; set once per grant (see _human_notes_for)
         # M2.12: phase machine state
         self._current_phase_index = 0
@@ -796,7 +797,7 @@ class ModeratorRunner:
         await self._conversation.send(
             sender=participant, to=[self._mode.moderator or "moderator"], kind="answer", body=completion.text,
             meta={"tokens_in": completion.tokens_in, "tokens_out": completion.tokens_out, "cost": completion.cost,
-                  "provider": provider_id})
+                  "provider": provider_id, **self._attachment_meta()})
         return True
 
     async def _stream_turn(self, view: ConversationView, participant: str) -> bool:
@@ -821,7 +822,8 @@ class ModeratorRunner:
         self._pubsub.publish({"type": "turn_done", "data": {"session_id": sid, "from": participant}})
         await self._conversation.send(
             sender=participant, to=[self._mode.moderator or "moderator"], kind="answer", body=result.text,
-            meta={"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost": result.cost})
+            meta={"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost": result.cost,
+                  **self._attachment_meta()})
         return True
 
     async def _task_text(self) -> str:
@@ -853,9 +855,10 @@ class ModeratorRunner:
             attachments = (await session.execute(
                 select(TaskAttachment).where(TaskAttachment.task_id == task.id)
                 .order_by(TaskAttachment.created_at))).scalars().all()
+        shown, self._attachment_report = "", []
         if attachments:
-            shown = attachment_prompt(attachments, query=await self._attachment_query(task, row.rolling_summary),
-                                      seat=self._grant_seat)
+            shown, self._attachment_report = attachment_report(
+                attachments, query=await self._attachment_query(task, row.rolling_summary), seat=self._grant_seat)
             if shown:  # empty when every attachment is hidden from this seat
                 lines.append(shown)
         return "\n".join(lines)
@@ -1053,8 +1056,34 @@ class ModeratorRunner:
             if cost is not None:
                 span.set_attribute("bayto.cost_usd", cost)
 
+        await self._note_attachments(participant, turn.id, envelope_data)
         await self._warn_about_cost(cost)
         await self._advance_phase()
+
+    def _attachment_meta(self) -> dict:
+        """What the seat read of the attachments, for the message meta the room shows. Empty with no attachments."""
+        return {"attachments": self._attachment_report} if self._attachment_report else {}
+
+    async def _note_attachments(self, participant: str, turn_id: uuid.UUID, envelope_data: dict) -> None:
+        """Audit entry for what this turn's prompt showed of each attachment (names and passage numbers, never text),
+        and the same report on the seat's message when the seat wrote it itself (streamed and provider turns carry it
+        already). Best effort: it must never fail a recorded turn."""
+        report = self._attachment_report
+        if not report:
+            return
+        try:
+            async with self._sessionmaker() as session:
+                task_id = await session.scalar(select(SessionRow.task_id).where(SessionRow.id == self._session_id))
+                message_id = envelope_data.get("message_id")
+                message = await session.get(MessageRow, message_id) if message_id else None
+                if message is not None and "attachments" not in (message.meta or {}):
+                    message.meta = {**(message.meta or {}), "attachments": report}
+                    await session.commit()
+            audit.emit(action="turn.attachments", summary=f"{participant} read {len(report)} attachment(s)",
+                       task_id=task_id, session_id=self._session_id, actor="system", subject_type="turn", subject_id=turn_id,
+                       detail={"seat": participant, "attachments": report})
+        except Exception:  # noqa: BLE001
+            log.exception("session %s: could not record what %s read of the attachments", self._session_id, participant)
 
 
     async def _warn_about_cost(self, turn_cost: float | None) -> None:

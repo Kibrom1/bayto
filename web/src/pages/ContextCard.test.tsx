@@ -32,6 +32,16 @@ function mockApi(refuse?: { url: string; detail: string }) {
 beforeEach(() => { vi.stubGlobal('fetch', vi.fn()) })
 afterEach(() => { vi.unstubAllGlobals() })
 
+describe('ContextCard passages', () => {
+  it('shows how many passages a long attachment is split into, but not for a small one', async () => {
+    mockApi()
+    items = [{ ...NOTES, passages: 1 }, { ...NOTES, id: 'a2', name: 'contract.txt', chars: 60000, passages: 41 }]
+    render(<ContextCard taskId="t1" sessionId="s1" />)
+    expect(await screen.findByText(/60k characters · 41 passages/)).toBeInTheDocument()
+    expect(screen.getByText('1.2k characters')).toBeInTheDocument()
+  })
+})
+
 describe('ContextCard', () => {
   it('says what the agents can and cannot reach, and starts empty', async () => {
     mockApi()
