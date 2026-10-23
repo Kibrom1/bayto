@@ -359,7 +359,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
                         raise
                     log.warning("sandbox %s already exists but is not live; removing it and creating it again", name)
                     self._drop_client(name)
-                    await self._run(["env", "rm", name, "--auto-approve"])
+                    await self._run(["env", "rm", name])
                     await build()
                 if row is None:
                     row = Sandbox(
@@ -487,8 +487,8 @@ class LocalSbxSandboxProvider(SandboxProvider):
             row = await session.scalar(select(Sandbox).where(Sandbox.id == sandbox.id))
             if row is None:
                 raise SandboxProviderError(f"no sandbox row for id={sandbox.id}")
-            # "rm" verbatim, "--auto-approve" extrapolated from create's flag
-            await self._run(["env", "rm", sandbox.name, "--auto-approve"])
+            # `sbx env rm` takes no --auto-approve (live run 2026-10-22: "unknown flag"); only `env create` does.
+            await self._run(["env", "rm", sandbox.name])
             row.status = "removed"
             row.closed_at = datetime.now(timezone.utc)
             await session.commit()
