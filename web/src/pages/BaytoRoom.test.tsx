@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -68,6 +68,33 @@ describe('BaytoRoom', () => {
     expect(screen.getByText(/roster/i)).toBeInTheDocument()
     expect(screen.getByText(/moderator summary/i)).toBeInTheDocument()
     expect(screen.getByText(/usage vs budget/i)).toBeInTheDocument()
+  })
+
+  it('shows under a turn which attachment parts the seat read, and nothing when none were attached', async () => {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 't', mode_id: 'debate', status: 'running', started_at: null, ended_at: null,
+      round: 1, budget: null, usage: { tokens_in: 1, tokens_out: 1, cost: 0 },
+      turn_counts: [{ participant: 'lawyer', agent_id: 'a1', turns: 2 }] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () =>
+      new Response(body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(
+      <MemoryRouter initialEntries={['/sessions/session-123']}>
+        <Routes>
+          <Route path="/sessions/:sessionId" element={<BaytoRoom />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText(/bayto room/i, undefined, { timeout: 5000 })
+    Element.prototype.scrollIntoView = vi.fn() // jsdom has none
+    const source = (globalThis as any).EventSource.instances.at(-1)
+    const send = (m: object) => act(() => source.onmessage({ data: JSON.stringify({ kind: 'answer', to: ['moderator'], from: 'lawyer', ...m }) }))
+    send({ message_id: 'm1', seq: 1, body: 'first view', meta: { tokens_in: 3, attachments: [
+      { name: 'contract.txt', mode: 'excerpt', parts: [3, 7], total: 41 }, { name: 'notes.md', mode: 'whole', parts: [], total: 2 }] } })
+    send({ message_id: 'm2', seq: 2, body: 'second view', meta: { tokens_in: 3 } })
+    expect(await screen.findByText('first view')).toBeInTheDocument()
+    expect(screen.getByText('Read: contract.txt parts 3, 7 of 41 · notes.md (whole)')).toBeInTheDocument()
+    expect(screen.getByText('second view')).toBeInTheDocument()
+    expect(screen.getAllByText(/^Read:/)).toHaveLength(1)
   })
 
   it('says why a finished session ended', async () => {

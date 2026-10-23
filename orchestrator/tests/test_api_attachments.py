@@ -78,6 +78,7 @@ async def test_attach_list_read_and_remove_a_file(live_sessionmaker):
         assert made.status_code == 201
         item = made.json()
         assert item["kind"] == "file" and item["name"] == "notes.md" and item["chars"] == 25 and item["truncated"] is False
+        assert item["passages"] == 1
         assert [a["id"] for a in (await c.get(f"/tasks/{tid}/attachments")).json()] == [item["id"]]
         detail = (await c.get(f"/tasks/{tid}/attachments/{item['id']}")).json()
         assert detail["content"] == "# Notes\nThe budget is 5k."

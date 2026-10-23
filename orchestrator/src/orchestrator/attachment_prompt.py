@@ -56,6 +56,7 @@ def _excerpts(items: list[_Attachment], budget: int, query: str) -> list[str] | 
         if len(a.content) <= WHOLE_BELOW:
             blocks[i] = _block(a, a.content)
     for order, i in enumerate(big):
+        a = items[i]  # (the loop above left `a` on the last attachment: the excerpt was labelled with its name)
         cap = max(_MIN_USEFUL, left // (len(big) - order))
         chosen, used = [], 0
         for c in sorted(ranked[i], key=lambda c: (-c.score, c.ordinal)):

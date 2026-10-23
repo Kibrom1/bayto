@@ -1171,3 +1171,37 @@ async def test_a_seat_on_another_provider_answers_without_the_sandbox(client, li
         await asyncio.sleep(0.05)
     assert asked and asked[0]["model"] == "gpt-x"  # the bare model id, sent to its own provider
     assert woken == []  # the seat never ran in the sandbox
+
+
+async def test_sse_message_meta_says_which_attachment_parts_the_seat_read(client, live_sessionmaker, tmp_path):
+    """The room's "Read:" note comes from the answer's meta, so it has to survive the mirror and the event stream."""
+    from orchestrator.models import TaskAttachment
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    big = "\n\n".join(f"section {i} about vendors. " + "filler " * 120 for i in range(120))
+    async with live_sessionmaker() as db:
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="big.txt", content=big, truncated=False))
+        db.add(TaskAttachment(task_id=task_id, kind="file", name="notes.md", content="small notes", truncated=False))
+        await db.commit()
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id),
+        "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}],
+    })
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    _wire_fakes(FakeSandboxProvider(on_wake=_auto_responder(tmp_path / "sessions", {"id": session_id})))
+    await client.post(f"/sessions/{session_id}/start")
+    await _wait_for_status(live_sessionmaker, session_id, "finished")
+
+    async def _read():
+        out = []
+        async with client.stream("GET", f"/sessions/{session_id}/events?since_seq=0") as r:
+            async for line in r.aiter_lines():
+                if line.startswith("data:") and "message_id" in line:
+                    out.append(json.loads(line[5:].strip()))
+        return out
+
+    answers = [m for m in await asyncio.wait_for(_read(), timeout=5.0) if m["kind"] == "answer"]
+    assert answers
+    report = answers[0]["meta"]["attachments"]
+    assert [r["name"] for r in report] == ["big.txt", "notes.md"]
+    assert report[0]["mode"] in {"excerpt", "start"} and report[0]["total"] > 20 and report[1]["mode"] == "whole"
+    assert answers[0]["meta"]["tokens_in"] == 1
