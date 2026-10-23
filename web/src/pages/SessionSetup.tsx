@@ -10,7 +10,7 @@ import {
   type SessionCreateRequest,
 } from '../api/sessions'
 import { agentHue, initials } from '../agentColor'
-import { costFactor, getModels, type ModelCatalog } from '../api/models'
+import { claudeOnly, costFactor, getModels, modelOptionText, type ModelCatalog } from '../api/models'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
@@ -75,6 +75,7 @@ export function SessionSetup() {
   const [modeId, setModeId] = useState('')
   const [agentIds, setAgentIds] = useState<string[]>([])
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null) // null until loaded, or if the server has no /models
+  const [synthesisModel, setSynthesisModel] = useState('') // '' = the app default
   const [seatModels, setSeatModels] = useState<Record<string, string>>({}) // agent id -> chosen model; absent = the agent's default
   const [dollars, setDollars] = useState('5')
   const [tokens, setTokens] = useState('200000')
@@ -187,6 +188,9 @@ export function SessionSetup() {
   // Each seat costs the usual per-seat figure times how its model compares with the default (Opus about 2x, Haiku about 0.2x).
   const seatModel = (t: AgentTemplate) => seatModels[t.id] || t.model
   const estimate = roster.reduce((sum, t) => sum + (isBuild ? BUILD_COST_PER_SEAT : COST_PER_SEAT) * costFactor(catalog, seatModel(t)), 0)
+  // The developer writes the code the others judge: a small model there tends to loop or break the build.
+  const smallDeveloper = isBuild && roster.some((t) => t.role === 'build-developer' &&
+    catalog?.models.find((m) => m.id === seatModel(t))?.tier === 'small')
   const pct = cap > 0 ? Math.round((estimate / cap) * 100) : null
 
   const problems: string[] = []
@@ -231,6 +235,7 @@ export function SessionSetup() {
         task_id: taskId,
         mode_id: modeId,
         roster: agentIds.map((agent_id, seat_order) => ({ agent_id, seat_order, ...(seatModels[agent_id] ? { model: seatModels[agent_id] } : {}) })),
+        ...(synthesisModel ? { synthesis_model: synthesisModel } : {}),
         budget: {
           tokens: tokens ? parseInt(tokens, 10) : undefined,
           dollars: cap > 0 ? cap : undefined,
@@ -368,7 +373,9 @@ export function SessionSetup() {
                       <select className="seat-model" aria-label={`Model for ${t.name}`} value={seatModels[t.id] ?? ''}
                         onChange={(e) => setSeatModels((m) => ({ ...m, [t.id]: e.target.value }))}>
                         <option value="">Default ({catalog.models.find((m) => m.id === t.model)?.label ?? t.model})</option>
-                        {catalog.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        {(isBuild ? claudeOnly(catalog.models) : catalog.models).map((m) => (
+                          <option key={m.id} value={m.id} disabled={m.ready === false}>{modelOptionText(m)}</option>
+                        ))}
                       </select>
                     )}
                     <button type="button" className="btn ghost sm" aria-label={`Move ${t.name} up`} disabled={i === 0} onClick={() => move(t.id, -1)}>↑</button>
@@ -376,6 +383,20 @@ export function SessionSetup() {
                   </li>
                 ))}
               </ol>
+            )}
+            {smallDeveloper && (
+              <p className="hint" role="note">The developer is on a small model. It is cheaper, but it writes the code the tester and
+                reviewer then judge, so a failed build is more likely. Sonnet or Opus is the safer choice for that seat.</p>
+            )}
+            {catalog && catalog.models.length > 0 && roster.length > 0 && (
+              <div className="field">
+                <label htmlFor="synthesis-model">Final write-up model</label>
+                <select id="synthesis-model" value={synthesisModel} onChange={(e) => setSynthesisModel(e.target.value)}>
+                  <option value="">App default</option>
+                  {claudeOnly(catalog.models).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+                <span className="hint">Writes the summary when the session ends. A large model here can write up what smaller seats discussed. Claude models only.</span>
+              </div>
             )}
           </section>
 

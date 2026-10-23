@@ -1,6 +1,6 @@
 # Per-agent context with retrieval (RAG)
 
-Status: plan, nothing built. Written 2026-10-23.
+Status: first part built (2026-10-23): per-seat selection of attachment passages. It differs from the plan below in one way: chunks are made and ranked with BM25 in the orchestrator when the prompt is built (`retrieval.py`, `attachment_prompt.py`), not stored in an `attachment_chunk` table with Postgres full-text search. Attachments are capped at 100,000 characters, so this is cheap, needs no migration or backfill, and stays correct when an attachment changes. A table becomes worth it if attachments grow far beyond the cap or embeddings are added. Small attachments (under 4,000 characters) are always sent whole; with no query or no keyword match the old behaviour (start of each attachment) applies. Not built: role visibility per attachment, "context used" notes, embeddings. Written 2026-10-23.
 
 ## Problem
 

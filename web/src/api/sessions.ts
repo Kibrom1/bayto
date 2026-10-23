@@ -29,6 +29,7 @@ export interface SessionCreateRequest {
   mode_id: string
   roster: RosterEntry[]
   budget?: BudgetIn
+  synthesis_model?: string // the model that writes the final synthesis; omitted = the app default
 }
 
 export interface SessionOut {

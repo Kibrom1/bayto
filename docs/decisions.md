@@ -107,3 +107,13 @@ A seat can run on a model other than its agent's default (setup page select, sen
 
 ## 2026-10-23: failure reasons are stored; child programs get no OTEL variables
 A failed session's reason is now saved on the session row (`failure_reason`, migration `a7b8c9d0e1f2`), so the room still shows it after an orchestrator restart; before, it lived only in memory. Programs the orchestrator starts (`claude`, `sbx`, `dev-team/run.sh`) no longer inherit `OTEL_*` variables: the orchestrator exports its own telemetry in-process over gRPC, and children pointed at the same endpoint over HTTP filled the log with `BadStatusLine` retries. The second change is a diagnosis from the log, not yet confirmed on a real run.
+
+## 2026-10-23: a session can pick the model that writes its synthesis
+`synthesis_model` on the session (migration `b8c9d0e1f2a3`), chosen in setup as "Final write-up model", validated against the catalogue, copied by Continue, and passed to the synthesizer for that call; empty means the app-wide `BAYTO_SYNTHESIS_MODEL`. The rolling summary and hand-raise models are still app-wide.
+
+## 2026-10-23: provider adapters for discussion seats
+OpenAI, Gemini and Ollama can run a discussion seat (`providers/`, model ids `<provider>/<model>`, keys from the environment only). The turn goes straight to the provider's HTTP API instead of through `claude -p` in a sandbox, so these seats have no tools and no file access: they only speak. Build and the final write-up refuse them. No fallback to another provider on failure; the session escalates to a human with the provider's message. Prices are optional per model; without them the turn's cost is recorded as unknown. Not verified against the live APIs, only against mocked responses.
+
+## 2026-10-23: each seat sees the parts of long attachments that match its role
+When attachments exceed the prompt budget, the seat about to speak gets the passages that best match its brief, the task and the discussion summary (BM25 over ~1,500-character chunks, computed per prompt) instead of the first N characters. Chosen over the planned stored-chunk table because attachments are capped at 100k characters and ranking in process needs no migration, backfill or re-indexing. Keyword ranking only: a seat whose question uses different words than the document can still miss the passage, which is the case embeddings would address. Not run against a real session.
+

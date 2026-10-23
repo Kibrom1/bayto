@@ -112,7 +112,7 @@ export function ContextCard({ taskId, sessionId }: { taskId: string; sessionId: 
       {error && <p className="alert bad" role="alert">{error}</p>}
       {total > 0 && (
         <p className="hint">Every agent reads this on every turn, about {Math.round(perTurn / 4).toLocaleString('en-US')} tokens each time
-          {total > PROMPT_BUDGET_CHARS ? '. There is more attached than fits, so the longest items are cut' : ''}.</p>
+          {total > PROMPT_BUDGET_CHARS ? '. There is more attached than fits, so each agent is shown the passages that best match its role and the discussion, and the rest is left out' : ''}.</p>
       )}
     </section>
   )

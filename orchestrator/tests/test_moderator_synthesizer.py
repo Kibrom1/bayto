@@ -133,3 +133,11 @@ async def test_fake_synthesizer_creates_no_spans(span_exporter):
     synthesizer = FakeSynthesizer(SynthesisResult(content_json={}, source_turn_ids=[]))
     await synthesizer.synthesize(mk_view(), "s", [])
     assert span_exporter.get_finished_spans() == ()
+
+
+async def test_a_per_call_model_overrides_the_app_default():
+    client = FakeAnthropicClient(canned_response({"ok": True}, []))
+    synth = AnthropicSynthesizer(model="default-model", client=client)
+    await synth.synthesize(mk_view(), "s", [])
+    await synth.synthesize(mk_view(), "s", [], model="claude-opus-5-5")
+    assert [c["model"] for c in client.messages.calls] == ["default-model", "claude-opus-5-5"]

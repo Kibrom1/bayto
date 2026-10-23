@@ -25,7 +25,8 @@ from .. import audit
 from ..models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from ..moderator.budget import session_usage
 from ..moderator.runner import STATUS_ACTIVE, STATUS_CANCELLING, STATUS_NEEDS_HUMAN, STATUS_STOPPING
-from ..models_catalog import is_known_model
+from ..models_catalog import seat_model_problem
+from ..providers import provider_id_of
 from ..modes_registry import ModeNotFoundError, ModeParseError, resolve_mode
 from .deps import get_db_sessionmaker, get_login_check, get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from .runtime import _retire_runtime, factory_root, launch_runner, session_failures, session_stages
@@ -74,6 +75,7 @@ class SessionCreateRequest(BaseModel):
     mode_id: uuid.UUID
     roster: list[RosterEntry] = Field(min_length=1, max_length=MAX_ROSTER)
     budget: BudgetIn | None = None
+    synthesis_model: text(LABEL_MAX) | None = None  # the model that writes the final synthesis; null = the app default
 
     @model_validator(mode="after")
     def _roster_is_unique(self) -> "SessionCreateRequest":
@@ -96,6 +98,7 @@ class SessionOut(BaseModel):
     budget: dict | None
     started_at: datetime | None
     ended_at: datetime | None
+    synthesis_model: str | None = None
 
 
 class SessionAgentOut(BaseModel):
@@ -141,6 +144,9 @@ async def create_session(
         mode_row = await db.get(Mode, req.mode_id)
         if mode_row is None:
             raise HTTPException(422, detail=_error("invalid_mode", "mode not found", "mode_id"))
+        problem = seat_model_problem(req.synthesis_model, synthesis=True)
+        if problem:
+            raise HTTPException(422, detail=_error(problem[0], problem[1], "synthesis_model"))
         if mode_row.name == "build":
             task_row = await db.get(Task, req.task_id)
             if not (task_row.workspace or {}).get("test_command"):
@@ -154,7 +160,7 @@ async def create_session(
             raise HTTPException(422, detail=_error("invalid_mode", str(exc), "mode_id"))
 
         session_row = Session(task_id=req.task_id, mode_id=req.mode_id, status=STATUS_CREATED,
-                               budget=_budget_dict(req.budget))
+                               budget=_budget_dict(req.budget), synthesis_model=req.synthesis_model)
         db.add(session_row)
         await db.flush()
 
@@ -168,9 +174,11 @@ async def create_session(
             if (mode_row.name != "build" and (agent_row.role or "").startswith("build-")):
                 raise HTTPException(422, detail=_error("invalid_agent", f"{agent_row.name} only works in a Build session",
                                                         "roster.agent_id"))
-            if not is_known_model(entry.model):
-                raise HTTPException(422, detail=_error("invalid_model", f"{entry.model} is not a known model",
-                                                        "roster.model"))
+            problem = seat_model_problem(entry.model, build=mode_row.name == "build")
+            if not problem and not entry.model and provider_id_of(agent_row.model) != "anthropic":
+                problem = seat_model_problem(agent_row.model, build=mode_row.name == "build")  # the agent's own default
+            if problem:
+                raise HTTPException(422, detail=_error(problem[0], problem[1], "roster.model"))
             sa = SessionAgent(session_id=session_row.id, agent_id=entry.agent_id,
                                agent_version=agent_row.version,  # snapshotted server-side, never client-supplied
                                seat_order=entry.seat_order, muted=entry.muted, harness=entry.harness,
@@ -183,7 +191,8 @@ async def create_session(
 
         audit.emit(action="session.created", summary=f"Created a {mode_row.name} session with {len(roster_log)} agents",
                            task_id=req.task_id, session_id=session_row.id, subject_type="session", subject_id=session_row.id,
-                           detail={"mode": mode_row.name, "budget": session_row.budget, "roster": roster_log})
+                           detail={"mode": mode_row.name, "budget": session_row.budget, "roster": roster_log,
+                                   "synthesis_model": session_row.synthesis_model})
         await db.commit()
         await db.refresh(session_row)
         return SessionCreateResponse(
@@ -213,7 +222,8 @@ async def continue_session(session_id: uuid.UUID,
         seats = (await db.execute(select(SessionAgent).where(SessionAgent.session_id == session_id,
                                                               SessionAgent.removed_at.is_(None))
                                   .order_by(SessionAgent.seat_order))).scalars().all()
-        new = Session(task_id=old.task_id, mode_id=old.mode_id, status=STATUS_CREATED, budget=old.budget)
+        new = Session(task_id=old.task_id, mode_id=old.mode_id, status=STATUS_CREATED, budget=old.budget,
+                      synthesis_model=old.synthesis_model)
         db.add(new)
         await db.flush()
         out = []

@@ -14,14 +14,20 @@ const MODELS = {
   ],
 }
 const AGENT = (id: string, name: string) => ({ id, name, role: name.toLowerCase(), system_prompt: 'x', stance: 's', model: 'claude-sonnet-5-5', kind: 'native', custom: false })
+const OTHER = [
+  { id: 'openai/gpt-x', label: 'GPT X', tier: 'small', usd_per_turn: 0.05, default: false, provider: 'openai', provider_label: 'OpenAI', ready: true, needs: null },
+  { id: 'gemini/gem-1', label: 'Gem 1', tier: 'small', usd_per_turn: 0.05, default: false, provider: 'gemini', provider_label: 'Google Gemini', ready: false, needs: 'GEMINI_API_KEY' },
+]
+let models: any = MODELS
 const calls: { method: string; url: string; body: any }[] = []
 
 beforeEach(() => {
   calls.length = 0
+  models = MODELS
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     calls.push({ method: init?.method ?? 'GET', url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-    if (url.endsWith('/models')) return json(MODELS)
+    if (url.endsWith('/models')) return json(models)
     if (url.endsWith('/tasks')) return json([{ id: 'task-1', title: 't', brief: null, output_type: 'memo', workspace: null }])
     if (url.endsWith('/modes')) return json([{ id: 'm1', name: 'debate', floor_policy: 'round-robin' }])
     if (url.endsWith('/agents/templates')) return json([AGENT('a1', 'Skeptic'), AGENT('a2', 'Optimist')])
@@ -61,9 +67,11 @@ describe('per-seat models on the setup screen', () => {
     await user.selectOptions(screen.getByLabelText('Model for Optimist'), 'claude-opus-5-5') // 1.8x
     expect(estimate()).toBe('~$1.00') // 0.1 + 0.9
 
+    await user.selectOptions(screen.getByLabelText('Final write-up model'), 'claude-opus-5-5')
     await user.click(screen.getByRole('button', { name: /start session/i }))
     await screen.findByText('room page')
     const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/sessions'))!
+    expect(post.body.synthesis_model).toBe('claude-opus-5-5')
     expect(post.body.roster).toEqual([
       { agent_id: 'a1', seat_order: 0, model: 'claude-haiku-5-5' },
       { agent_id: 'a2', seat_order: 1, model: 'claude-opus-5-5' },
@@ -79,5 +87,41 @@ describe('per-seat models on the setup screen', () => {
     await screen.findByText('room page')
     const post = calls.find((c) => c.method === 'POST' && c.url.endsWith('/sessions'))!
     expect(post.body.roster.every((r: any) => !('model' in r))).toBe(true)
+    expect('synthesis_model' in post.body).toBe(false)
+  })
+
+  it('names other providers, disables one that is not configured, and keeps the final write-up on Claude', async () => {
+    models = { ...MODELS, models: [...MODELS.models, ...OTHER] }
+    const user = userEvent.setup()
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    await user.click(await screen.findByRole('radio', { name: /^debate/i }))
+    await user.click(screen.getAllByRole('button', { name: /add to roster/i })[0])
+    const seat = await screen.findByLabelText('Model for Skeptic')
+    expect(within(seat).getByRole('option', { name: 'GPT X (OpenAI)' })).toBeEnabled()
+    expect(within(seat).getByRole('option', { name: /Gem 1.*set GEMINI_API_KEY first/ })).toBeDisabled()
+    const writer = screen.getByLabelText('Final write-up model')
+    expect(within(writer).queryByRole('option', { name: /GPT X/ })).toBeNull()
+    expect(within(writer).getByRole('option', { name: 'Opus 5.5' })).toBeInTheDocument()
+  })
+
+  it('warns when the Build developer is on a small model', async () => {
+    const BUILD = { id: 'm3', name: 'build', floor_policy: 'pipeline', stop_rules: {} }
+    const dev = { ...AGENT('b1', 'Developer'), role: 'build-developer' }
+    const base = globalThis.fetch as any
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/modes')) return json([BUILD])
+      if (url.endsWith('/agents/templates')) return json([dev])
+      return base(input, init)
+    }))
+    const user = userEvent.setup()
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    await user.click(await screen.findByRole('radio', { name: /^build/i }))
+    await user.click(await screen.findByRole('button', { name: /add to roster/i }))
+    expect(screen.queryByRole('note')).toBeNull()
+    await user.selectOptions(await screen.findByLabelText('Model for Developer'), 'claude-haiku-5-5')
+    expect(await screen.findByRole('note')).toHaveTextContent(/developer is on a small model/i)
   })
 })
