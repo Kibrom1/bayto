@@ -66,9 +66,11 @@ class FakeStreamingProvider(FakeSandboxProvider):
         super().__init__(**kw)
         self.events = events
         self.prompts: list[tuple[str, str]] = []
+        self.overrides: list[tuple[str, dict | None, str | None]] = []  # (role, env, model) of every turn
 
-    async def run_turn(self, sandbox, role, prompt):
+    async def run_turn(self, sandbox, role, prompt, *, env=None, model=None):
         self.prompts.append((role, prompt))
+        self.overrides.append((role, env, model))
         for e in self.events:
             yield e
 

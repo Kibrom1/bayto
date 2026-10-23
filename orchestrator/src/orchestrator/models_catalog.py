@@ -8,7 +8,6 @@ forward unchanged wherever it's read (`POST /sessions/{id}/continue`, `api/runti
 """
 from __future__ import annotations
 
-from .providers.registry import KEY_HINT
 import os
 from dataclasses import dataclass
 
@@ -80,7 +79,7 @@ def get_model(model_id: str | None) -> ModelInfo | None:
 
 def seat_model_problem(model_id: str | None, *, build: bool = False, synthesis: bool = False) -> tuple[str, str] | None:
     """(error code, message) when a model cannot be used for this seat, else None."""
-    from .providers import provider_id_of, provider_ready
+    from .providers import provider_id_of, provider_needs
     if not is_known_model(model_id):
         return "invalid_model", f"{model_id} is not a known model"
     provider = provider_id_of(model_id)
@@ -89,6 +88,7 @@ def seat_model_problem(model_id: str | None, *, build: bool = False, synthesis: 
     if build or synthesis:
         where = "Build seats" if build else "the final write-up"
         return "provider_not_supported", f"{model_id} is not a Claude model, and {where} can only use Claude models"
-    if not provider_ready(provider):
-        return "provider_not_configured", f"{model_id} needs {KEY_HINT.get(provider, provider)} set in the environment Bayto runs in, then a restart"
+    needs = provider_needs(provider)
+    if needs:
+        return "provider_not_configured", f"{model_id} needs {needs} set in the environment Bayto runs in, then a restart"
     return None

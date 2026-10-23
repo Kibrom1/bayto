@@ -60,6 +60,7 @@ from ..models import Session as SessionRow
 from ..models import SessionAgent, Task, TaskAttachment, Turn
 from ..models_catalog import get_model
 from ..providers import ProviderError, provider_for, split_model_id
+from ..providers.gateway import gateway_env, gateway_model_name
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..sandbox.turns import TextDelta, ToolUse, TurnResult
@@ -691,6 +692,18 @@ class ModeratorRunner:
             try:
                 streamed = False
                 external = None if self._pipeline else await self._external_seat(participant)
+                gateway = None if self._pipeline else await self._gateway_model(participant)
+                if gateway is not None:
+                    # A seat on a gateway model (Route A): still `claude -p` in the sandbox, pointed at the gateway for
+                    # this seat only. It never goes through wake_role, the Ollama fallback or a retry on another path.
+                    try:
+                        streamed = await self._gateway_turn(view, participant, gateway)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("session %s: gateway turn for %s failed: %s", self._session_id, participant, type(exc).__name__)
+                        span.set_attribute("outcome", "gateway_error")
+                        self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
+                        await self._escalate_to_human(view, f"{participant} could not get an answer from its gateway model {gateway}: {str(exc)[:400]}")
+                        return
                 if external is not None:
                     # A seat on another provider (OpenAI, Gemini, Ollama): the orchestrator asks it directly, text only.
                     try:
@@ -701,7 +714,7 @@ class ModeratorRunner:
                         await self._escalate_to_human(view, f"{participant} could not get an answer from its model provider: {exc}")
                         return
                 # Once the fallback is on, the streamed path (which always uses Claude) is skipped.
-                if (external is None and getattr(self._sandbox_provider, "supports_streaming", False)
+                if (external is None and gateway is None and getattr(self._sandbox_provider, "supports_streaming", False)
                         and not use_fallback):
                     try:
                         streamed = await self._stream_turn(view, participant)
@@ -709,11 +722,11 @@ class ModeratorRunner:
                         log.exception("session %s: streaming turn for %s failed; using the seat path",
                                       self._session_id, participant)
                 try:
-                    if not streamed and external is None:
+                    if not streamed and external is None and gateway is None:
                         await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
                 except SandboxCommandError as e:
                     # Reactive Fallback: if we hit a platform limit (Weekly/Daily), switch to Ollama immediately
-                    if not self._pipeline and looks_like_platform_limit(e.stderr):
+                    if not self._pipeline and gateway is None and looks_like_platform_limit(e.stderr):
                         log.warning("session %s: platform limit hit in sandbox; triggering reactive fallback", self._session_id)
                         async with self._sessionmaker() as session:
                             row = await session.get(SessionRow, self._session_id)
@@ -729,7 +742,7 @@ class ModeratorRunner:
                 # Reactive Fallback (Content Level): if the agent's response body contains limit errors
                 if response and "body" in response:
                     # Build (pipeline) seats need tools and history; the text-only fallback cannot serve them.
-                    if not self._pipeline and looks_like_platform_limit(response["body"]):
+                    if not self._pipeline and gateway is None and looks_like_platform_limit(response["body"]):
                         log.warning("session %s: platform limit detected in response body; triggering reactive fallback", self._session_id)
                         async with self._sessionmaker() as session:
                             row = await session.get(SessionRow, self._session_id)
@@ -740,7 +753,7 @@ class ModeratorRunner:
                         await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=True)
                         response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
 
-                if response is None and external is None:  # a provider seat is never re-woken in the sandbox
+                if response is None and external is None and gateway is None:  # a provider or gateway seat is never re-woken in the sandbox
                     # One retry: re-wake (not re-send -- the assignment is already sitting
                     # unread) and wait again, per the architect's "retry the same grant once
                     # more."
@@ -764,22 +777,45 @@ class ModeratorRunner:
 
         await self._update_rolling_summary()
 
-    async def _external_seat(self, participant: str) -> tuple[str, str, str] | None:
-        """(provider id, bare model id, system brief) when this seat runs on a non-Claude provider, else None."""
+    async def _seat_row(self, participant: str):
+        """(seat model, agent model, system prompt, stance) of the seat, or None."""
         async with self._sessionmaker() as session:
-            row = (await session.execute(
+            return (await session.execute(
                 select(SessionAgent.model, Agent.model, Agent.system_prompt, Agent.stance)
                 .join(Agent, Agent.id == SessionAgent.agent_id)
                 .where(SessionAgent.session_id == self._session_id, Agent.role == participant,
                        SessionAgent.removed_at.is_(None)))).first()
+
+    async def _external_seat(self, participant: str) -> tuple[str, str, str] | None:
+        """(provider id, bare model id, system brief) when this seat runs on a non-Claude HTTP provider, else None.
+        A gateway model is not one of these: it still runs `claude` (see `_gateway_model`)."""
+        row = await self._seat_row(participant)
         if row is None:
             return None
         model = row[0] or row[1]
         provider, bare = split_model_id(model or "")
-        if provider == "anthropic":
+        if provider in ("anthropic", "gateway"):
             return None
         system = "\n\n".join(x for x in (row[2], f"Stance: {row[3]}" if row[3] else "") if x)
         return provider, model, system or "You are one participant in a multi-agent discussion."
+
+    async def _gateway_model(self, participant: str) -> str | None:
+        """The seat's model id when it is `gateway/<name>`, else None."""
+        row = await self._seat_row(participant)
+        model = (row[0] or row[1]) if row is not None else None
+        return model if model and split_model_id(model)[0] == "gateway" else None
+
+    async def _gateway_turn(self, view: ConversationView, participant: str, model: str) -> bool:
+        """One streamed turn of a seat on a gateway model. The gateway environment and the bare model name go to
+        this seat's `claude` process only (run_turn's per-seat override). Any problem raises: there is no fallback to
+        another model, since a seat quietly answered by a different model than the one chosen is worse than a
+        visible failure."""
+        if not getattr(self._sandbox_provider, "supports_streaming", False):
+            raise ProviderError("gateway models need streamed turns: set BAYTO_STREAMING_TURNS=1 and restart Bayto")
+        env = gateway_env(model)  # ProviderError when BAYTO_GATEWAY_URL is not set
+        if not await self._stream_turn(view, participant, env=env, model=gateway_model_name(model), provider="gateway"):
+            raise ProviderError("the turn ended with an error (see the orchestrator log and the gateway's log)")
+        return True
 
     async def _provider_turn(self, view: ConversationView, participant: str, seat: tuple[str, str, str]) -> bool:
         """Ask the seat's own provider for its turn and send the answer like a streamed one. A failure raises
@@ -800,7 +836,8 @@ class ModeratorRunner:
                   "provider": provider_id, **self._attachment_meta()})
         return True
 
-    async def _stream_turn(self, view: ConversationView, participant: str) -> bool:
+    async def _stream_turn(self, view: ConversationView, participant: str, *, env: dict[str, str] | None = None,
+                           model: str | None = None, provider: str | None = None) -> bool:
         """Headless live turn: runs the seat's model with the assignment as the prompt and
         publishes `turn_delta` / `turn_tool` / `turn_done` events while it generates. The final
         text is sent as the seat's answer Envelope (tokens and cost in meta) so the normal
@@ -809,7 +846,9 @@ class ModeratorRunner:
         sid = str(self._session_id)
         prompt = await self._build_context(view)
         result: TurnResult | None = None
-        async for event in self._sandbox_provider.run_turn(self._sandbox, participant, prompt):
+        # The override is passed only for a gateway seat, so every other seat calls run_turn exactly as before.
+        override = {"env": env, "model": model} if env or model else {}
+        async for event in self._sandbox_provider.run_turn(self._sandbox, participant, prompt, **override):
             if isinstance(event, TextDelta):
                 self._pubsub.publish({"type": "turn_delta", "data": {"session_id": sid, "from": participant, "text": event.text}})
             elif isinstance(event, ToolUse):
@@ -823,7 +862,7 @@ class ModeratorRunner:
         await self._conversation.send(
             sender=participant, to=[self._mode.moderator or "moderator"], kind="answer", body=result.text,
             meta={"tokens_in": result.tokens_in, "tokens_out": result.tokens_out, "cost": result.cost,
-                  **self._attachment_meta()})
+                  **({"provider": provider} if provider else {}), **self._attachment_meta()})
         return True
 
     async def _task_text(self) -> str:

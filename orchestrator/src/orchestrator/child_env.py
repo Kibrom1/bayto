@@ -4,11 +4,18 @@ The orchestrator is pointed at an OpenTelemetry collector with OTEL_EXPORTER_OTL
 starts inherit that variable; `claude` then tries to export its own traces and metrics there over HTTP, which a gRPC
 port answers with garbage ("BadStatusLine"), so the log fills with retry errors and each run is slowed down. The
 orchestrator's own telemetry is configured in-process, so children get no OTEL_* variables at all.
+
+The local-model gateway settings (BAYTO_GATEWAY_URL, BAYTO_GATEWAY_TOKEN) are the orchestrator's alone and are stripped
+the same way: `sbx`, dev-team/run.sh and the helper `claude` calls must not see the token. It reaches exactly one place,
+the `claude` process of a seat on a gateway model, through the explicit `extra` of that seat's turn (see
+`sandbox/local.py`); `extra` is applied after the stripping, so it is never removed.
 """
 import os
 
+_ORCHESTRATOR_ONLY = ("BAYTO_GATEWAY_URL", "BAYTO_GATEWAY_TOKEN")
+
 
 def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_") and k not in _ORCHESTRATOR_ONLY}
     env.update(extra or {})
     return env

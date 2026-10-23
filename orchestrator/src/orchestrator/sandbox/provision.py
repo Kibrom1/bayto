@@ -21,6 +21,8 @@ from pathlib import Path
 import yaml
 
 from ..child_env import child_env
+from ..providers import provider_id_of
+from ..providers.gateway import gateway_host
 from .provider import SandboxProviderError, SeatSpec
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -41,6 +43,16 @@ def seat_permissions(seat: SeatSpec) -> tuple[list[str], list[str]]:
     return allow, deny
 
 
+def _network_for(seat: SeatSpec) -> list[str]:
+    """Hosts the seat's sandbox must reach. A seat on a gateway model adds the gateway's host, and only that seat does.
+    (The sandbox's allow-list is the union over its seats, so the host is reachable by the whole team's sandbox; the
+    gateway TOKEN still goes to the gateway seat's own process only.)"""
+    hosts = ["api.anthropic.com"]
+    if provider_id_of(seat.model) == "gateway" and (host := gateway_host()):
+        hosts.append(host)
+    return hosts
+
+
 def write_catalog(seats: list[SeatSpec], roles_dir: Path, roster_file: Path) -> list[str]:
     """Write one role (.yaml + .md) per distinct seat plus a roster file. Returns the seat ids."""
     roles_dir.mkdir(parents=True, exist_ok=True)
@@ -57,7 +69,7 @@ def write_catalog(seats: list[SeatSpec], roles_dir: Path, roster_file: Path) -> 
             "may_send": ["report", "critique", "question", "answer"],
             "receives": ["assignment", "report", "question", "answer", "resume"],
             "tools": {"allow": allow, "deny": deny},
-            "team_needs": {"network": ["api.anthropic.com"]},
+            "team_needs": {"network": _network_for(seat)},
         }, sort_keys=False))
         (roles_dir / f"{rid}.md").write_text(f"# {seat.name}\n\n{seat.brief.strip()}\n")
         lines.append(f"{rid} {seat.model}" if seat.model else rid)

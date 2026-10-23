@@ -8,18 +8,20 @@ from __future__ import annotations
 import os
 
 from .base import Provider, ProviderError
+from .gateway import GATEWAY, URL_VAR, gateway_url
 from .http_providers import GeminiProvider, OpenAICompatProvider
 
 ANTHROPIC = "anthropic"
 EXTERNAL = ("openai", "gemini", "ollama")
-LABELS = {"anthropic": "Anthropic", "openai": "OpenAI", "gemini": "Google Gemini", "ollama": "Ollama (local)"}
-KEY_HINT = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "ollama": "OLLAMA_HOST"}
+LABELS = {"anthropic": "Anthropic", "openai": "OpenAI", "gemini": "Google Gemini", "ollama": "Ollama (local)", GATEWAY: "Gateway"}
+KEY_HINT = {"openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "ollama": "OLLAMA_HOST", GATEWAY: URL_VAR}
+STREAMING_HINT = "BAYTO_STREAMING_TURNS=1"
 
 
 def split_model_id(model_id: str) -> tuple[str, str]:
     """('openai', 'gpt-4o-mini') for 'openai/gpt-4o-mini'; ('anthropic', id) for everything else."""
     head, sep, tail = model_id.partition("/")
-    if sep and head in EXTERNAL and tail:
+    if sep and (head in EXTERNAL or head == GATEWAY) and tail:
         return head, tail
     return ANTHROPIC, model_id
 
@@ -28,15 +30,32 @@ def provider_id_of(model_id: str | None) -> str:
     return split_model_id(model_id)[0] if model_id else ANTHROPIC
 
 
+def provider_needs(provider_id: str) -> str | None:
+    """What is missing before a provider can run a seat (the variable to set), or None when it is ready."""
+    if provider_id == ANTHROPIC:
+        return None
+    if provider_id == GATEWAY:
+        if gateway_url() is None:
+            return URL_VAR
+        # A gateway seat is a headless streamed turn (the per-seat environment is handed over there); the
+        # wake-a-long-lived-seat path has no such hand-over.
+        return None if os.environ.get("BAYTO_STREAMING_TURNS") == "1" else STREAMING_HINT
+    return None if provider_ready(provider_id) else KEY_HINT.get(provider_id, provider_id)
+
+
 def provider_ready(provider_id: str) -> bool:
     if provider_id == ANTHROPIC:
         return True
+    if provider_id == GATEWAY:
+        return provider_needs(provider_id) is None
     if provider_id == "ollama":
         return bool(os.environ.get("OLLAMA_HOST"))  # a local server has no key; setting its address opts in
     return bool(os.environ.get(KEY_HINT.get(provider_id, "")))
 
 
 def provider_for(provider_id: str) -> Provider:
+    if provider_id == GATEWAY:
+        raise ProviderError("gateway models run through `claude` in the sandbox, not through an HTTP adapter")
     if not provider_ready(provider_id) or provider_id == ANTHROPIC:
         hint = KEY_HINT.get(provider_id)
         raise ProviderError(f"{LABELS.get(provider_id, provider_id)} is not set up: set {hint} and restart Bayto"

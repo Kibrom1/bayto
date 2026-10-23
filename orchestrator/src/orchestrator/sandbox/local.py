@@ -36,6 +36,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping
 from typing import AsyncIterator, Iterator, Protocol
 
 from sqlalchemy import select
@@ -43,6 +44,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..child_env import child_env
 from ..models import Sandbox
+from ..providers.gateway import check_override, redact
 from .provider import (
     SandboxCommandError,
     SandboxDrift,
@@ -78,6 +80,22 @@ while IFS= read -r flag; do args+=("$flag"); done < "$FACTORY_DIR/tool-flags/$ro
 exec claude -p "${args[@]}" --add-dir "$WORKSPACE_DIR" --append-system-prompt "$(cat "$WORKSPACE_DIR/roles/$role.md")" \
   --output-format stream-json --verbose --include-partial-messages
 '''
+# The same turn for ONE seat that needs its own model name and environment (a seat on a gateway model). The host cannot
+# hand environment variables to a process inside the sandbox through `sbx exec` (unverified), and putting a token in the
+# command line would show it in `ps` and in error messages, so the values arrive on stdin, ahead of the prompt: a line
+# with the number of variables, then that many NAME=value lines (only ANTHROPIC_* names are accepted). An ANTHROPIC_API_KEY
+# already in the sandbox is dropped first so it cannot be sent to the gateway. The model is the second argument.
+_OVERRIDE_HEADER = r'''unset ANTHROPIC_API_KEY
+IFS= read -r count
+for ((i = 0; i < count; i++)); do
+  IFS= read -r kv
+  case "${kv%%=*}" in ANTHROPIC_[A-Z_]*) export "$kv" ;; *) echo "refusing a per-seat variable that is not ANTHROPIC_*" >&2; exit 2 ;; esac
+done
+'''
+_AWK_MODEL = r'''"$(awk -v r="$role" '$1==r {print $4}' "$WORKSPACE_DIR/team.tsv")"'''
+TURN_SCRIPT_OVERRIDE = TURN_SCRIPT.replace('role="$1"\n', 'role="$1"\n' + _OVERRIDE_HEADER, 1).replace(
+    "model=" + _AWK_MODEL, 'model="${2:-$(awk -v r="$role" \'$1==r {print $4}\' "$WORKSPACE_DIR/team.tsv")}"', 1)
+assert TURN_SCRIPT_OVERRIDE.count("read -r count") == 1 and "${2:-$(awk" in TURN_SCRIPT_OVERRIDE
 TEAM_READY_PROBE = f'test -f "{TEAM_DIR}/team-started"'
 # Exit 0 only if a holder from an earlier start is still alive and the team came up.
 TEAM_ALIVE_PROBE = f'p=$(cat "{HOLDER_PID}" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" && test -f "{TEAM_DIR}/team-started"'
@@ -428,9 +446,18 @@ class LocalSbxSandboxProvider(SandboxProvider):
         await self.release_team(sandbox)
         await self.start_team(sandbox)
 
-    async def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str) -> AsyncIterator[TurnEvent]:
-        argv = ["exec", "-i", sandbox.name, "bash", "-lc", TURN_SCRIPT, "_", role]
-        lines = iter(self._runner.stream(argv, stdin=prompt))
+    async def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str, *, env: Mapping[str, str] | None = None,
+                       model: str | None = None) -> AsyncIterator[TurnEvent]:
+        stdin = prompt
+        if env or model:
+            # Per-seat override (gateway seat): values go in on stdin, never in argv; see TURN_SCRIPT_OVERRIDE.
+            env = dict(env or {})
+            check_override(env)
+            argv = ["exec", "-i", sandbox.name, "bash", "-lc", TURN_SCRIPT_OVERRIDE, "_", role, *([model] if model else [])]
+            stdin = "\n".join([str(len(env)), *(f"{k}={v}" for k, v in env.items())]) + "\n" + prompt
+        else:
+            argv = ["exec", "-i", sandbox.name, "bash", "-lc", TURN_SCRIPT, "_", role]
+        lines = iter(self._runner.stream(argv, stdin=stdin))
         loop = asyncio.get_running_loop()
         pending: asyncio.Future | None = None
         saw_result = False
@@ -438,7 +465,13 @@ class LocalSbxSandboxProvider(SandboxProvider):
             while True:
                 pending = loop.run_in_executor(None, next, lines, None)
                 # shield: cancelling this coroutine must not abandon the worker thread mid-read
-                line = await asyncio.shield(pending)
+                try:
+                    line = await asyncio.shield(pending)
+                except SandboxCommandError as exc:
+                    if not env:
+                        raise
+                    # The child's stderr can echo its environment; the token must not reach logs or the room.
+                    raise SandboxCommandError(exc.argv, exc.returncode, redact(exc.stderr, env)) from None
                 pending = None
                 if line is None:
                     break

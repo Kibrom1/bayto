@@ -7,10 +7,10 @@ export interface ModelInfo {
   tier: string
   usd_per_turn: number
   default: boolean
-  provider?: string // 'anthropic' | 'openai' | 'gemini' | 'ollama'
+  provider?: string // 'anthropic' | 'openai' | 'gemini' | 'ollama' | 'gateway'
   provider_label?: string
   ready?: boolean // false when the provider's key / host is not set on the server
-  needs?: string | null // what to set when not ready, e.g. OPENAI_API_KEY
+  needs?: string | null // what to set when not ready, e.g. OPENAI_API_KEY or BAYTO_GATEWAY_URL
 }
 
 export interface ModelCatalog {
@@ -43,5 +43,5 @@ export function modelOptionText(m: ModelInfo): string {
   return m.ready === false ? `${m.label}${from} — set ${m.needs ?? 'its key'} first` : `${m.label}${from}`
 }
 
-/** Build seats and the final write-up run on Claude only; every other provider is for discussion seats. */
+/** Build seats and the final write-up run on Claude only; every other provider, a gateway included, is for discussion seats. */
 export const claudeOnly = (models: ModelInfo[]): ModelInfo[] => models.filter((m) => !m.provider || m.provider === 'anthropic')

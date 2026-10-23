@@ -6,8 +6,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..models_catalog import catalog, default_model_id
-from ..providers import provider_ready
-from ..providers.registry import KEY_HINT, LABELS
+from ..providers import provider_needs
+from ..providers.registry import LABELS
 
 router = APIRouter()
 
@@ -34,7 +34,7 @@ async def list_models() -> ModelsOut:
     return ModelsOut(
         models=[ModelOut(id=m.id, label=m.label, tier=m.tier, usd_per_turn=m.usd_per_turn, default=m.default,
                          provider=m.provider, provider_label=LABELS.get(m.provider, m.provider),
-                         ready=provider_ready(m.provider), needs=None if provider_ready(m.provider) else KEY_HINT.get(m.provider))
+                         ready=provider_needs(m.provider) is None, needs=provider_needs(m.provider))
                 for m in catalog()],
         default=default_model_id(),
     )

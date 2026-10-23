@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import abc
 import uuid
+from collections.abc import Mapping
 from typing import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -103,9 +104,14 @@ class SandboxProvider(abc.ABC):
     # `supports_streaming` and implements run_turn(); the moderator falls back to wake_role() otherwise.
     supports_streaming: bool = False
 
-    def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str) -> AsyncIterator[TurnEvent]:
+    def run_turn(self, sandbox: SandboxInfo, role: str, prompt: str, *, env: Mapping[str, str] | None = None,
+                 model: str | None = None) -> AsyncIterator[TurnEvent]:
         """Run ONE turn of `role` headlessly and yield its events as they arrive (TextDelta..., then
-        exactly one TurnResult). The prompt is the whole input: a headless turn has no inbox."""
+        exactly one TurnResult). The prompt is the whole input: a headless turn has no inbox.
+
+        `env` and `model` are a per-turn override for ONE seat (a seat on a gateway model, Route A in
+        docs/per-agent-models.md): `env` is set for that turn's `claude` process only, and `model` replaces the
+        model named in team.tsv. Both are None for every other seat. `env` may hold a token: never log it."""
         raise NotImplementedError(f"{type(self).__name__} does not support streamed turns")
 
     @abc.abstractmethod

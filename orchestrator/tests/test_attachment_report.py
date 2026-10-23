@@ -163,3 +163,15 @@ def test_each_excerpt_is_labelled_with_its_own_attachment():
     assert [r["name"] for r in report] == ["contract.txt", "design.md", "notes.md"]
     assert [r["mode"] for r in report] == ["excerpt", "excerpt", "whole"]
     assert text.count('name="notes.md"') == 1 and 'name="contract.txt" excerpt=' in text
+
+
+def test_the_report_leaves_out_what_the_seat_may_not_read():
+    from types import SimpleNamespace
+    from orchestrator.attachment_report import attachment_report
+    mk = lambda n, roles: SimpleNamespace(kind="file", name=n, source=None, content=f"{n} body", roles=roles)
+    items = [mk("open.txt", None), mk("contract.txt", ["lawyer"])]
+    text, report = attachment_report(items, seat="developer")
+    assert [r["name"] for r in report] == ["open.txt"] and "contract" not in text
+    text, report = attachment_report(items, seat="lawyer")
+    assert [r["name"] for r in report] == ["open.txt", "contract.txt"]
+    assert attachment_report(items, seat=None)[1][0]["name"] == "open.txt" and len(attachment_report(items)[1]) == 1
