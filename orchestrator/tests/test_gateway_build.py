@@ -38,15 +38,20 @@ def allowed(gw, monkeypatch):  # noqa: F811
 
 # ---------------------------------------------------------------- API: off by default, refusals that stay
 
+FOUR = ("build-architect", "build-developer", "build-tester", "build-reviewer")
+
+
 async def _build_body(live_sessionmaker, model, monkeypatch, **extra):
     monkeypatch.setattr("orchestrator.api.sessions.resolve_mode", lambda name: None)  # no build.yaml in the fixtures
-    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, mode_name="build", roles=("build-developer",))
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, mode_name="build", roles=FOUR)
     from orchestrator.models import Task
     async with live_sessionmaker() as db:
         (await db.get(Task, task_id)).workspace = WS
         await db.commit()
     return {"task_id": str(task_id), "mode_id": str(mode_id),
-            "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0, "model": model}], **extra}
+            # all four Build roles are required by the API; the developer (second) carries the model under test
+            "roster": [{"agent_id": str(a), "seat_order": i, **({"model": model} if r == "build-developer" else {})}
+                       for i, (a, r) in enumerate(zip(agent_ids, FOUR))], **extra}
 
 
 async def test_flag_off_keeps_provider_not_supported(client, live_sessionmaker, gw, monkeypatch):
@@ -63,7 +68,7 @@ async def test_flag_off_keeps_provider_not_supported(client, live_sessionmaker, 
 async def test_flag_on_allows_a_gateway_build_seat_and_records_the_model(client, live_sessionmaker, allowed, monkeypatch):
     resp = await client.post("/sessions", json=await _build_body(live_sessionmaker, "gateway/qwen3", monkeypatch))
     assert resp.status_code == 201, resp.text
-    assert resp.json()["session_agents"][0]["model"] == "gateway/qwen3"
+    assert [sa["model"] for sa in resp.json()["session_agents"]] == [None, "gateway/qwen3", None, None]
 
 
 async def test_flag_on_still_needs_the_gateway_and_streamed_turns(client, live_sessionmaker, allowed, monkeypatch):
