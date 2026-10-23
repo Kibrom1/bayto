@@ -352,7 +352,7 @@ async def test_remove_builds_expected_argv_and_updates_status(live_sessionmaker)
 
     removed = await provider.remove(created)
 
-    assert runner.calls[-1] == ["env", "rm", "sbx-wad-102", "--auto-approve"]
+    assert runner.calls[-1] == ["env", "rm", "sbx-wad-102"]
     assert removed.status == "removed"
     assert removed.closed_at is not None
 
