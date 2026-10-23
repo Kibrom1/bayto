@@ -188,6 +188,9 @@ export function SessionSetup() {
   // Each seat costs the usual per-seat figure times how its model compares with the default (Opus about 2x, Haiku about 0.2x).
   const seatModel = (t: AgentTemplate) => seatModels[t.id] || t.model
   const estimate = roster.reduce((sum, t) => sum + (isBuild ? BUILD_COST_PER_SEAT : COST_PER_SEAT) * costFactor(catalog, seatModel(t)), 0)
+  // The developer writes the code the others judge: a small model there tends to loop or break the build.
+  const smallDeveloper = isBuild && roster.some((t) => t.role === 'build-developer' &&
+    catalog?.models.find((m) => m.id === seatModel(t))?.tier === 'small')
   const pct = cap > 0 ? Math.round((estimate / cap) * 100) : null
 
   const problems: string[] = []
@@ -380,6 +383,10 @@ export function SessionSetup() {
                   </li>
                 ))}
               </ol>
+            )}
+            {smallDeveloper && (
+              <p className="hint" role="note">The developer is on a small model. It is cheaper, but it writes the code the tester and
+                reviewer then judge, so a failed build is more likely. Sonnet or Opus is the safer choice for that seat.</p>
             )}
             {catalog && catalog.models.length > 0 && roster.length > 0 && (
               <div className="field">

@@ -104,4 +104,24 @@ describe('per-seat models on the setup screen', () => {
     expect(within(writer).queryByRole('option', { name: /GPT X/ })).toBeNull()
     expect(within(writer).getByRole('option', { name: 'Opus 5.5' })).toBeInTheDocument()
   })
+
+  it('warns when the Build developer is on a small model', async () => {
+    const BUILD = { id: 'm3', name: 'build', floor_policy: 'pipeline', stop_rules: {} }
+    const dev = { ...AGENT('b1', 'Developer'), role: 'build-developer' }
+    const base = globalThis.fetch as any
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/modes')) return json([BUILD])
+      if (url.endsWith('/agents/templates')) return json([dev])
+      return base(input, init)
+    }))
+    const user = userEvent.setup()
+    renderSetup()
+    await screen.findByRole('heading', { name: /session setup/i })
+    await user.click(await screen.findByRole('radio', { name: /^build/i }))
+    await user.click(await screen.findByRole('button', { name: /add to roster/i }))
+    expect(screen.queryByRole('note')).toBeNull()
+    await user.selectOptions(await screen.findByLabelText('Model for Developer'), 'claude-haiku-5-5')
+    expect(await screen.findByRole('note')).toHaveTextContent(/developer is on a small model/i)
+  })
 })
