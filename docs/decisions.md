@@ -98,3 +98,6 @@ After an orchestrator restart a running session is marked `orphaned` because its
 
 ## 2026-10-22: pilot readiness
 Added for the first small pilot: `scripts/bayto-doctor.sh` (read-only preflight with fixes), `docs/pilot-guide.md`, a "Try a sample discussion" button on the empty task list (creates a real release-cadence task and opens its setup with Debate chosen) and "Download transcript" in the room. The synthesis already had Copy Markdown and Download .md. Not done: accounts and sign-in (the app stays local-only), a hosted version, an in-app feedback channel and usage analytics. Pilot feedback is gathered by hand with the questions in the guide.
+
+## 2026-10-23: Build permissions made explicit
+A Build task could start with no test command, which left the developer and tester unable to run any tests (live run: $4 and 8.9M tokens spent asking for a permission a chat reply cannot grant). Now: POST /sessions refuses a Build session without a test command (`test_command_required`); the repository preflight suggests one from the repo's files and returns a per-role permission table built from the same function the session uses; the tester gets only the test command (extra commands go to the developer); a `blocked` verdict pauses with a message saying how permissions work; the setup page edits the task's workspace for existing tasks too.

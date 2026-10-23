@@ -95,6 +95,12 @@ export function SessionSetup() {
       .then((ts) => {
         if (!Array.isArray(ts)) return
         const found = ts.find((t) => t.id === taskId)
+        if (found?.workspace) {
+          setWs({
+            repo_path: found.workspace.repo_path, base_branch: found.workspace.base_branch || 'main',
+            test_command: found.workspace.test_command ?? '', allowed_commands: (found.workspace.allowed_commands ?? []).join('\n'),
+          })
+        }
         if (found) setTask(found)
         else setTaskMissing(true)
       })
@@ -181,7 +187,8 @@ export function SessionSetup() {
   if (isBuild) {
     const missing = BUILD_ROLES.filter((r) => !roster.some((t) => t.role === r))
     if (missing.length > 0) problems.push(`Build needs all four roles: add ${missing.map((r) => r.replace('build-', '')).join(', ')}.`)
-    if (task && !task.workspace && ws.repo_path.trim() === '') problems.push('Enter the repository path the team should work in.')
+    if (task && ws.repo_path.trim() === '') problems.push('Enter the repository path the team should work in.')
+    else if (task && ws.test_command.trim() === '') problems.push('Set a test command: without one the developer and tester cannot run any tests.')
   } else if (roster.length < 2) {
     problems.push('Add at least two agents so there is something to discuss.')
   }
@@ -222,7 +229,7 @@ export function SessionSetup() {
           dollars: cap > 0 ? cap : undefined,
         },
       }
-      if (isBuild && task && !task.workspace) await setTaskWorkspace(taskId, workspaceBody(ws))
+      if (isBuild && task) await setTaskWorkspace(taskId, workspaceBody(ws))
       const { session } = await createSession(req)
       await startSession(session.id)
       navigate(`/room/${session.id}`)
@@ -286,18 +293,11 @@ export function SessionSetup() {
             </div>
           </section>
 
-          {isBuild && task && !task.workspace && (
+          {isBuild && task && (
             <section className="card card-pad" aria-labelledby="repo-h">
-              <h2 id="repo-h">Repository</h2>
-              <p className="hint">This task has no repository yet. The team will work on a new branch in it; nothing is pushed.</p>
-              <WorkspaceFields value={ws} onChange={setWs} legend="" />
-            </section>
-          )}
-          {isBuild && task?.workspace && (
-            <section className="card card-pad" aria-labelledby="repo-h">
-              <h2 id="repo-h">Repository</h2>
-              <p className="muted"><code>{task.workspace.repo_path}</code> on <code>{task.workspace.base_branch}</code>
-                {task.workspace.test_command ? <> · tests: <code>{task.workspace.test_command}</code></> : ' · no test command set'}</p>
+              <h2 id="repo-h">Repository and permissions</h2>
+              <p className="hint">The team works on a new branch in this repository; nothing is pushed. What each role may run is fixed when the session starts.</p>
+              <WorkspaceFields value={ws} onChange={setWs} legend="" autoCheck={!!task.workspace} />
             </section>
           )}
 

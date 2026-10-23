@@ -1031,3 +1031,18 @@ async def test_an_interrupted_session_can_be_continued_with_the_same_team(client
     assert body["session"]["id"] != created and body["session"]["status"] == "created"
     assert body["session"]["budget"] == {"max_cost": 4.0}
     assert [sa["agent_id"] for sa in body["session_agents"]] == [str(a) for a in agent_ids]
+
+
+async def test_a_build_session_needs_a_test_command(client, live_sessionmaker, monkeypatch):
+    monkeypatch.setattr("orchestrator.api.sessions.resolve_mode", lambda name: None)  # no build.yaml in the fixtures
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker, mode_name="build", roles=("build-developer",))
+    body = {"task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]}
+    refused = await client.post("/sessions", json=body)
+    assert refused.status_code == 422
+    assert refused.json()["detail"]["error"]["code"] == "test_command_required"
+    async with live_sessionmaker() as db:
+        task = await db.get(Task, task_id)
+        task.workspace = {"repo_path": "/x", "base_branch": "main", "test_command": "uv run pytest"}
+        await db.commit()
+    ok = await client.post("/sessions", json=body)
+    assert ok.status_code == 201, ok.text

@@ -68,6 +68,11 @@ class PipelineFloorPolicy:
             # The speaker is stuck (for example 'blocked') and a person has answered: give the same role another
             # turn, which carries the person's note. Still bounded by the per-role turn cap.
             return self._go(view, view.last_speaker, f"{key}+human")
+        if target is None and view.last_verdict == "blocked":
+            return AskHuman(reason=f"{view.last_speaker} reported 'blocked'. If it is a missing permission, replying "
+                                   "here cannot grant it: a seat may run only the task's test command (and, for the "
+                                   "developer, its other allowed commands). Change those in the task's workspace "
+                                   "settings and start a new session.")
         if target is None:
             return AskHuman(reason=f"{view.last_speaker} reported '{view.last_verdict}', which this pipeline "
                                    "does not route; a person needs to decide the next step")

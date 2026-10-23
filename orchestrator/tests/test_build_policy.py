@@ -100,11 +100,13 @@ async def test_task_creation_rejects_an_unsafe_test_command(live_sessionmaker, t
     assert good.status_code == 201
 
 
-def test_extra_commands_are_allowed_for_developer_and_tester_only():
+def test_extra_commands_are_allowed_for_the_developer_only_and_the_tester_runs_just_the_test_command():
     ws = {"test_command": "cd orchestrator && uv run pytest -q", "allowed_commands": ["uv sync", "uv run ruff check"]}
-    for role in ("build-developer", "build-tester"):
-        allow, _ = build_seat_tools(role, (), ws)
-        assert "Bash(uv sync:*)" in allow and "Bash(uv run ruff check:*)" in allow and "Bash(uv run pytest -q:*)" in allow
+    allow, _ = build_seat_tools("build-developer", (), ws)
+    assert "Bash(uv sync:*)" in allow and "Bash(uv run ruff check:*)" in allow and "Bash(uv run pytest -q:*)" in allow
+    allow, _ = build_seat_tools("build-tester", (), ws)
+    assert "Bash(uv run pytest -q:*)" in allow and "Bash(cd orchestrator:*)" in allow
+    assert "Bash(uv sync:*)" not in allow and "Bash(uv run ruff check:*)" not in allow
     for role in ("build-architect", "build-reviewer"):
         allow, _ = build_seat_tools(role, (), ws)
         assert not any("uv" in rule for rule in allow)
@@ -121,3 +123,25 @@ def test_extra_commands_are_checked_like_the_test_command():
             validate_extra_commands([never])
     with pytest.raises(ValueError):
         validate_extra_commands([f"cmd{i}" for i in range(11)])
+
+
+def test_suggest_test_command_reads_the_repo(tmp_path):
+    from orchestrator.build_policy import suggest_test_command
+    assert suggest_test_command(str(tmp_path)) is None
+    (tmp_path / "web").mkdir()
+    (tmp_path / "web" / "package.json").write_text("{}")
+    assert suggest_test_command(str(tmp_path)) == "cd web && npm test"
+    (tmp_path / "orchestrator").mkdir()
+    (tmp_path / "orchestrator" / "uv.lock").write_text("")
+    assert suggest_test_command(str(tmp_path)) == "cd orchestrator && uv run pytest"
+    (tmp_path / "uv.lock").write_text("")
+    assert suggest_test_command(str(tmp_path)) == "uv run pytest"
+
+
+def test_permission_summary_shows_who_can_run_tests():
+    from orchestrator.build_policy import permission_summary
+    none = {r["role"]: r for r in permission_summary({})}
+    assert not none["build-tester"]["can_run_tests"] and not none["build-developer"]["can_run_tests"]
+    ok = {r["role"]: r for r in permission_summary({"test_command": "uv run pytest"})}
+    assert ok["build-tester"]["can_run_tests"] and ok["build-developer"]["can_run_tests"]
+    assert not ok["build-reviewer"]["can_run_tests"] and not ok["build-architect"]["can_run_tests"]

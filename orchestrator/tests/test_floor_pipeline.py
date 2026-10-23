@@ -151,3 +151,8 @@ def test_a_human_answer_does_not_change_a_routable_verdict():
     v = view("architect", "planned", turns={"architect": 1}).model_copy(update={"human_replied_since_last_turn": True})
     d = nxt(v)
     assert isinstance(d, Grant) and d.participant == "developer"
+
+
+def test_a_blocked_seat_gets_a_message_about_how_permissions_work():
+    d = nxt(view("qa-tester", "blocked"))
+    assert isinstance(d, AskHuman) and "test command" in d.reason and "new session" in d.reason

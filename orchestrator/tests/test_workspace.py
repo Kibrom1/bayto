@@ -178,3 +178,13 @@ async def test_allowed_commands_are_saved_with_the_task_and_checked_up_front(liv
         assert resp.status_code == 422 and resp.json()["detail"]["error"]["code"] == "workspace_bad_allowed_commands", bad
         pre = (await _post("/workspaces/preflight", {"repo_path": str(repo), "allowed_commands": [bad]})).json()
         assert pre["ok"] is False and pre["problems"][0]["code"] == "bad_allowed_commands", bad
+
+
+async def test_preflight_suggests_a_test_command_and_shows_who_can_run_it(live_sessionmaker, repo):
+    (repo / "uv.lock").write_text("")
+    pre = (await _post("/workspaces/preflight", {"repo_path": str(repo)})).json()
+    assert pre["suggested_test_command"] == "uv run pytest"
+    assert {p["role"]: p["can_run_tests"] for p in pre["permissions"]}["build-tester"] is False
+    pre = (await _post("/workspaces/preflight", {"repo_path": str(repo), "test_command": "uv run pytest"})).json()
+    perms = {p["role"]: p for p in pre["permissions"]}
+    assert perms["build-tester"]["can_run_tests"] and "uv run pytest" in perms["build-tester"]["can_run"]

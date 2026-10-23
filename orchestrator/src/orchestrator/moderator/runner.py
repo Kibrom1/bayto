@@ -793,9 +793,11 @@ class ModeratorRunner:
         if ws:
             lines.append(f"Workspace: git repository, base branch {ws.get('base_branch', 'main')}")
             if ws.get("test_command"):
-                lines.append(f"Test command: {ws['test_command']}")
+                lines.append(f"Test command: {ws['test_command']} (the developer and tester may run exactly this, nothing else)")
             if ws.get("allowed_commands"):
-                lines.append("Other commands the developer and tester may run: " + "; ".join(ws["allowed_commands"]))
+                lines.append("Other commands only the developer may run: " + "; ".join(ws["allowed_commands"]))
+            lines.append("Permissions are fixed when the session starts. If a command you need is refused, report "
+                         "'blocked' naming the command; a chat reply cannot grant it.")
         async with self._sessionmaker() as session:
             attachments = (await session.execute(
                 select(TaskAttachment).where(TaskAttachment.task_id == task.id)

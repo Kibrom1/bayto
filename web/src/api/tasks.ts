@@ -30,6 +30,8 @@ export interface WorkspaceReport {
   current_branch: string | null
   dirty: boolean
   dirty_files: string[]
+  suggested_test_command?: string | null
+  permissions?: { role: string; can_run: string[]; can_run_tests: boolean; note: string }[]
 }
 
 export interface TaskCreateRequest {
