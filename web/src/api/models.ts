@@ -11,6 +11,7 @@ export interface ModelInfo {
   provider_label?: string
   ready?: boolean // false when the provider's key / host is not set on the server
   needs?: string | null // what to set when not ready, e.g. OPENAI_API_KEY or BAYTO_GATEWAY_URL
+  build_ok?: boolean // may a Build seat use it: Claude always; a gateway model only when the server has BAYTO_ALLOW_GATEWAY_BUILD=1
 }
 
 export interface ModelCatalog {
@@ -45,3 +46,7 @@ export function modelOptionText(m: ModelInfo): string {
 
 /** Build seats and the final write-up run on Claude only; every other provider, a gateway included, is for discussion seats. */
 export const claudeOnly = (models: ModelInfo[]): ModelInfo[] => models.filter((m) => !m.provider || m.provider === 'anthropic')
+
+/** Models a Build seat may use: Claude, plus gateway models only when the server says so (`build_ok`). Never another provider. */
+export const buildModels = (models: ModelInfo[]): ModelInfo[] =>
+  models.filter((m) => !m.provider || m.provider === 'anthropic' || (m.provider === 'gateway' && m.build_ok === true))

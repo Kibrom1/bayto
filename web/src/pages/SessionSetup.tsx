@@ -10,7 +10,7 @@ import {
   type SessionCreateRequest,
 } from '../api/sessions'
 import { agentHue, initials } from '../agentColor'
-import { claudeOnly, costFactor, getModels, modelOptionText, type ModelCatalog } from '../api/models'
+import { buildModels, claudeOnly, costFactor, getModels, modelOptionText, type ModelCatalog } from '../api/models'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
 import { setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
@@ -188,6 +188,7 @@ export function SessionSetup() {
   // Each seat costs the usual per-seat figure times how its model compares with the default (Opus about 2x, Haiku about 0.2x).
   const seatModel = (t: AgentTemplate) => seatModels[t.id] || t.model
   const estimate = roster.reduce((sum, t) => sum + (isBuild ? BUILD_COST_PER_SEAT : COST_PER_SEAT) * costFactor(catalog, seatModel(t)), 0)
+  const gatewayBuildSeat = isBuild && roster.some((t) => catalog?.models.find((m) => m.id === seatModel(t))?.provider === 'gateway')
   // The developer writes the code the others judge: a small model there tends to loop or break the build.
   const smallDeveloper = isBuild && roster.some((t) => t.role === 'build-developer' &&
     catalog?.models.find((m) => m.id === seatModel(t))?.tier === 'small')
@@ -373,7 +374,7 @@ export function SessionSetup() {
                       <select className="seat-model" aria-label={`Model for ${t.name}`} value={seatModels[t.id] ?? ''}
                         onChange={(e) => setSeatModels((m) => ({ ...m, [t.id]: e.target.value }))}>
                         <option value="">Default ({catalog.models.find((m) => m.id === t.model)?.label ?? t.model})</option>
-                        {(isBuild ? claudeOnly(catalog.models) : catalog.models).map((m) => (
+                        {(isBuild ? buildModels(catalog.models) : catalog.models).map((m) => (
                           <option key={m.id} value={m.id} disabled={m.ready === false}>{modelOptionText(m)}</option>
                         ))}
                       </select>
@@ -383,6 +384,12 @@ export function SessionSetup() {
                   </li>
                 ))}
               </ol>
+            )}
+            {gatewayBuildSeat && (
+              <p className="hint" role="note">A Build seat is on a gateway model. Tool use through a gateway varies by model, so
+                expect more failed or looping turns than on Claude. Permissions do not change: <code>claude</code> itself still
+                enforces the same allowed and denied commands for every Build seat. If the gateway fails, the session pauses for
+                you; it never switches to another model.</p>
             )}
             {smallDeveloper && (
               <p className="hint" role="note">The developer is on a small model. It is cheaper, but it writes the code the tester and

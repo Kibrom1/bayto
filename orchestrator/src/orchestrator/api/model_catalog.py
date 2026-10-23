@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ..models_catalog import catalog, default_model_id
 from ..providers import provider_needs
+from ..providers.gateway import gateway_build_allowed
 from ..providers.registry import LABELS
 
 router = APIRouter()
@@ -22,6 +23,7 @@ class ModelOut(BaseModel):
     provider_label: str = "Anthropic"
     ready: bool = True          # false: the provider's key or address is not set, so the model cannot be chosen yet
     needs: str | None = None    # the environment variable that would make it ready
+    build_ok: bool = True       # may a Build seat use it: Claude always; a gateway model only with BAYTO_ALLOW_GATEWAY_BUILD=1
 
 
 class ModelsOut(BaseModel):
@@ -34,7 +36,8 @@ async def list_models() -> ModelsOut:
     return ModelsOut(
         models=[ModelOut(id=m.id, label=m.label, tier=m.tier, usd_per_turn=m.usd_per_turn, default=m.default,
                          provider=m.provider, provider_label=LABELS.get(m.provider, m.provider),
-                         ready=provider_needs(m.provider) is None, needs=provider_needs(m.provider))
+                         ready=provider_needs(m.provider) is None, needs=provider_needs(m.provider),
+                         build_ok=m.provider == "anthropic" or (m.provider == "gateway" and gateway_build_allowed()))
                 for m in catalog()],
         default=default_model_id(),
     )

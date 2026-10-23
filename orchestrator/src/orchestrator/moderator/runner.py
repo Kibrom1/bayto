@@ -61,7 +61,7 @@ from ..models import SessionAgent, Task, TaskAttachment, Turn
 from ..models_catalog import get_model
 from ..recall import MAX_MESSAGES_SCANNED, MAX_SYNTHESES_SCANNED, RECALL_KINDS, SUMMARY_CHARS, Source, recall_block, synthesis_text
 from ..providers import ProviderError, provider_for, split_model_id
-from ..providers.gateway import gateway_env, gateway_model_name
+from ..providers.gateway import BUILD_FLAG, gateway_build_allowed, gateway_env, gateway_model_name
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..sandbox.turns import TextDelta, ToolUse, TurnResult
@@ -693,7 +693,15 @@ class ModeratorRunner:
             try:
                 streamed = False
                 external = None if self._pipeline else await self._external_seat(participant)
-                gateway = None if self._pipeline else await self._gateway_model(participant)
+                gateway = await self._gateway_model(participant)  # Build too: it runs streamed turns, see _gateway_turn
+                if self._pipeline and gateway is None:
+                    # Build seats run on Claude or, by opt-in, a gateway model. Another provider has no tools, and
+                    # the old path would hand its id to `claude --model`: refuse instead of running something else.
+                    other = await self._build_seat_provider_problem(participant)
+                    if other:
+                        span.set_attribute("outcome", "provider_error")
+                        await self._escalate_to_human(view, other)
+                        return
                 if gateway is not None:
                     # A seat on a gateway model (Route A): still `claude -p` in the sandbox, pointed at the gateway for
                     # this seat only. It never goes through wake_role, the Ollama fallback or a retry on another path.
@@ -806,11 +814,23 @@ class ModeratorRunner:
         model = (row[0] or row[1]) if row is not None else None
         return model if model and split_model_id(model)[0] == "gateway" else None
 
+    async def _build_seat_provider_problem(self, participant: str) -> str | None:
+        """Why a Build seat's model cannot run, when it is on a provider without tools (OpenAI, Gemini, Ollama)."""
+        row = await self._seat_row(participant)
+        model = (row[0] or row[1]) if row is not None else None
+        provider = split_model_id(model or "")[0]
+        if provider in ("anthropic", "gateway"):
+            return None
+        return f"{participant} is set to {model}, and Build seats can only use Claude models (or, if enabled, gateway models)"
+
     async def _gateway_turn(self, view: ConversationView, participant: str, model: str) -> bool:
         """One streamed turn of a seat on a gateway model. The gateway environment and the bare model name go to
         this seat's `claude` process only (run_turn's per-seat override). Any problem raises: there is no fallback to
         another model, since a seat quietly answered by a different model than the one chosen is worse than a
-        visible failure."""
+        visible failure. A Build seat additionally needs the explicit opt-in (BAYTO_ALLOW_GATEWAY_BUILD=1): it runs the
+        same streamed turn as any seat, with the same tool-permission flags from the role's flag file."""
+        if self._pipeline and not gateway_build_allowed():
+            raise ProviderError(f"Build seats may use a gateway model only when {BUILD_FLAG}=1 is set and Bayto is restarted")
         if not getattr(self._sandbox_provider, "supports_streaming", False):
             raise ProviderError("gateway models need streamed turns: set BAYTO_STREAMING_TURNS=1 and restart Bayto")
         env = gateway_env(model)  # ProviderError when BAYTO_GATEWAY_URL is not set

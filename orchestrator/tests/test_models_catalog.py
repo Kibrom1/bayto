@@ -72,7 +72,7 @@ async def test_get_models_returns_the_catalogue_and_default():
     sonnet = next(m for m in body["models"] if m["id"] == "claude-sonnet-5-5")
     assert sonnet == {"id": "claude-sonnet-5-5", "label": "Sonnet 5.5", "tier": "standard",
                        "usd_per_turn": 0.5, "default": True,
-                       "provider": "anthropic", "provider_label": "Anthropic", "ready": True, "needs": None}
+                       "provider": "anthropic", "provider_label": "Anthropic", "ready": True, "needs": None, "build_ok": True}
 
 
 # ---------------------------------------------------------------- POST /sessions validation
