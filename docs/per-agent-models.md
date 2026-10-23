@@ -12,6 +12,7 @@ Status: proposal (2026-10-22). Nothing in this document is built yet except what
 | 4a. Per-session synthesis model (`synthesis_model` on the session, "Final write-up model" in setup) | Done |
 | 4b. Provider adapter for discussion seats (OpenAI, Gemini, Ollama) | Done: see "Setting up a provider" below |
 | 4c. Local model gateway (Route A), discussion seats only | Built, not run against a real gateway: see "Setting up a gateway" below |
+| 4d. Build seats on a gateway model (the narrow form of Route C, priority P4) | Built behind `BAYTO_ALLOW_GATEWAY_BUILD=1`, off by default; tested with fakes only, never run against a real gateway, `sbx` or non-Claude model: see "Build seats on a gateway" below |
 
 Estimate: each seat costs the usual per-seat figure ($0.50, or $3 for Build) times its model's `usd_per_turn` divided by the default model's, so Haiku is about 0.2x and Opus about 1.8x. The catalogue figures are planning numbers, not prices. `POST /sessions/{id}/continue` copies stored models without validating them, so older ids keep working. The seeded agents still carry the legacy `claude-sonnet-5`, shown as "Default (claude-sonnet-5)" in the seat select.
 
@@ -147,7 +148,7 @@ Ordered by value to the pilot against risk and effort. Items above the line are 
 | P2 | Provider adapter for discussion seats, with OpenAI and Gemini first (Route B) | Real choice of provider with controlled quality; discussion only | Medium | the catalogue, key handling |
 | P3 | Gateway for local models (Route A), only if Route B does not cover the need | Local and self-hosted models | Small to medium | the catalogue |
 | P3 | Per-session synthesis model | Large model writes the result while seats run small | Small | the catalogue |
-| P4 | Providers for Build seats (Route C) | Only if pilot users ask; high risk | Large | everything above |
+| P4 | Providers for Build seats (Route C) | Only if pilot users ask; high risk | Large | everything above. The gateway form is built behind `BAYTO_ALLOW_GATEWAY_BUILD=1`; the full multi-provider harness is not. |
 
 Reasoning: P0 comes first because every later item changes code that has only been exercised against a fake sandbox, and a failing Build or PR step would change the pilot plan. The catalogue is first among the code items because the picker, the estimate, the agent default and every provider all read it. Providers come after the picker because the picker alone covers the original request (Opus for the Architect, Haiku for the Tester) at much lower risk, and because the pilot will show whether people want other providers at all. Build stays Anthropic-only because its safety depends on the `claude` tool's permission model.
 
@@ -222,6 +223,29 @@ How it works, from the code:
 - **No silent fallback.** A gateway seat is never woken through the long-lived seat path, never switched to the Ollama fallback after a platform-limit error, and never retried on another model. A missing gateway address, streamed turns switched off, or a failed turn pauses the session for a human with the reason.
 - **Cost.** `claude` computes `total_cost_usd` from its own price table, which does not know gateway models, so the recorded cost may be wrong or zero. The catalogue's `usd_per_turn` is a planning figure only.
 
-Why Build seats and the final write-up stay on Claude (`422 provider_not_supported`, same as the other providers): Build seats are long-lived processes started by `start-team` from `team.tsv`, where there is no per-seat environment (the override exists only on the headless streamed turn), and Build leans on tool use that small or translated models do badly and on a permission model tuned for Claude. The final write-up runs through the process-wide `llm/claude_cli.py`, which has no per-call environment. Both could be extended later; neither is safe to enable by changing a catalogue entry.
+Why the final write-up stays on Claude (`422 provider_not_supported`, same as the other providers): it runs through the process-wide `llm/claude_cli.py`, which has no per-call environment. Build seats are covered in the next section.
+
+### Build seats on a gateway (opt-in)
+
+The earlier reason for refusing Build ("Build seats are long-lived processes with no per-seat environment") is only half right. `start-team` does start every seat as a long-lived process from `team.tsv`, and those have no per-seat environment. But the Build runner does not use them for turns when `BAYTO_STREAMING_TURNS=1`: the pipeline path in `moderator/runner.py` calls the same streamed `run_turn` as a discussion seat (`claude -p` started per turn from `TURN_SCRIPT`, reading the role's own tool-flag file), and only falls back to waking the long-lived seat when streaming is off. So the per-seat override already reaches a Build turn. What stopped Build was a refusal in the catalogue and `_gateway_model` returning nothing for pipeline sessions, not a missing mechanism.
+
+To use it, set on the orchestrator, in addition to the gateway settings above:
+
+| Set on the orchestrator | Meaning |
+|---|---|
+| `BAYTO_ALLOW_GATEWAY_BUILD=1` | Lets a Build seat use a `gateway/<name>` model. Anything but exactly `1` is off. Needs `BAYTO_GATEWAY_URL` and `BAYTO_STREAMING_TURNS=1` too. |
+
+**Say this plainly before turning it on: tool use through a gateway varies a lot by model. A small or translated model may loop, call tools wrongly, ignore the `VERDICT:` line or write bad code, so expect more failed or paused Build runs than on Claude. Permissions are not weaker: `claude` itself still enforces the same `--allowedTools` / `--disallowedTools` under `--permission-mode dontAsk` for every Build seat, gateway or not. The gateway and the model never decide what a seat may run.** The setup page shows this note when a Build seat is on a gateway model.
+
+What was done and what stays the same:
+
+- **Off by default.** Without the flag, `POST /sessions` refuses a gateway model on a Build seat with `422 provider_not_supported` naming the flag, `GET /models` reports `build_ok: false` for it (so the picker hides it for Build seats), and the runner pauses a Build session that somehow holds one. `GET /models` has a new field `build_ok`: true for Claude models always, true for a gateway model only with the flag, false for every other provider.
+- **Identical permissions.** The allow and deny rules come from `build_policy.build_seat_tools(role, ...)`, which never sees the model; `provision.write_catalog` writes them into the role file, and `build-roster.py` turns them into the tool-flag file that both `TURN_SCRIPT` and `TURN_SCRIPT_OVERRIDE` read. A test builds the four Build roles once with a Claude model and once with `gateway/qwen3` and asserts the rules, the CLI flags and the flag files are byte-identical (only `team.tsv`'s model differs), and runs both turn scripts with a stand-in `claude` and asserts the arguments match apart from `--model`.
+- **Token.** Only the gateway seat's own turn gets `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` (stdin hand-over, never argv); a test runs a whole faked Build pipeline and asserts the other three seats get no override at all and the token is in no prompt, stored message or log line.
+- **No fallback.** A gateway Build seat is never woken through the long-lived path, never moved to the Ollama fallback, never retried on another model. A gateway failure, a missing gateway address, streamed turns off or the flag switched off after the session was created pauses the session (`needs_human`) with the reason in the room.
+- **Other providers.** OpenAI, Gemini and Ollama stay refused for Build (no tools): at create time, and now also at run time, where before a Build seat holding such an id would have been passed to `claude --model` unnoticed.
+- **Final write-up.** Unchanged: Claude only.
+
+Not verified, in addition to the list above: that a Build team starts at all when `team.tsv` names `gateway/<name>` for a seat (`start-team` launches that idle seat with `claude --model gateway/<name>` and no gateway environment, so it should fail or sit idle without ever being woken; if it makes `start-team` abort, the fix is to write a Claude model in `team.tsv` for gateway seats, since the streamed turn takes its model from the argument and not from that file); that a real model can follow the Build prompt and permission model through the gateway at all; that `git` commits made by a gateway developer behave like Claude's; and the cost recorded for the turn (see Cost above). The only thing run was fakes: a fake sandbox provider, a stand-in `claude`, and unit tests.
 
 Not verified: that `sbx exec` passes stdin through to the script the way the stand-in test assumes (the existing streamed turns rely on it, so likely), that the gateway host is reachable from the sandbox with the allow-list written, what `start-team` does with an idle seat whose `team.tsv` model is `gateway/<name>`, and that tool calls survive the gateway's translation.

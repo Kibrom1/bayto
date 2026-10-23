@@ -4,7 +4,8 @@ Unlike the HTTP providers, a gateway seat still runs `claude -p` in the sandbox,
 `claude` process is pointed at the gateway with ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN. This module only builds that
 environment; it never reads or sets anything for any other seat, and the values are never logged or audited.
 
-Settings (orchestrator environment): BAYTO_GATEWAY_URL (required), BAYTO_GATEWAY_TOKEN (optional).
+Settings (orchestrator environment): BAYTO_GATEWAY_URL (required), BAYTO_GATEWAY_TOKEN (optional), and
+BAYTO_ALLOW_GATEWAY_BUILD=1 to let a Build seat use a gateway model (off by default; see `gateway_build_allowed`).
 """
 from __future__ import annotations
 
@@ -19,9 +20,17 @@ URL_VAR = "BAYTO_GATEWAY_URL"
 TOKEN_VAR = "BAYTO_GATEWAY_TOKEN"
 # A gateway that needs no key still needs *some* token value: without one `claude` would send the user's own Claude login
 # to the gateway. This placeholder is not a secret.
+BUILD_FLAG = "BAYTO_ALLOW_GATEWAY_BUILD"
 PLACEHOLDER_TOKEN = "bayto-gateway-no-token"
 # The only variables a per-seat override may carry into the sandbox.
 ALLOWED_OVERRIDE = re.compile(r"^ANTHROPIC_[A-Z_]+$")
+
+
+def gateway_build_allowed() -> bool:
+    """Whether a Build seat may run on a gateway model. An explicit opt-in, off by default: tool use through a gateway
+    varies by model, and the seat's permissions are still enforced by `claude` itself (the same --allowedTools /
+    dontAsk flags as any Build seat), not by the gateway or the model."""
+    return os.environ.get(BUILD_FLAG, "").strip() == "1"
 
 
 def gateway_url() -> str | None:

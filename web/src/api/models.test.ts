@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { claudeOnly, modelOptionText, type ModelInfo } from './models'
+import { buildModels, claudeOnly, modelOptionText, type ModelInfo } from './models'
 
 const base = { tier: 'small', usd_per_turn: 0, default: false }
 const claude: ModelInfo = { ...base, id: 'claude-haiku-5-5', label: 'Haiku 5.5', provider: 'anthropic', provider_label: 'Anthropic', ready: true }
@@ -15,5 +15,12 @@ describe('gateway models in the picker', () => {
   })
   it('are left out of the Build and final write-up pickers', () => {
     expect(claudeOnly([claude, gw()]).map((m) => m.id)).toEqual(['claude-haiku-5-5'])
+  })
+  it('reach the Build picker only when the server says build_ok, and other providers never do', () => {
+    const openai: ModelInfo = { ...base, id: 'openai/gpt-x', label: 'GPT X', provider: 'openai', ready: true, build_ok: true }
+    expect(buildModels([claude, gw(), openai]).map((m) => m.id)).toEqual(['claude-haiku-5-5'])
+    expect(buildModels([claude, gw({ build_ok: false })]).map((m) => m.id)).toEqual(['claude-haiku-5-5'])
+    expect(buildModels([claude, gw({ build_ok: true }), openai]).map((m) => m.id)).toEqual(['claude-haiku-5-5', 'gateway/qwen3'])
+    expect(claudeOnly([claude, gw({ build_ok: true })]).map((m) => m.id)).toEqual(['claude-haiku-5-5'])  // the write-up stays Claude-only
   })
 })

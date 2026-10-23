@@ -124,4 +124,38 @@ describe('per-seat models on the setup screen', () => {
     await user.selectOptions(await screen.findByLabelText('Model for Developer'), 'claude-haiku-5-5')
     expect(await screen.findByRole('note')).toHaveTextContent(/developer is on a small model/i)
   })
+
+  it('offers a gateway model to a Build seat only when the server allows it, with a plain note once chosen', async () => {
+    const BUILD = { id: 'm3', name: 'build', floor_policy: 'pipeline', stop_rules: {} }
+    const dev = { ...AGENT('b1', 'Developer'), role: 'build-developer' }
+    const gw = (build_ok: boolean) => ({ id: 'gateway/qwen3', label: 'Qwen3', tier: 'small', usd_per_turn: 0, default: false,
+      provider: 'gateway', provider_label: 'Gateway', ready: true, needs: null, build_ok })
+    const base = globalThis.fetch as any
+    for (const allowed of [false, true]) {
+      models = { ...MODELS, models: [...MODELS.models, gw(allowed)] }
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/modes')) return json([BUILD])
+        if (url.endsWith('/agents/templates')) return json([dev])
+        return base(input, init)
+      }))
+      const user = userEvent.setup()
+      const { unmount } = render(
+        <MemoryRouter initialEntries={['/setup/task-1']}><Routes><Route path="/setup/:taskId" element={<SessionSetup />} /></Routes></MemoryRouter>)
+      await screen.findByRole('heading', { name: /session setup/i })
+      await user.click(await screen.findByRole('radio', { name: /^build/i }))
+      await user.click(await screen.findByRole('button', { name: /add to roster/i }))
+      const seat = await screen.findByLabelText('Model for Developer')
+      if (!allowed) {
+        expect(within(seat).queryByRole('option', { name: /Qwen3/ })).toBeNull()
+      } else {
+        expect(screen.queryByRole('note')).toBeNull()
+        await user.selectOptions(seat, 'gateway/qwen3')
+        const notes = (await screen.findAllByRole('note')).map((n) => n.textContent).join(' ')
+        expect(notes).toMatch(/tool use through a gateway varies/i)
+        expect(notes).toMatch(/same allowed and denied commands/i)
+      }
+      unmount()
+    }
+  })
 })

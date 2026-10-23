@@ -85,7 +85,12 @@ def seat_model_problem(model_id: str | None, *, build: bool = False, synthesis: 
     provider = provider_id_of(model_id)
     if provider == "anthropic":
         return None
-    if build or synthesis:
+    if build and not synthesis and provider == "gateway":
+        from .providers.gateway import BUILD_FLAG, gateway_build_allowed
+        if not gateway_build_allowed():
+            return "provider_not_supported", (f"{model_id} is a gateway model: Build seats can use one only when "
+                                              f"{BUILD_FLAG}=1 is set in the environment Bayto runs in, then a restart")
+    elif build or synthesis:
         where = "Build seats" if build else "the final write-up"
         return "provider_not_supported", f"{model_id} is not a Claude model, and {where} can only use Claude models"
     needs = provider_needs(provider)
