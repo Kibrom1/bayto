@@ -41,6 +41,7 @@ from typing import AsyncIterator, Iterator, Protocol
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from ..child_env import child_env
 from ..models import Sandbox
 from .provider import (
     SandboxCommandError,
@@ -135,7 +136,7 @@ class _LineStream:
     def __init__(self, cmd: list[str], argv: list[str], stdin: str) -> None:
         self._argv = argv
         self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE, text=True, bufsize=1)
+                                      stderr=subprocess.PIPE, text=True, bufsize=1, env=child_env())
         assert self._proc.stdin is not None and self._proc.stdout is not None
         try:
             self._proc.stdin.write(stdin)
@@ -184,7 +185,7 @@ class SubprocessSbxRunner:
     """Real `sbx` CLI invocation. Unverified: see module docstring."""
 
     def run(self, argv: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["sbx", *argv], capture_output=True, text=True, timeout=timeout, check=False)
+        return subprocess.run(["sbx", *argv], capture_output=True, text=True, timeout=timeout, check=False, env=child_env())
 
     def stream(self, argv: list[str], *, stdin: str) -> Iterator[str]:
         """Run `sbx <argv>` with `stdin` as input and yield stdout lines as they arrive. Raises
@@ -194,7 +195,7 @@ class SubprocessSbxRunner:
 
     def start(self, argv: list[str]) -> HeldExec:
         log = tempfile.NamedTemporaryFile(prefix="sbx-held-", suffix=".log", delete=False)
-        proc = subprocess.Popen(["sbx", *argv], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+        proc = subprocess.Popen(["sbx", *argv], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, env=child_env())
         log.close()
         return _PopenHeldExec(proc, log.name)
 

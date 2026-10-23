@@ -142,6 +142,8 @@ class Session(Base):
     # None while active/paused/etc. Free-form like `status` itself, not an enum type --
     # same "status-adjacent value" pattern as M2.9's "orphaned" status.
     stop_reason: Mapped[str | None] = mapped_column(String)
+    # Why a session failed (already scrubbed of secrets). Kept in the database so it survives an orchestrator restart.
+    failure_reason: Mapped[str | None] = mapped_column(Text)
     fallback_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False) # M2.12: reactive fallback flag
     # Archived: hidden from the task board and left out of the context later sessions on the task are given.
     # The record (transcript, cost) is kept; delete removes it.

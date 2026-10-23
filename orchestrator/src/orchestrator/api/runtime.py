@@ -132,6 +132,7 @@ def _on_runner_done(task: asyncio.Task, session_id: uuid.UUID, sessionmaker: asy
             row = await db.get(Session, session_id)
             if row is not None and row.status in _CRASHABLE:
                 row.status = "failed"
+                row.failure_reason = session_failures.get(session_id)
                 audit.emit(action="session.failed", summary="The session stopped on an error",
                                    task_id=row.task_id, session_id=session_id, actor="system",
                                    subject_type="session", subject_id=session_id,
@@ -302,6 +303,7 @@ async def launch_runner(
             row = await db.get(Session, session_id)
             if row is not None:
                 row.status = "failed"
+                row.failure_reason = session_failures.get(session_id)
                 audit.emit(action="session.failed", summary="The session failed to start",
                                    task_id=row.task_id, session_id=session_id, actor="system",
                                    subject_type="session", subject_id=session_id,

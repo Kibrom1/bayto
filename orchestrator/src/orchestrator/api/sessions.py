@@ -688,7 +688,7 @@ async def get_session(
         usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
         turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count, model=seat_models.get(agent_id))
                      for role, agent_id, count in turn_counts_rows],
-        failure_reason=session_failures.get(session_id) if row.status == "failed" else None,
+        failure_reason=(session_failures.get(session_id) or row.failure_reason) if row.status == "failed" else None,
         stage=session_stages.get(session_id) if row.status == "starting" else None,
         stop_reason=row.stop_reason,
     ))

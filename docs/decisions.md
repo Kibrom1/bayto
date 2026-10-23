@@ -104,3 +104,6 @@ A Build task could start with no test command, which left the developer and test
 
 ## 2026-10-23: per-seat and per-agent models
 A seat can run on a model other than its agent's default (setup page select, sent as `roster[].model`), and a custom agent has a default model (dialog, `model` on create and update, reset by sending null). Both are checked against the catalogue (`422 invalid_model`); stored values are never re-checked. The setup estimate scales each seat by its model's planning cost relative to the default, and the room shows each seat's model. Providers other than Claude are still not supported.
+
+## 2026-10-23: failure reasons are stored; child programs get no OTEL variables
+A failed session's reason is now saved on the session row (`failure_reason`, migration `a7b8c9d0e1f2`), so the room still shows it after an orchestrator restart; before, it lived only in memory. Programs the orchestrator starts (`claude`, `sbx`, `dev-team/run.sh`) no longer inherit `OTEL_*` variables: the orchestrator exports its own telemetry in-process over gRPC, and children pointed at the same endpoint over HTTP filled the log with `BadStatusLine` retries. The second change is a diagnosis from the log, not yet confirmed on a real run.
