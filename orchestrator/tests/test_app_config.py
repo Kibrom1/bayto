@@ -15,7 +15,9 @@ def _get(monkeypatch, value):
     with TestClient(app) as client:
         r = client.get("/app-config")
     assert r.status_code == 200
-    return r.json()
+    body = r.json()
+    assert (body.pop("auth_required"), body.pop("authenticated")) == (False, True)
+    return body
 
 
 def test_unset_means_no_feedback_url(monkeypatch):

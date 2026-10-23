@@ -14,10 +14,9 @@ failing (no `sbx` CLI, the same M2.4-flagged gap), and this lifespan ALSO wraps 
 call -- e.g. an unreachable Postgres at boot must not prevent `/healthz` from ever coming
 up. See docs/decisions.md.
 
-ZERO AUTH in M2.8: no bearer tokens, no caller identity, no per-session ownership checks,
-no rate limiting. Anyone who can reach this port can create tasks/sessions and
-interject/stop on any session. Do not expose this service beyond a private/internal
-network until M5 (human seat/auth) lands.
+AUTH: none by default (no caller identity, no per-session ownership). Anyone who can reach this port can
+create tasks/sessions and interject/stop on any session. Setting BAYTO_API_TOKEN turns on one shared secret
+(auth.py); that is a gate for exposing the port, not a user system, and TLS in front is still required.
 """
 import functools
 import logging
@@ -27,12 +26,14 @@ import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from acp import Envelope  # noqa: F401  (proves acp is a real dependency, kept from M1)
 
 from .api import (agents_router, app_config_router, attachments_router, model_catalog_router, modes_router, pull_request_router,
                   sessions_router, tasks_router)
 from .api.runtime import launch_runner
+from .auth import auth_middleware, router as auth_router
 from .db import get_sessionmaker
 from .floor.scorer import AnthropicHandRaiseScorer
 from .llm import make_client
@@ -111,6 +112,8 @@ app.state.summarizer_factory = lambda: AnthropicSummarizer(client=make_client())
 app.state.synthesizer_factory = lambda: AnthropicSynthesizer(client=make_client())
 app.state.scorer_factory = lambda: AnthropicHandRaiseScorer(client=make_client())
 
+app.add_middleware(BaseHTTPMiddleware, dispatch=auth_middleware)  # BAYTO_API_TOKEN gate; a no-op when unset (see auth.py)
+
 _ALLOWED_HOSTS = {"127.0.0.1", "localhost", "[::1]", "testserver", "test"}
 
 
@@ -134,6 +137,7 @@ app.include_router(modes_router)
 app.include_router(agents_router)
 app.include_router(model_catalog_router)
 app.include_router(app_config_router)
+app.include_router(auth_router)
 
 
 @app.get("/healthz")

@@ -223,3 +223,11 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
 .feedback-link { margin-left: auto; font-size: 0.85rem; color: var(--ink-3); text-decoration: none; padding: 0.3rem 0.5rem; border-radius: 6px; }
 .feedback-link:hover { color: var(--ink); background: var(--surface-2); }
 @media (pointer: coarse) { .feedback-link { min-height: 2.75rem; display: inline-flex; align-items: center; } }
+
+/* ---- sign-in page and sign-out button (only when the server has BAYTO_API_TOKEN set) ---- */
+.signout-btn { font-size: 0.85rem; color: var(--ink-3); background: none; border: 0; padding: 0.3rem 0.5rem; border-radius: 6px; cursor: pointer; }
+.signout-btn:hover { color: var(--ink); background: var(--surface-2); }
+.signin { display: grid; place-items: center; min-height: 100vh; padding: 1rem; }
+.signin-card { display: grid; gap: 0.6rem; width: min(22rem, 100%); }
+.signin-card h1 { display: flex; align-items: center; gap: 0.5rem; font-size: 1.3rem; margin: 0; }
+.signin-error { color: #b42318; margin: 0; }

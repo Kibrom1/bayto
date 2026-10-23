@@ -1,17 +1,39 @@
+import { ApiError, parseError } from './errors'
+
 // Mirrors orchestrator/src/orchestrator/api/app_config.py (GET /app-config).
 export interface AppConfig {
   feedback_url: string | null
+  /** BAYTO_API_TOKEN is set on the server. */
+  auth_required: boolean
+  /** This browser holds a valid session (always true when auth is off). */
+  authenticated: boolean
+}
+
+const NO_CONFIG: AppConfig = { feedback_url: null, auth_required: false, authenticated: true }
+
+// Same-origin requests (the page, the Vite proxy, EventSource) carry the HttpOnly `bayto_session` cookie by default.
+export async function login(token: string): Promise<void> {
+  const res = await fetch('/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) })
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+}
+
+export async function logout(): Promise<void> {
+  await fetch('/auth/logout', { method: 'POST' })
 }
 
 /** The server's settings for the UI. Never throws: on any failure there is simply no feedback link. */
 export async function getAppConfig(): Promise<AppConfig> {
   try {
     const res = await fetch('/app-config')
-    if (!res.ok) return { feedback_url: null }
+    if (!res.ok) return NO_CONFIG
     const data = await res.json()
-    return { feedback_url: typeof data?.feedback_url === 'string' ? data.feedback_url : null }
+    return {
+      feedback_url: typeof data?.feedback_url === 'string' ? data.feedback_url : null,
+      auth_required: data?.auth_required === true,
+      authenticated: data?.authenticated !== false,
+    }
   } catch {
-    return { feedback_url: null }
+    return NO_CONFIG
   }
 }
 
