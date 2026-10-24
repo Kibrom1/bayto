@@ -18,7 +18,8 @@ import os
 import httpx
 
 from .base import ProviderError
-from .http_providers import TIMEOUT, _fail
+from .http_providers import _json
+from .http_retry import post_json
 
 DEFAULT_OPENAI_MODEL = "text-embedding-3-small"
 DEFAULT_OLLAMA_MODEL = "nomic-embed-text"
@@ -78,15 +79,10 @@ class EmbeddingClient:
         else:
             url, body = f"{self._base}/embeddings", {"model": self.model, "input": batch}
             headers = {"Authorization": f"Bearer {self._key}"}
+        resp = await post_json(url, provider=self.provider, body=body, headers=headers, transport=self._transport,
+                               secrets=(self._key,), what="for embeddings")
+        data = _json(self.provider, resp)
         try:
-            async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as client:
-                resp = await client.post(url, json=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"could not reach {self.provider} for embeddings: {type(exc).__name__}") from None
-        if resp.status_code != 200:
-            raise _fail(self.provider, resp)
-        try:
-            data = resp.json()
             if self.provider == "ollama":
                 vecs = data["embeddings"]
             else:

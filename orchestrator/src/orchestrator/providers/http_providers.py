@@ -1,13 +1,13 @@
 """OpenAI-style and Gemini adapters over plain HTTP (httpx). Keys come from the environment only."""
 from __future__ import annotations
 
-import os
-
 import httpx
 
 from .base import Completion, ProviderError
 
-TIMEOUT = float(os.environ.get("BAYTO_PROVIDER_TIMEOUT", "120"))
+from .http_retry import error_detail, post_json, read_timeout
+
+TIMEOUT = read_timeout()  # kept for importers; the adapters read the live value through http_retry.timeouts()
 
 
 def _cost(tokens_in: int, tokens_out: int, price_in: float | None, price_out: float | None) -> float | None:
@@ -17,14 +17,19 @@ def _cost(tokens_in: int, tokens_out: int, price_in: float | None, price_out: fl
     return round(tokens_in * price_in / 1e6 + tokens_out * price_out / 1e6, 6)
 
 
-def _fail(provider: str, resp: httpx.Response) -> ProviderError:
+def _fail(provider: str, resp: httpx.Response, secrets: tuple[str | None, ...] = ()) -> ProviderError:
     # Show the provider's own error message, never the request (which holds the key).
+    return ProviderError(f"{provider} answered {resp.status_code}: {error_detail(resp, secrets)}")
+
+
+def _json(provider: str, resp: httpx.Response) -> dict:
     try:
-        detail = resp.json().get("error", {})
-        detail = detail.get("message") if isinstance(detail, dict) else str(detail)
-    except Exception:  # noqa: BLE001
-        detail = None
-    return ProviderError(f"{provider} answered {resp.status_code}: {(detail or resp.text)[:300]}")
+        data = resp.json()
+    except ValueError:
+        raise ProviderError(f"{provider} sent an answer that is not JSON") from None
+    if not isinstance(data, dict):
+        raise ProviderError(f"{provider} sent an answer in an unexpected shape")
+    return data
 
 
 class OpenAICompatProvider:
@@ -41,14 +46,9 @@ class OpenAICompatProvider:
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
         body = {"model": model, "max_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
-        try:
-            async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as client:
-                resp = await client.post(f"{self._base}/chat/completions", json=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"could not reach {self.id}: {type(exc).__name__}") from None
-        if resp.status_code != 200:
-            raise _fail(self.id, resp)
-        data = resp.json()
+        resp = await post_json(f"{self._base}/chat/completions", provider=self.id, body=body, headers=headers,
+                               transport=self._transport, secrets=(self._key,))
+        data = _json(self.id, resp)
         try:
             text = data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError):
@@ -71,15 +71,10 @@ class GeminiProvider:
         body = {"systemInstruction": {"parts": [{"text": system}]},
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {"maxOutputTokens": max_tokens}}
-        try:
-            async with httpx.AsyncClient(timeout=TIMEOUT, transport=self._transport) as client:
-                resp = await client.post(f"{self._base}/models/{model}:generateContent", json=body,
-                                         headers={"x-goog-api-key": self._key})  # a header, so it never lands in a URL log
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"could not reach gemini: {type(exc).__name__}") from None
-        if resp.status_code != 200:
-            raise _fail("gemini", resp)
-        data = resp.json()
+        resp = await post_json(f"{self._base}/models/{model}:generateContent", provider="gemini", body=body,
+                               headers={"x-goog-api-key": self._key},  # a header, so it never lands in a URL log
+                               transport=self._transport, secrets=(self._key,))
+        data = _json("gemini", resp)
         try:
             parts = data["candidates"][0]["content"]["parts"]
             text = "".join(p.get("text", "") for p in parts)
