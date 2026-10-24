@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { archiveSession, deleteSession } from '../api/sessions'
 import { ConfirmDialog } from '../components/Dialog'
 import { createTask, deleteTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
+import { searchTranscripts, snippetParts, type SearchHit } from '../api/search'
 import { NewTaskForm } from './NewTaskForm'
 import './TaskBoard.css'
 
@@ -96,6 +97,20 @@ export function TaskBoard() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [deepQuery, setDeepQuery] = useState('')
+  const [deepHits, setDeepHits] = useState<SearchHit[] | null>(null)
+  const [deepError, setDeepError] = useState<string | null>(null)
+  const [deepBusy, setDeepBusy] = useState(false)
+
+  async function runDeepSearch(e: React.FormEvent) {
+    e.preventDefault()
+    const q = deepQuery.trim()
+    if (q.length < 2) { setDeepHits(null); setDeepError('Type at least 2 characters to search.'); return }
+    setDeepBusy(true); setDeepError(null)
+    try { setDeepHits(await searchTranscripts(q)) }
+    catch (err) { setDeepHits(null); setDeepError(err instanceof Error ? err.message : String(err)) }
+    finally { setDeepBusy(false) }
+  }
 
   function refresh() {
     listTasks()
@@ -201,6 +216,27 @@ export function TaskBoard() {
             </div>
             <input type="search" className="input task-search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
+          <form className="deep-search" role="search" onSubmit={runDeepSearch}>
+            <input type="search" className="input" aria-label="Search past discussions" placeholder="Search what was said in past discussions"
+              value={deepQuery} maxLength={200} onChange={(e) => setDeepQuery(e.target.value)} />
+            <button type="submit" className="btn" disabled={deepBusy}>{deepBusy ? 'Searching' : 'Search'}</button>
+          </form>
+          {deepError && <p role="alert" className="alert bad">{deepError}</p>}
+          {deepHits && (
+            <section className="deep-results" aria-label="Search results">
+              {deepHits.length === 0 ? <p className="empty-note">No past discussion matches that.</p> : (
+                <ul>
+                  {deepHits.map((h) => (
+                    <li key={`${h.session_id}-${h.message_id ?? 'synthesis'}`}>
+                      <Link to={`/room/${h.session_id}`}>{h.task_title.trim() || '(untitled task)'}</Link>
+                      <span className="deep-who"> {h.speaker === 'synthesis' ? 'Synthesis' : h.speaker}{h.created_at ? `, ${new Date(h.created_at).toLocaleDateString()}` : ''}</span>
+                      <p className="deep-snippet">{snippetParts(h.snippet).map((part, i) => part.match ? <mark key={i}>{part.text}</mark> : <span key={i}>{part.text}</span>)}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
           <ul className="task-list">
             {visible.map((task) => (
               <li key={task.id} className="task-row">

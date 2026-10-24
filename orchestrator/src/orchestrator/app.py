@@ -31,7 +31,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from acp import Envelope  # noqa: F401  (proves acp is a real dependency, kept from M1)
 
 from .api import (agents_router, app_config_router, attachments_router, export_router, model_catalog_router, modes_router, pull_request_router,
-                  sessions_router, tasks_router)
+                  search_router, sessions_router, tasks_router)
 from .api.runtime import launch_runner
 from .auth import auth_middleware, router as auth_router
 from .db import get_sessionmaker
@@ -139,6 +139,7 @@ app.include_router(agents_router)
 app.include_router(model_catalog_router)
 app.include_router(app_config_router)
 app.include_router(auth_router)
+app.include_router(search_router)
 
 
 @app.get("/healthz")
