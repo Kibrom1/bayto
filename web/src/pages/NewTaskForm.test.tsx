@@ -116,7 +116,7 @@ describe('NewTaskForm semantic search', () => {
     render(<NewTaskForm submitting={false} error={null} onSubmit={onSubmit} onCancel={() => {}} />)
     await fillBasics(user)
     await user.type(screen.getByLabelText('Output type'), 'decision')
-    await user.click(screen.getByLabelText(/sends your documents' text to an embedding provider/i))
+    await user.click(screen.getByLabelText('Search long documents by meaning'))
     await user.click(screen.getByRole('button', { name: 'Create task' }))
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ semantic_retrieval: true })
   })
@@ -156,5 +156,14 @@ describe('NewTaskForm layout and wording', () => {
     render(<NewTaskForm submitting={false} error={null} onSubmit={() => {}} onCancel={() => {}} />)
     await userEvent.setup().click(screen.getByLabelText(/this task changes code/i))
     expect(screen.getByLabelText('Repository path').closest('.modal-body')).not.toBeNull()
+  })
+})
+
+describe('UX-11 retrieval switch in New task', () => {
+  it('uses the plain label at regular weight and still says the text leaves the machine', () => {
+    render(<NewTaskForm submitting={false} error={null} onSubmit={() => {}} onCancel={() => {}} />)
+    const box = screen.getByLabelText('Search long documents by meaning')
+    expect(box.closest('.field')).toHaveClass('semantic-toggle')
+    expect(screen.getByText(/text is sent to an embedding provider/i)).toBeInTheDocument()
   })
 })

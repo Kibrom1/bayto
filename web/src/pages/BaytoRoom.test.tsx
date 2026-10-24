@@ -66,7 +66,8 @@ describe('BaytoRoom', () => {
     expect(await screen.findByRole('region', { name: 'Bayto room' }, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/transcript/i)).toBeInTheDocument()
     expect(screen.getByText(/roster/i)).toBeInTheDocument()
-    expect(screen.getByText(/moderator summary/i)).toBeInTheDocument()
+    expect(screen.queryByText(/moderator summary/i)).toBeNull() // hidden until the moderator has written one
+    expect(screen.queryByText(/appears after the first turns/i)).toBeNull()
     expect(screen.getByText(/usage vs budget/i)).toBeInTheDocument()
   })
 
@@ -372,5 +373,60 @@ describe('splitVerdict', () => {
   })
   it('leaves text without a verdict alone', () => {
     expect(splitVerdict('Just talk')).toEqual({ text: 'Just talk', verdict: null })
+  })
+})
+
+describe('UX round 2 follow-ups', () => {
+  function mount(status: string, extra: object = {}, modeName = 'debate') {
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 'task-1', mode_id: 'm1', status, started_at: null, ended_at: null,
+      round: 1, budget: null, usage: { tokens_in: 1, tokens_out: 1, cost: 0 }, turn_counts: [], ...extra } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {
+      const u = String(url)
+      const out = u.includes('/tasks') ? [{ id: 'task-1', title: 'Pick a vendor' }] : u.includes('/modes') ? [{ id: 'm1', name: modeName }] : null
+      return new Response(out ? JSON.stringify(out) : body, { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }))
+    render(<MemoryRouter initialEntries={['/sessions/session-123']}><Routes><Route path="/sessions/:sessionId" element={<BaytoRoom />} /></Routes></MemoryRouter>)
+  }
+
+  it('UX-08: a Build ending is success even when the reason is spelled with a space', () => {
+    expect(endedBanner('build complete')?.tone).toBe('ok')
+    expect(endedBanner('Build-Complete')?.text).toMatch(/build finished/i)
+    expect(stopReasonText('build complete')).toMatch(/tests passed/)
+  })
+
+  it('UX-19: the tab title is the task title', async () => {
+    mount('running')
+    await waitFor(() => expect(document.title).toBe('Pick a vendor · Bayto'))
+  })
+
+  it('N3: Continue as Build is a plain button, not amber', async () => {
+    mount('finished')
+    const link = await screen.findByRole('link', { name: 'Continue as Build' })
+    expect(link).not.toHaveClass('accent')
+    expect(link).not.toHaveClass('primary')
+  })
+
+  it('N6: an ended room never counts old turns as new', async () => {
+    mount('finished')
+    await screen.findByRole('link', { name: 'Start a new session' })
+    expect(screen.queryByText(/new turns?/)).toBeNull()
+  })
+
+  it('N1/N2/N4: the rail toggle points at a real, keyboard-focusable rail with no duplicate landmark', async () => {
+    mount('running')
+    const btn = await screen.findByRole('button', { name: 'Team & context' })
+    const rail = document.getElementById(btn.getAttribute('aria-controls')!)
+    expect(rail).not.toBeNull()
+    expect(rail).toHaveAttribute('tabindex', '0')
+    const labels = Array.from(document.querySelectorAll('[role="region"],aside,section[aria-label],section[aria-labelledby]'))
+      .map((e) => e.getAttribute('aria-label') ?? e.getAttribute('aria-labelledby')).filter(Boolean)
+    expect(new Set(labels).size).toBe(labels.length)
+  })
+
+  it('UX-27: no filler summary in the rail', async () => {
+    mount('failed', { failure_reason: 'boom' })
+    await screen.findByText(/This session failed/)
+    expect(screen.queryByText(/appears after the first turns/i)).toBeNull()
   })
 })

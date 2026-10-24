@@ -14,8 +14,8 @@ const STATUS_LABEL: Record<string, string> = {
   active: 'In progress',
   needs_human: 'Paused',
   stopping: 'Finishing',
-  finished: 'Done',
-  completed: 'Done',
+  finished: 'Finished',
+  completed: 'Finished',
   failed: 'Failed',
   orphaned: 'Interrupted',
 }
@@ -26,20 +26,26 @@ function statusChip(status: string | null) {
   return <span className={`chip ${tone}`}><span className="dot" />{STATUS_LABEL[status] ?? status}</span>
 }
 
-type Filter = 'all' | 'live' | 'finished' | 'ready'
+type Filter = 'all' | 'live' | 'paused' | 'finished' | 'failed' | 'interrupted' | 'ready'
 const FILTERS: { id: Filter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'live', label: 'Live' },
+  { id: 'paused', label: 'Paused' },
   { id: 'finished', label: 'Finished' },
+  { id: 'failed', label: 'Failed' },
+  { id: 'interrupted', label: 'Interrupted' },
   { id: 'ready', label: 'Not started' },
 ]
-const LIVE = ['active', 'needs_human', 'starting', 'stopping']
+const LIVE = ['active', 'starting', 'stopping']
 const DONE = ['finished', 'completed']
 
 function matches(task: Task, f: Filter): boolean {
   if (f === 'all') return true
   if (f === 'live') return LIVE.includes(task.status ?? '')
-  if (f === 'finished') return DONE.includes(task.status ?? '') || task.status === 'orphaned' || !!task.output_artifact_id
+  if (f === 'paused') return task.status === 'needs_human'
+  if (f === 'failed') return task.status === 'failed'
+  if (f === 'interrupted') return task.status === 'orphaned'
+  if (f === 'finished') return DONE.includes(task.status ?? '') || (!!task.output_artifact_id && !['failed', 'orphaned', 'needs_human', ...LIVE].includes(task.status ?? ''))
   return !task.status || task.status === 'created'
 }
 

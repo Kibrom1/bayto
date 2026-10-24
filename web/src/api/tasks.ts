@@ -57,7 +57,7 @@ export interface RetrievalSetting {
 }
 
 /** The shared wording of the switch: the cost of turning it on is stated where it is chosen. */
-export const SEMANTIC_LABEL = "Find passages by meaning (sends your documents' text to an embedding provider)"
+export const SEMANTIC_LABEL = 'Search long documents by meaning'
 
 export async function getRetrieval(taskId: string): Promise<RetrievalSetting> {
   const res = await fetch(`/tasks/${taskId}/retrieval`)

@@ -8,7 +8,7 @@ import { AgentDialog } from '../components/AgentDialog'
 const MODES = [
   { id: 'm1', name: 'brainstorm', floor_policy: 'round_robin' },
   { id: 'm2', name: 'debate', floor_policy: 'round_robin' },
-  { id: 'm4', name: 'raise_hand', floor_policy: 'raise-hand' },
+  { id: 'm4', name: 'Raise Hand', floor_policy: 'raise-hand' },
 ]
 const AGENTS = [
   { id: 'a1', name: 'Skeptic', role: 'Challenges claims', system_prompt: '', stance: 'critical', model: 'sonnet' },

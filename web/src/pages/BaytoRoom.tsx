@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ConfirmDialog } from '../components/Dialog'
 import { Link, useNavigate, useParams } from 'react-router-dom'
@@ -45,7 +46,8 @@ const STOP_REASONS: Record<string, string> = {
   budget_exceeded: 'it reached its budget',
   build_complete: 'the tests passed and the reviewer approved the change',
 }
-export const stopReasonText = (r?: string | null) => (r ? STOP_REASONS[r] ?? r.replace(/[-_]+/g, ' ') : null)
+const reasonKey = (r: string) => r.trim().toLowerCase().replace(/[\s-]+/g, '_')
+export const stopReasonText = (r?: string | null) => (r ? STOP_REASONS[reasonKey(r)] ?? r.replace(/[-_]+/g, ' ') : null)
 const titleCase = (s: string) => s.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 
 // Raw sandbox output is for the Details toggle; the banner says what happened in one plain line.
@@ -62,8 +64,9 @@ export function friendlyFailure(reason?: string | null): string {
 export function endedBanner(reason?: string | null): { text: string; tone: '' | 'ok' | 'warn' } | null {
   const why = stopReasonText(reason)
   if (!why) return null
-  if (reason === 'build_complete') return { text: 'The build finished: tests passed and the reviewer approved.', tone: 'ok' }
-  return { text: `Session ended because ${why}.`, tone: reason === 'budget_exceeded' ? 'warn' : '' }
+  const key = reason ? reasonKey(reason) : ''
+  if (key === 'build_complete') return { text: 'The build finished: tests passed and the reviewer approved.', tone: 'ok' }
+  return { text: `Session ended because ${why}.`, tone: key === 'budget_exceeded' ? 'warn' : '' }
 }
 
 const PAUSED = ['needs_human', 'paused']
@@ -88,6 +91,7 @@ export function BaytoRoom() {
   const [agents, setAgents] = useState<Record<string, AgentInfo>>({})
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null) // model names for the roster; raw ids show without it
   useEffect(() => { getModels().then(setCatalog).catch(() => {}) }, [])
+  useDocumentTitle(taskTitle)
   const [draft, setDraft] = useState('')
   const [target, setTarget] = useState('*')
   const [sending, setSending] = useState(false)
@@ -286,7 +290,8 @@ export function BaytoRoom() {
   const sendBlocked = finished ? 'ended' : paused ? 'paused' : canSend ? null : 'starting'
   const costCap: number | null = session.budget?.dollars ?? session.budget?.max_cost ?? null
   const liveEntries = Object.entries(live)
-  const newTurns = Math.max(0, messages.length - seen)
+  // Only a live room has "new" turns; on an ended one the transcript below the fold was already there.
+  const newTurns = finished ? 0 : Math.max(0, messages.length - seen)
 
   return (
     <section className="room" aria-label="Bayto room">
@@ -338,7 +343,7 @@ export function BaytoRoom() {
             Team &amp; context
           </button>
           {status === 'finished' && modeName && modeName !== 'build' && (
-            <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
+            <Link className="btn" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
           )}
           {!finished && <button type="button" className="btn danger" onClick={() => setConfirmStop(true)}>End &amp; synthesize</button>}
           {removable && (
