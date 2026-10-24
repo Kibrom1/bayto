@@ -48,7 +48,7 @@ describe('TaskBoard', () => {
     render(<MemoryRouter><TaskBoard /></MemoryRouter>)
 
     expect(await screen.findByText('Write a launch memo')).toBeInTheDocument()
-    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.getByText('Finished', { selector: '.chip' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /view result/i })).toHaveAttribute('href', '/room/s1')
 
     expect(screen.getByText('Review the pricing page')).toBeInTheDocument()
@@ -312,5 +312,34 @@ describe('TaskBoard wording and row actions', () => {
     const change = screen.getByText('Change ready')
     expect(change).toHaveClass('change')
     expect(screen.getByText('Synthesis ready')).not.toHaveClass('change')
+  })
+})
+
+describe('UX-18 status filters', () => {
+  async function board(tasks: object[]) {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(tasks))
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByRole('list')
+  }
+  const T = (o: object) => ({ id: 'x', title: 'T', brief: '', output_type: 'x', status: null, last_session_id: null, output_artifact_id: null, ...o })
+
+  it('offers a filter for every status label and the chip text matches', async () => {
+    await board([
+      T({ id: '1', title: 'Paused one', status: 'needs_human', last_session_id: 's1' }),
+      T({ id: '2', title: 'Failed one', status: 'failed', last_session_id: 's2' }),
+      T({ id: '3', title: 'Cut one', status: 'orphaned', last_session_id: 's3' }),
+      T({ id: '4', title: 'Done one', status: 'finished', last_session_id: 's4' }),
+    ])
+    const group = screen.getByRole('group', { name: 'Filter tasks' })
+    for (const name of ['Paused', 'Failed', 'Interrupted', 'Finished']) expect(within(group).getByRole('button', { name })).toBeInTheDocument()
+    await userEvent.click(within(group).getByRole('button', { name: 'Failed' }))
+    expect(screen.getByText('Failed one')).toBeInTheDocument()
+    expect(screen.queryByText('Paused one')).toBeNull()
+    await userEvent.click(within(group).getByRole('button', { name: 'Interrupted' }))
+    expect(screen.getByText('Cut one')).toBeInTheDocument()
+    expect(screen.queryByText('Failed one')).toBeNull()
+    await userEvent.click(within(group).getByRole('button', { name: 'Finished' }))
+    expect(screen.getByText('Done one')).toBeInTheDocument()
+    expect(screen.queryByText('Cut one')).toBeNull()
   })
 })

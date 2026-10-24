@@ -47,6 +47,31 @@ describe('api wrappers', () => {
   })
 })
 
+describe('RoomRail round 2 (N1, N2, N4, N8, UX-27)', () => {
+  it('is a focusable element with the id the toggle points at, and has no duplicate landmark names', () => {
+    render(<RoomRail {...props()} />)
+    const rail = document.getElementById('room-rail')!
+    expect(rail.tagName).toBe('ASIDE')
+    expect(rail).toHaveAttribute('tabindex', '0')
+    const names = Array.from(rail.querySelectorAll('[role="region"],section[aria-label],section[aria-labelledby]')).map((e) => e.getAttribute('aria-label') ?? e.getAttribute('aria-labelledby'))
+    expect(new Set(names).size).toBe(names.length)
+  })
+
+  it('keeps each roster meta phrase on one line and hides an empty moderator summary', () => {
+    render(<RoomRail {...props({ display: () => ({ name: 'Lawyer', stance: 'scope-discipline' }) })} />)
+    const parts = document.querySelectorAll('.roster-part')
+    expect(parts.length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByText(/moderator summary/i)).toBeNull()
+    expect(screen.queryByText(/appears after the first turns/i)).toBeNull()
+  })
+
+  it('shows the moderator summary once there is one', () => {
+    render(<RoomRail {...props({ summary: 'They agree on price.' })} />)
+    expect(screen.getByText('Moderator summary')).toBeInTheDocument()
+    expect(screen.getByText('They agree on price.')).toBeInTheDocument()
+  })
+})
+
 describe('RoomRail roster (UX-06)', () => {
   it('mutes a seat from its kebab menu and unmutes a muted one', async () => {
     const user = userEvent.setup(); const p = props()

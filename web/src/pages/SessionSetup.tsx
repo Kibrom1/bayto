@@ -43,7 +43,6 @@ const MODE_BLURBS: Record<string, string> = {
   debate: 'Opposing stances argue; the moderator keeps it fair.',
   build: 'Plan, code, test and review on a git branch. You review and merge it.',
   raise_hand: 'Agents speak when they have something to add.',
-  'raise-hand': 'Agents speak when they have something to add.',
   open_chat: 'Agents speak when they have something to add.',
   review: 'Agents critique a draft and converge on fixes.',
   decision: 'Weigh options and end with a recommendation.',
@@ -62,8 +61,10 @@ const BUILD_COST_PER_SEAT = 3
 const BUILD_ROLES = ['build-architect', 'build-developer', 'build-tester', 'build-reviewer']
 const isBuildTemplate = (t: { role?: string }) => (t.role ?? '').startsWith('build-')
 
-const MODE_LABELS: Record<string, string> = { raise_hand: 'Open Chat', 'raise-hand': 'Open Chat', open_chat: 'Open Chat' }
-const modeLabel = (name: string) => MODE_LABELS[name.toLowerCase()] ?? titleCase(name)
+// Server names vary in case and separators ("Raise Hand", raise-hand, raise_hand); look them up in one form.
+const modeKey = (name: string) => name.trim().toLowerCase().replace(/[\s-]+/g, '_')
+const MODE_LABELS: Record<string, string> = { raise_hand: 'Open Chat', open_chat: 'Open Chat' }
+const modeLabel = (name: string) => MODE_LABELS[modeKey(name)] ?? titleCase(name)
 
 function titleCase(s: string) {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -327,7 +328,7 @@ export function SessionSetup() {
                 <label key={m.id} className={`mode-card${modeId === m.id ? ' selected' : ''}`}>
                   <input type="radio" name="mode" value={m.id} checked={modeId === m.id} onChange={() => chooseMode(m)} />
                   <span className="mode-name">{modeLabel(m.name)}</span>
-                  <span className="mode-blurb">{MODE_BLURBS[m.name.toLowerCase()] ?? titleCase(m.floor_policy ?? m.turn_policy ?? '')}</span>
+                  <span className="mode-blurb">{MODE_BLURBS[modeKey(m.name)] ?? titleCase(m.floor_policy ?? m.turn_policy ?? '')}</span>
                 </label>
               ))}
             </div>

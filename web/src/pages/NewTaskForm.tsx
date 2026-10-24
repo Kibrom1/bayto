@@ -95,12 +95,12 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
               placeholder="How will you judge a good answer?" />
           </div>
 
-          <div className="field build-toggle">
+          <div className="field build-toggle semantic-toggle">
             <label>
               <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />{' '}
               {SEMANTIC_LABEL}
             </label>
-            <span className="hint">Off by default. Only used when attached documents are too long to send whole. If this server has no search provider set up, keyword search is used instead.</span>
+            <span className="hint">Off by default. Only used when attached documents are too long to send whole. Their text is sent to an embedding provider. If this server has no search provider set up, keyword search is used instead.</span>
           </div>
 
           <div className="field build-toggle card-toggle">

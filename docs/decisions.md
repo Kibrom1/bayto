@@ -184,3 +184,9 @@ The old fallback matched limit words in any short reply, set a session-wide `fal
 
 ## 2026-10-24: deleting a session also removes reports found through its messages
 `DELETE /sessions/{id}` failed on a foreign key when a report's own `session_id` was null (it only deleted reports by that column, so the message delete was blocked). Reports are now deleted by either their session or their message belonging to the session; paused, failed, orphaned, interrupted, finished and ended sessions are covered by a parametrized test.
+
+## UX round 2 follow-ups (re-verification)
+- Reasons are matched ignoring case and separators ("build-complete", "build complete"), so a good Build ending shows the green banner. Mode names the same way ("Raise Hand" is Open Chat).
+- Rail is `#room-rail` (the toggle's aria-controls), keyboard focusable, with no duplicate landmark names; an empty moderator summary is hidden; roster meta phrases never break mid-phrase.
+- "Continue as Build" is a plain button (amber is for warnings); an ended room never shows "N new turns".
+- Board status labels match the filters (Finished, plus Paused, Failed, Interrupted); room tab title is the task title; New task retrieval switch uses the same plain label as the Context card.

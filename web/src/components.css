@@ -204,6 +204,7 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
 
 /* ---- Build mode: repository fields in the new-task form ---- */
 .build-toggle label { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; }
+.build-toggle.semantic-toggle label { font-weight: 400; }
 .build-fields { border: 1.5px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4) var(--space-4); margin: 0 0 var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); }
 .build-fields legend { padding: 0 0.4rem; font-size: 0.85rem; font-weight: 600; color: var(--ink-2); }
 .build-fields .field { margin-bottom: var(--space-2); }
@@ -213,9 +214,13 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
 
 /* Narrow screens: every header control is a 44px target. */
 @media (max-width: 640px) {
-  .shell-header { gap: var(--space-2); }
+  .shell-header { gap: var(--space-2); height: auto; min-height: var(--shell-h); flex-wrap: wrap; }
+  .shell-nav a, .feedback-link, .signout-btn { white-space: nowrap; }
+  .shell-header { column-gap: 0.25rem; }
+  .shell-nav a { padding-inline: 0.45rem; }
+  .feedback-link, .signout-btn { padding-inline: 0.4rem; font-size: 0.85rem; }
   .shell-nav { gap: 0; }
-  .shell-nav a, .feedback-link, .signout-btn { min-height: 2.75rem; display: inline-flex; align-items: center; padding-inline: 0.6rem; }
+  .shell-nav a, .feedback-link, .signout-btn { min-height: 2.75rem; display: inline-flex; align-items: center; }
   .brand { min-height: 2.75rem; }
   .filter-pill { min-height: 2.75rem; }
 }
@@ -224,7 +229,7 @@ dialog.modal::backdrop { background: rgb(10 12 24 / 0.6); }
 @media (pointer: coarse) {
   .btn.sm, .shell-nav a, .row-menu summary { min-height: 2.75rem; display: inline-flex; align-items: center; }
   .btn.sm { padding-inline: 0.9rem; }
-  .shell-nav a { padding-inline: 0.75rem; }
+  .shell-nav a { padding-inline: 0.5rem; }
   .row-menu summary { border: 1px solid var(--line); }
 }
 .chip.verdict { margin-top: 0.35rem; background: var(--surface-2); color: var(--ink-2); text-transform: none; }

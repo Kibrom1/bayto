@@ -94,7 +94,7 @@ export function RoomRail({ detail, sessionId, railOpen = false, onRailClose, dis
   const active = tabs.some((t) => t.id === tab) ? tab : 'team'
 
   return (
-    <aside className={`rail room-rail${railOpen ? ' open' : ''}`} aria-label="Moderator panel" data-tab={active}>
+    <aside id="room-rail" className={`rail room-rail${railOpen ? ' open' : ''}`} aria-label="Moderator panel" data-tab={active} tabIndex={0}>
       <div className="rail-sheet-head">
         <div role="tablist" aria-label="Team, context and usage" className="rail-tabs">
           {tabs.map((t) => (
@@ -133,7 +133,10 @@ export function RoomRail({ detail, sessionId, railOpen = false, onRailClose, dis
               <span className="avatar" aria-hidden="true">{initials(info.name)}</span>
               <div className="roster-text">
                 <div className="roster-name">{info.name}{m && <span className="chip muted-chip">Muted</span>}</div>
-                <div className="roster-sub">{info.stance ? `${info.stance} · ` : ''}{tc.model ? `${modelLabel(catalog, tc.model)} · ` : ''}{tc.turns} {tc.turns === 1 ? 'turn' : 'turns'}</div>
+                <div className="roster-sub">
+                  {[info.stance, tc.model ? modelLabel(catalog, tc.model) : null, `${tc.turns} ${tc.turns === 1 ? 'turn' : 'turns'}`]
+                    .filter(Boolean).map((part, i) => <span className="roster-part" key={i}>{i > 0 && <span aria-hidden="true"> · </span>}{part}</span>)}
+                </div>
               </div>
               {role in live && <span className="speaking" role="img" aria-label="Speaking now" />}
               {canEdit && (
@@ -156,16 +159,18 @@ export function RoomRail({ detail, sessionId, railOpen = false, onRailClose, dis
       </section>
 
       {canEdit && (
-        <div className="rail-panel" id="rail-panel-context" data-panel="context" role="region" aria-labelledby="rail-tab-context">
+        <div className="rail-panel" id="rail-panel-context" data-panel="context">
           <ContextCard taskId={detail.task_id} sessionId={sessionId} roles={roles} onCount={setCtxCount} />
         </div>
       )}
 
-      <div className="rail-block rail-panel" id="rail-panel-usage" data-panel="usage" role="region" aria-labelledby="rail-tab-usage">
-        <div className="mod-card">
-          <h2>Moderator summary</h2>
-          <p className="summary">{summary || 'The summary appears after the first turns.'}</p>
-        </div>
+      <div className="rail-block rail-panel" id="rail-panel-usage" data-panel="usage">
+        {summary && (
+          <div className="mod-card">
+            <h2>Moderator summary</h2>
+            <p className="summary">{summary}</p>
+          </div>
+        )}
         <h2>Usage vs budget</h2>
         {pct !== null && (
           <div className="meter" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Token budget used">
