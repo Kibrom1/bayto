@@ -25,7 +25,7 @@ import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
 import { RoomRail } from '../components/RoomRail'
 import { ReadNote } from '../components/ReadNote'
-import { Synthesis } from './Synthesis'
+import { Synthesis, synthesisMarkdown } from './Synthesis'
 import { agentHue, initials } from '../agentColor'
 import { getModels, type ModelCatalog } from '../api/models'
 import './BaytoRoom.css'
@@ -51,7 +51,17 @@ export function friendlyFailure(reason?: string | null): string {
   if (!reason) return 'It stopped before it could start.'
   if (/sbx env create|SandboxProviderError/i.test(reason)) return "The sandbox for the agents couldn't be created."
   if (/budget|cost cap/i.test(reason)) return 'It reached its budget.'
-  return "Something went wrong while it was running."
+  if (/api[ _-]?key|unauthori[sz]ed|\b401\b|authentication/i.test(reason)) return 'The model provider rejected the API key.'
+  const first = reason.split('\n').map((l) => l.trim()).find(Boolean) ?? ''
+  return first ? `It stopped with an error: ${first.length > 140 ? `${first.slice(0, 137)}…` : first}` : 'Something went wrong while it was running.'
+}
+
+// The sentence for the banner that says how a session ended. Only a limit that cut work short is a caution.
+export function endedBanner(reason?: string | null): { text: string; tone: '' | 'ok' | 'warn' } | null {
+  const why = stopReasonText(reason)
+  if (!why) return null
+  if (reason === 'build_complete') return { text: 'The build finished: tests passed and the reviewer approved.', tone: 'ok' }
+  return { text: `Session ended because ${why}.`, tone: reason === 'budget_exceeded' ? 'warn' : '' }
 }
 
 const PAUSED = ['needs_human', 'paused']
@@ -86,6 +96,12 @@ export function BaytoRoom() {
   const navigate = useNavigate()
   const [artifacts, setArtifacts] = useState<ArtifactOut[]>([])
   const [atBottom, setAtBottom] = useState(true)
+  const [seen, setSeen] = useState(0) // turns on screen the last time the reader was at the bottom
+  const [railOpen, setRailOpen] = useState(false) // the "Team & context" panel on narrow screens (the rail consumes it)
+  const closeRail = useCallback(() => setRailOpen(false), [])
+  const [exportOpen, setExportOpen] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -149,17 +165,25 @@ export function BaytoRoom() {
     if (atBottom) endRef.current?.scrollIntoView({ block: 'end' })
   }, [messages.length, liveKey, atBottom])
 
-  // When a session ends while the person is watching, show the result (synthesis or change set) at the top.
-  const wasLive = useRef(false)
+  // A live room follows the conversation. Once the session has ended and left a result (synthesis or
+  // change set), the result is what the person came for, so open at it instead of at the last turn.
+  const resultShown = useRef(false)
+  const hasResult = artifacts.some((a) => a.type === 'synthesis' || a.type === 'change_set')
   useEffect(() => {
-    if (!sessionStatus) return
-    if (!FINISHED.includes(sessionStatus)) { wasLive.current = true; return }
-    if (wasLive.current && artifacts.length > 0) {
-      wasLive.current = false
-      scrollRef.current?.scrollTo({ top: 0 })
-      setAtBottom(false)
-    }
-  }, [sessionStatus, artifacts.length])
+    if (!sessionStatus || !FINISHED.includes(sessionStatus) || !hasResult || resultShown.current) return
+    resultShown.current = true
+    scrollRef.current?.scrollTo({ top: 0 })
+    setAtBottom(false)
+  }, [sessionStatus, hasResult])
+
+  useEffect(() => { if (atBottom) setSeen(messages.length) }, [atBottom, messages.length])
+
+  useEffect(() => {
+    if (!exportOpen) return
+    const close = (e: MouseEvent) => { if (!exportRef.current?.contains(e.target as Node)) setExportOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [exportOpen])
 
   function onScroll() {
     const el = scrollRef.current
@@ -167,8 +191,18 @@ export function BaytoRoom() {
   }
 
   function flash(text: string, isError = false) {
+    clearTimeout(noticeTimer.current)
     setNotice({ text, error: isError })
-    if (!isError) setTimeout(() => setNotice(null), 4000)
+    if (!isError) noticeTimer.current = setTimeout(() => setNotice(null), 4000)
+  }
+
+  async function copyMarkdown() {
+    try {
+      await navigator.clipboard.writeText(synthesisMarkdown(taskTitle ?? 'Discussion', artifacts) ?? '')
+      flash('Markdown copied')
+    } catch {
+      flash('Could not copy. Export the decision record instead.', true)
+    }
   }
 
   function downloadTranscript() {
@@ -184,6 +218,7 @@ export function BaytoRoom() {
     a.download = `${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'discussion'}-transcript.md`
     a.click()
     URL.revokeObjectURL(url)
+    flash('Transcript downloaded')
   }
 
   async function continueWithSameTeam() {
@@ -249,12 +284,13 @@ export function BaytoRoom() {
   const sendBlocked = finished ? 'ended' : paused ? 'paused' : canSend ? null : 'starting'
   const costCap: number | null = session.budget?.dollars ?? session.budget?.max_cost ?? null
   const liveEntries = Object.entries(live)
+  const newTurns = Math.max(0, messages.length - seen)
 
   return (
     <section className="room" aria-label="Bayto room">
       <header className="room-header">
         <div className="room-id">
-          <p className="room-kicker"><Link to="/">Tasks</Link><span aria-hidden="true"> / </span><span>Bayto room</span></p>
+          <p className="room-kicker"><Link to="/">Tasks</Link><span aria-hidden="true"> / </span><span>{taskTitle ?? 'Discussion'}</span></p>
           <div className="room-titlerow">
             <h1 className="room-title">{taskTitle ?? 'Discussion'}</h1>
             <span className={`chip status-${status}`}><span className="dot" />{paused ? 'Paused' : status === 'orphaned' ? 'Interrupted' : titleCase(status)}</span>
@@ -262,12 +298,8 @@ export function BaytoRoom() {
           <div className="room-meta">
             {modeName && <span>{titleCase(modeName)}</span>}
             <span>Round {session.round}</span>
-            {canSend && (
-              <span title={connected ? 'Live updates connected' : 'Reconnecting…'} className={connected ? 'live-on' : 'live-off'}>
-                <span className="live-dot" aria-hidden="true" />{connected ? 'Live' : 'Reconnecting…'}
-              </span>
-            )}
-            <span className="num">${session.usage.cost.toFixed(2)}{costCap ? ` of $${costCap.toFixed(2)}` : ''}</span>
+            {canSend && !connected && <span className="live-off" role="status">Reconnecting…</span>}
+            <span className="num">Spent ${session.usage.cost.toFixed(2)}{costCap ? ` of $${costCap.toFixed(2)} cap` : ''}</span>
           </div>
         </div>
         <div className="room-actions">
@@ -278,10 +310,31 @@ export function BaytoRoom() {
           ) : !finished && (
             <button type="button" className="btn" disabled={!canSend} onClick={() => run(() => pauseSession(sessionId!), 'Session paused')}>Pause</button>
           )}
-          <button type="button" className="btn" onClick={() => run(() => exportSession(sessionId!), 'Decision record downloaded')}>Export</button>
-          {finished && messages.length > 0 && (
-            <button type="button" className="btn" onClick={downloadTranscript}>Download transcript</button>
-          )}
+          <div className="export-menu" ref={exportRef}>
+            <button type="button" className="btn" aria-haspopup="menu" aria-expanded={exportOpen} onClick={() => setExportOpen((o) => !o)}>
+              Export<span aria-hidden="true"> ▾</span>
+            </button>
+            {exportOpen && (
+              <div className="menu" role="menu" aria-label="Export" onKeyDown={(e) => { if (e.key === 'Escape') setExportOpen(false) }}>
+                <button type="button" role="menuitem" className="menu-item" onClick={() => { setExportOpen(false); run(() => exportSession(sessionId!), 'Decision record downloaded') }}>
+                  Decision record (.md)
+                </button>
+                {messages.length > 0 && (
+                  <button type="button" role="menuitem" className="menu-item" onClick={() => { setExportOpen(false); downloadTranscript() }}>
+                    Full transcript (.md)
+                  </button>
+                )}
+                {artifacts.some((a) => a.type === 'synthesis') && (
+                  <button type="button" role="menuitem" className="menu-item" onClick={() => { setExportOpen(false); void copyMarkdown() }}>
+                    Copy synthesis as Markdown
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <button type="button" className="btn rail-toggle" aria-expanded={railOpen} aria-controls="room-rail" onClick={() => setRailOpen((o) => !o)}>
+            Team &amp; context
+          </button>
           {status === 'finished' && modeName && modeName !== 'build' && (
             <Link className="btn accent" to={`/setup/${session.task_id}?mode=build`}>Continue as Build</Link>
           )}
@@ -337,6 +390,9 @@ export function BaytoRoom() {
         <div className="notice error" role="alert">
           <p className="notice-line"><strong>This session failed.</strong> {friendlyFailure(session.failure_reason)}
             {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}</p>
+          {modeName !== 'build' && (
+            <p className="notice-actions"><button type="button" className="btn primary" onClick={continueWithSameTeam}>Retry with same team</button></p>
+          )}
           {session.failure_reason && (
             <details className="notice-details">
               <summary>Technical details</summary>
@@ -345,29 +401,35 @@ export function BaytoRoom() {
           )}
         </div>
       )}
-      {!session.archived_at && session.status !== 'failed' && FINISHED.includes(session.status) && stopReasonText(session.stop_reason) && (
-        <div className="notice" role="status">Session ended because {stopReasonText(session.stop_reason)}.{' '}
-          <button type="button" className="btn" onClick={() => run(() => exportSession(sessionId!), 'Decision record downloaded')}>Export decision record</button>
-        </div>
-      )}
+      {!session.archived_at && session.status !== 'failed' && FINISHED.includes(session.status) && (() => {
+        const ended = endedBanner(session.stop_reason)
+        return ended && <div className={`notice${ended.tone ? ` ${ended.tone}` : ''}`} role="status">{ended.text}</div>
+      })()}
       {status === 'orphaned' && (
-        <div className="notice" role="status">
-          <strong>This session was interrupted.</strong> The app restarted while it was running, so its team is gone. The conversation so far is kept below.
-          {' '}{modeName !== 'build' && <button type="button" className="btn sm primary" onClick={continueWithSameTeam}>Continue with the same team</button>}
-          {' '}<Link to={`/setup/${session.task_id}`}>Start a new session</Link> {modeName !== 'build' ? 'instead to change the team or budget' : 'on this task to keep going'}. {modeName !== 'build' && 'The new session is told what was said so far.'}
+        <div className="notice warn" role="status">
+          <p className="notice-line"><strong>This session was interrupted.</strong> The app restarted while it was running, so its team is gone. The conversation so far is kept below.
+            {modeName !== 'build' && ' The new session is told what was said so far.'}</p>
+          {modeName !== 'build' && (
+            <p className="notice-actions"><button type="button" className="btn primary" onClick={continueWithSameTeam}>Continue with the same team</button></p>
+          )}
         </div>
       )}
       {paused && (
-        <div className="notice" role="status">Paused. If an agent asked you something, answer below, then press Resume.</div>
+        <div className="notice warn" role="status">Paused. If an agent asked you something, answer below, then press Resume.</div>
       )}
       {session.status === 'starting' && (
         <div className="notice" role="status">
           Starting: {session.stage ?? 'waiting to launch'}. Creating a sandbox can take a few minutes.
         </div>
       )}
-      {notice && <div className={`notice${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>{notice.text}</div>}
+      {notice && (
+        <div className={`toast${notice.error ? ' error' : ''}`} role={notice.error ? 'alert' : 'status'}>
+          <span>{notice.text}</span>
+          {notice.error && <button type="button" className="btn sm" onClick={() => setNotice(null)}>Dismiss</button>}
+        </div>
+      )}
 
-      <div className="room-body">
+      <div className="room-body" data-rail-open={railOpen || undefined} onKeyDown={(e) => { if (e.key === 'Escape' && railOpen) closeRail() }}>
         <div className="transcript">
           <div className="transcript-scroll" ref={scrollRef} onScroll={onScroll} tabIndex={0} role="region" aria-label="Conversation">
             <h2 className="sr-only">Transcript</h2>
@@ -376,7 +438,7 @@ export function BaytoRoom() {
             {status === 'stopping' && artifacts.length === 0 && <p className="empty">Writing the final synthesis…</p>}
             <div className="transcript-inner" role="log" aria-live="polite" aria-label="Transcript">
               {messages.length === 0 && liveEntries.length === 0 && (
-                <p className="empty">Waiting for the first seat to speak…</p>
+                <p className="empty">{finished ? 'No turns were recorded.' : 'Waiting for the first seat to speak…'}</p>
               )}
               {messages.map((m, i) => {
                 const known = roster.some((tc) => tc.participant === m.from)
@@ -409,10 +471,21 @@ export function BaytoRoom() {
               <div ref={endRef} />
             </div>
           </div>
-          {!atBottom && (
-            <button type="button" className="btn primary jump" onClick={() => { endRef.current?.scrollIntoView({ block: 'end' }); setAtBottom(true) }}>Jump to latest</button>
-          )}
+          <div className="jump-wrap" role="status" aria-live="polite">
+            {!atBottom && (
+              <button type="button" className="btn primary jump" onClick={() => { endRef.current?.scrollIntoView({ block: 'end' }); setAtBottom(true) }}>
+                {newTurns > 0 ? `${newTurns} new ${newTurns === 1 ? 'turn' : 'turns'}` : 'Jump to latest'}
+              </button>
+            )}
+          </div>
 
+          {sendBlocked === 'ended' ? (
+            <div className="ended-bar">
+              <span>Session ended.</span>
+              <Link className="btn primary" to={`/setup/${session.task_id}`}>Start a new session</Link>
+              <button type="button" className="btn" aria-label="Export decision record" onClick={() => run(() => exportSession(sessionId!), 'Decision record downloaded')}>Export</button>
+            </div>
+          ) : (
           <form className="composer" onSubmit={(e) => { e.preventDefault(); send() }}>
             <div className="composer-row">
               <select aria-label="Send to" disabled={!canType} value={target} onChange={(e) => setTarget(e.target.value)}>
@@ -425,7 +498,7 @@ export function BaytoRoom() {
                 aria-label="Interject"
                 rows={1}
                 disabled={!canType}
-                placeholder={sendBlocked === 'ended' ? 'This session has ended' : sendBlocked === 'paused' ? 'Answer or steer, then press Resume' : sendBlocked === 'starting' ? 'Waiting for the session to start…' : 'Add your view or steer the discussion…'}
+                placeholder={sendBlocked === 'paused' ? 'Answer or steer, then press Resume' : sendBlocked === 'starting' ? 'Waiting for the session to start…' : 'Add your view or steer the discussion…'}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -434,14 +507,15 @@ export function BaytoRoom() {
               />
               <button type="submit" className="btn primary" disabled={!draft.trim() || sending || !canType}>Send</button>
             </div>
-            {sendBlocked === 'ended' ? (
-              <p className="composer-hint">This session has ended and can't take messages. <Link to={`/setup/${session.task_id}`}>Start a new session</Link> on this task to keep going.</p>
-            ) : sendBlocked === 'paused' ? (
+            {sendBlocked === 'paused' ? (
               <p className="composer-hint">Paused. Your message is saved and the agents see it when you press Resume.</p>
+            ) : sendBlocked === 'starting' ? (
+              <p className="composer-hint">You can write once the session has started.</p>
             ) : (
               <p className="composer-hint">Enter to send, Shift+Enter for a new line</p>
             )}
           </form>
+          )}
         </div>
 
         <RoomRail

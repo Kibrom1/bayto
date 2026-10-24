@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArtifactOut } from '../api/sessions'
@@ -72,5 +72,15 @@ describe('stop reason', () => {
     const note = screen.getByTestId('repo-left-on')
     expect(note).toHaveTextContent('still checked out on bayto/build-12345678')
     expect(note).toHaveTextContent('git switch main')
+  })
+
+  it('puts Open pull request in the card header and folds the switch-back note into details', () => {
+    render(<ChangeSet artifacts={[art()]} sessionId="s1" />)
+    const header = screen.getByRole('banner', { hidden: true }) ?? null
+    expect(header).toBeTruthy()
+    expect(within(header).getByRole('button', { name: /open pull request/i })).toBeInTheDocument()
+    const note = screen.getByTestId('repo-left-on')
+    expect(note.tagName).toBe('DETAILS')
+    expect(note).not.toHaveAttribute('open')
   })
 })
