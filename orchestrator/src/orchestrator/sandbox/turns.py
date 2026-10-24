@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from ..limits import LimitHit, detect_limit
+
 
 @dataclass(frozen=True, slots=True)
 class TextDelta:
@@ -32,6 +34,7 @@ class TurnResult:
     cost: float | None
     session_id: str | None
     is_error: bool = False
+    limit: LimitHit | None = None  # set when the CLI reported that the account is out of usage or credit
 
 
 TurnEvent = TextDelta | ToolUse | TurnResult
@@ -73,5 +76,6 @@ def parse_stream_line(line: str) -> TurnEvent | None:
             cost=float(cost) if cost is not None else None,
             session_id=obj.get("session_id"),
             is_error=bool(obj.get("is_error")) or obj.get("subtype") not in (None, "success"),
+            limit=detect_limit(obj),
         )
     return None

@@ -55,6 +55,9 @@ class Task(Base):
     # Opt-in semantic stage for attachment retrieval (docs/per-agent-context-rag.md, P4). Off by default: when on,
     # attachment text is sent to the embedding provider (see semantic.py).
     semantic_retrieval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Opt-in per-seat failover from Claude to a local model when Claude runs out of usage: {"enabled": bool,
+    # "model": "ollama/<name>" | null (null = BAYTO_LOCAL_FALLBACK_MODEL)}. Null = off. See docs/per-agent-models.md.
+    local_fallback: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False,
                                                   default=lambda: datetime.now(timezone.utc))
 
@@ -166,7 +169,9 @@ class Session(Base):
     failure_reason: Mapped[str | None] = mapped_column(Text)
     # Model that writes the final synthesis for this session; null = the app-wide default (BAYTO_SYNTHESIS_MODEL).
     synthesis_model: Mapped[str | None] = mapped_column(String)
-    fallback_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False) # M2.12: reactive fallback flag
+    # Seats currently answered by the local fallback model: {seat: {"model", "since", "retry_at"}} (ISO times, UTC).
+    # Replaces the old session-wide `fallback_active` flag; a seat leaves the map when Claude answers it again.
+    fallback_state: Mapped[dict | None] = mapped_column(JSONB)
     # Archived: hidden from the task board and left out of the context later sessions on the task are given.
     # The record (transcript, cost) is kept; delete removes it.
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

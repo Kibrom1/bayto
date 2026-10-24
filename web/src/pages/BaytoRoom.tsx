@@ -26,6 +26,7 @@ import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
 import { RoomRail } from '../components/RoomRail'
 import { ReadNote } from '../components/ReadNote'
+import { LocalBadge } from '../components/LocalBadge'
 import { Synthesis, synthesisMarkdown } from './Synthesis'
 import { agentHue, initials } from '../agentColor'
 import { getModels, type ModelCatalog } from '../api/models'
@@ -451,6 +452,7 @@ export function BaytoRoom() {
                       <div className="msg-head">
                         <span className="msg-name">{known ? info.name : titleCase(m.from)}</span>
                         {known && info.stance && <span className="msg-stance">{info.stance}</span>}
+                        {known && <LocalBadge meta={m.meta} />}
                       </div>
                       <div className="msg-body">{splitVerdict(m.body).text}</div>
                       {splitVerdict(m.body).verdict && <span className="chip verdict">Verdict: {splitVerdict(m.body).verdict}</span>}

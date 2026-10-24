@@ -42,7 +42,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 from pathlib import Path
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from acp.floor import HandRaise, Reason
 from acp.modes import ModeConfig
@@ -52,6 +52,8 @@ from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
+from .. import local_fallback as lf
+from ..limits import LimitHit, detect_limit_in_text
 from .. import audit
 from ..attachment_prompt import PROMPT_BUDGET_CHARS, visible_to
 from ..attachment_report import attachment_report
@@ -145,15 +147,10 @@ class RunOnceResult:
     quiet: bool = False  # True when this iteration made no grant (run() should sleep)
 
 
-_LIMIT_PHRASES = ("weekly limit", "usage limit", "rate limit", "limit reached", "hit your limit", "out of usage")
-_LIMIT_MAX_CHARS = 400  # a platform error is a line or two; a discussion about rate limiting is longer
-
-
 def looks_like_platform_limit(text: str | None) -> bool:
-    """True for a short message that is the platform telling the seat it is out of quota. A long answer that
-    merely mentions rate limiting (a debate topic) must not switch the whole session to the local model."""
-    t = (text or "").strip().lower()
-    return 0 < len(t) <= _LIMIT_MAX_CHARS and any(p in t for p in _LIMIT_PHRASES)
+    """Backstop only (see limits.py): a SHORT message that is the platform saying the account is out of quota. The real
+    trigger is the CLI's structured result (`TurnResult.limit`). Kept under this name for callers and tests."""
+    return detect_limit_in_text(text) is not None
 
 
 _TURN_SHARE_WARN = 0.25   # one turn that used this share of the dollar budget is worth saying so
@@ -222,6 +219,7 @@ class ModeratorRunner:
         self._last_interject_seq = 0
         self._grant_seat: str | None = None  # whose turn it is; picks which parts of long attachments to show
         self._attachment_report: list[dict] = []  # what the last prompt showed of each attachment (names and passage numbers)
+        self._turn_limit: LimitHit | None = None  # set by _stream_turn when the CLI reported Claude is out of usage
         self._grant_notes = ""  # human notes this grant's prompt carries; set once per grant (see _human_notes_for)
         # M2.12: phase machine state
         self._current_phase_index = 0
@@ -681,11 +679,6 @@ class ModeratorRunner:
             "bayto.session_id": str(self._session_id), "bayto.participant": participant,
             "timeout_s": self._config.grant_timeout_seconds,
         }) as span:
-            # Local fallback stays on once a platform limit has been hit this session
-            async with self._sessionmaker() as session:
-                row = await session.get(SessionRow, self._session_id)
-                use_fallback = row.fallback_active
-
             # Subscribe BEFORE waking: a fake/fast/same-process participant can publish its
             # response synchronously inside wake_role() itself (as the tests' FakeSandboxProvider
             # does), and asyncio.Queue holds items for a not-yet-.get()-ing subscriber, but only
@@ -706,7 +699,7 @@ class ModeratorRunner:
                         return
                 if gateway is not None:
                     # A seat on a gateway model (Route A): still `claude -p` in the sandbox, pointed at the gateway for
-                    # this seat only. It never goes through wake_role, the Ollama fallback or a retry on another path.
+                    # this seat only. It never goes through wake_role, the local fallback or a retry on another path.
                     try:
                         streamed = await self._gateway_turn(view, participant, gateway)
                     except Exception as exc:  # noqa: BLE001
@@ -724,57 +717,60 @@ class ModeratorRunner:
                         self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
                         await self._escalate_to_human(view, f"{participant} could not get an answer from its model provider: {exc}")
                         return
-                # Once the fallback is on, the streamed path (which always uses Claude) is skipped.
-                if (external is None and gateway is None and getattr(self._sandbox_provider, "supports_streaming", False)
-                        and not use_fallback):
-                    try:
-                        streamed = await self._stream_turn(view, participant)
-                    except Exception:
-                        log.exception("session %s: streaming turn for %s failed; using the seat path",
-                                      self._session_id, participant)
-                try:
-                    if not streamed and external is None and gateway is None:
-                        await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
-                except SandboxCommandError as e:
-                    # Reactive Fallback: if we hit a platform limit (Weekly/Daily), switch to Ollama immediately
-                    if not self._pipeline and gateway is None and looks_like_platform_limit(e.stderr):
-                        log.warning("session %s: platform limit hit in sandbox; triggering reactive fallback", self._session_id)
-                        async with self._sessionmaker() as session:
-                            row = await session.get(SessionRow, self._session_id)
-                            row.fallback_active = True
-                            await session.commit()
-                        # Retry immediately with fallback enabled
-                        await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=True)
-                    else:
-                        raise
 
-                response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+                # Only a seat that runs on Claude can run out of Claude's usage. Build (pipeline) seats need tools and
+                # history, which the text-only local model cannot give, so for them a limit always pauses for a human.
+                claude_seat = external is None and gateway is None
+                cfg = await self._fallback_config() if claude_seat and not self._pipeline else lf.FallbackConfig(False, None)
+                on_local = await self._fallback_entry(participant) if cfg.usable else None
+                hit: LimitHit | None = None
+                used_local = False
+                response = None
 
-                # Reactive Fallback (Content Level): if the agent's response body contains limit errors
-                if response and "body" in response:
-                    # Build (pipeline) seats need tools and history; the text-only fallback cannot serve them.
-                    if not self._pipeline and gateway is None and looks_like_platform_limit(response["body"]):
-                        log.warning("session %s: platform limit detected in response body; triggering reactive fallback", self._session_id)
-                        async with self._sessionmaker() as session:
-                            row = await session.get(SessionRow, self._session_id)
-                            row.fallback_active = True
-                            await session.commit()
-
-                        # Retry the turn immediately using the fallback path
-                        await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=True)
+                if on_local is not None and not self._probe_due(on_local):
+                    # Claude's reset time has not come yet: do not spend a failing call on it, answer locally.
+                    if not await self._local_turn_or_pause(view, participant, cfg, span, hit=None):
+                        return
+                    used_local = True
+                elif claude_seat:
+                    self._turn_limit = None
+                    if getattr(self._sandbox_provider, "supports_streaming", False):
+                        try:
+                            streamed = await self._stream_turn(view, participant)
+                        except Exception:
+                            log.exception("session %s: streaming turn for %s failed; using the seat path",
+                                          self._session_id, participant)
+                        hit = self._turn_limit
+                    if not streamed and hit is None:
+                        try:
+                            await self._sandbox_provider.wake_role(self._sandbox, participant)
+                        except SandboxCommandError as e:
+                            hit = detect_limit_in_text(e.stderr)
+                            if hit is None:
+                                raise
+                    if hit is None:
                         response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+                        if response and "body" in response:
+                            # Backstop: a seat on the file path has no structured result, only its message.
+                            hit = detect_limit_in_text(response["body"])
+                else:
+                    response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
 
-                if response is None and external is None and gateway is None:  # a provider or gateway seat is never re-woken in the sandbox
+                if hit is not None:
+                    log.warning("session %s: Claude usage limit hit by %s (%s)", self._session_id, participant, hit.source)
+                    if not await self._handle_limit(view, participant, hit, cfg, span):
+                        return
+                    used_local = True
+                if used_local:
+                    response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+                elif response is None and claude_seat:
                     # One retry: re-wake (not re-send -- the assignment is already sitting
                     # unread) and wait again, per the architect's "retry the same grant once
                     # more."
-                    # Re-calculate fallback in case it was triggered by the first attempt
-                    async with self._sessionmaker() as session:
-                        row = await session.get(SessionRow, self._session_id)
-                        use_fallback = row.fallback_active
-
-                    await self._sandbox_provider.wake_role(self._sandbox, participant, fallback=use_fallback)
+                    await self._sandbox_provider.wake_role(self._sandbox, participant)
                     response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
+                if claude_seat and not used_local and response is not None and on_local is not None:
+                    await self._back_on_claude(participant, on_local)
             finally:
                 self._pubsub.unsubscribe(queue)
 
@@ -807,8 +803,12 @@ class ModeratorRunner:
         provider, bare = split_model_id(model or "")
         if provider in ("anthropic", "gateway"):
             return None
+        return provider, model, self._system_of(row)
+
+    @staticmethod
+    def _system_of(row) -> str:
         system = "\n\n".join(x for x in (row[2], f"Stance: {row[3]}" if row[3] else "") if x)
-        return provider, model, system or "You are one participant in a multi-agent discussion."
+        return system or "You are one participant in a multi-agent discussion."
 
     async def _gateway_model(self, participant: str) -> str | None:
         """The seat's model id when it is `gateway/<name>`, else None."""
@@ -824,6 +824,136 @@ class ModeratorRunner:
         if provider in ("anthropic", "gateway"):
             return None
         return f"{participant} is set to {model}, and Build seats can only use Claude models (or, if enabled, gateway models)"
+
+    # ---------------------------------------------------------------- local fallback (per seat)
+
+    async def _fallback_config(self) -> lf.FallbackConfig:
+        async with self._sessionmaker() as session:
+            task = await session.scalar(
+                select(Task).join(SessionRow, SessionRow.task_id == Task.id).where(SessionRow.id == self._session_id))
+        return lf.resolve(task.local_fallback if task is not None else None)
+
+    async def _fallback_entry(self, participant: str) -> dict | None:
+        async with self._sessionmaker() as session:
+            row = await session.get(SessionRow, self._session_id)
+            return dict(((row.fallback_state or {}).get(participant)) or {}) or None
+
+    async def _fallback_write(self, participant: str, entry: dict | None) -> None:
+        async with self._sessionmaker() as session:
+            row = await session.get(SessionRow, self._session_id)
+            state = dict(row.fallback_state or {})
+            if entry is None:
+                state.pop(participant, None)
+            else:
+                state[participant] = entry
+            row.fallback_state = state or None  # a new object, so the JSONB change is saved
+            await session.commit()
+
+    @staticmethod
+    def _probe_due(entry: dict) -> bool:
+        try:
+            return datetime.now(timezone.utc) >= datetime.fromisoformat(entry["retry_at"])
+        except (KeyError, ValueError, TypeError):
+            return True  # an unreadable entry is a reason to ask Claude again, not to stay on the local model
+
+    async def _notice(self, text: str) -> None:
+        """One line for the room from the moderator. Best effort: it must never fail a turn."""
+        try:
+            await self._conversation.send(sender=self._mode.moderator or "moderator", to=["*"], kind="note", body=text)
+        except Exception:  # noqa: BLE001
+            log.exception("session %s: could not post a notice", self._session_id)
+
+    @staticmethod
+    def _when(dt: datetime) -> str:
+        return dt.astimezone(timezone.utc).strftime("%H:%M UTC")
+
+    async def _handle_limit(self, view: ConversationView, participant: str, hit: LimitHit,
+                            cfg: lf.FallbackConfig, span) -> bool:
+        """Claude is out of usage for this seat's turn. With the fallback on (discussion seats only) the turn is retried
+        once on the local model and True is returned. Otherwise the session is paused for a human with the reason and
+        False is returned: a limit is never retried in a loop."""
+        retry_at = hit.retry_at()
+        if self._pipeline or not cfg.usable:
+            span.set_attribute("outcome", "limit_paused")
+            if self._pipeline:
+                why = ("Build seats need tools, which a local model does not have, so they never fall back")
+            elif cfg.enabled:
+                why = f"the local fallback is on but has no model: set one for the task or {lf.ENV_MODEL}"
+            else:
+                why = "the local model fallback is off for this task"
+            reset = f"; it should reset around {self._when(hit.reset_at)}" if hit.reset_at else ""
+            await self._escalate_to_human(
+                view, f"{participant} could not take its turn because Claude's usage limit was reached{reset} ({why}). "
+                      "Resume after the limit resets" + ("" if self._pipeline else ", or turn on the local fallback in the task settings"))
+            self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
+            return False
+        previous = await self._fallback_entry(participant)
+        await self._fallback_write(participant, {
+            "model": cfg.model, "since": (previous or {}).get("since") or datetime.now(timezone.utc).isoformat(),
+            "retry_at": retry_at.isoformat()})
+        if previous is None:
+            await self._notice(
+                f"Claude's usage limit was reached. {participant} will answer on the local model {cfg.model} until "
+                f"about {self._when(retry_at)}, then try Claude again. Answers from a local model differ in quality "
+                "and are marked.")
+        audit.emit(action="turn.claude_limit", summary=f"Claude usage limit reached for {participant}",
+                   task_id=await self._task_id(), session_id=self._session_id, actor="system",
+                   detail={"seat": participant, "message": hit.message, "reset_at": hit.reset_at, "retry_at": retry_at,
+                           "source": hit.source, "fallback_model": cfg.model})
+        return await self._local_turn_or_pause(view, participant, cfg, span, hit=hit)
+
+    async def _local_turn_or_pause(self, view: ConversationView, participant: str, cfg: lf.FallbackConfig, span,
+                                   *, hit: LimitHit | None) -> bool:
+        try:
+            await self._local_turn(view, participant, cfg.model, hit)
+        except ProviderError as exc:
+            span.set_attribute("outcome", "local_fallback_error")
+            self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
+            await self._escalate_to_human(
+                view, f"{participant} could not take its turn: Claude's usage limit was reached and the local model "
+                      f"{cfg.model} did not answer ({exc})")
+            return False
+        span.set_attribute("outcome", "local_fallback")
+        return True
+
+    async def _local_turn(self, view: ConversationView, participant: str, model: str, hit: LimitHit | None) -> None:
+        """One turn on the local model through the direct Ollama adapter. The prompt is the same one the Claude path
+        gets (task, brief, retrieved passages, recall, summary, human notes): `_build_context`, never the bare
+        assignment. Marked in the message meta, the audit trail and a live `message_meta` event."""
+        provider_id, bare = split_model_id(model)
+        row = await self._seat_row(participant)
+        system = self._system_of(row) if row is not None else "You are one participant in a multi-agent discussion."
+        info = get_model(model)
+        prompt = await self._build_context(view)
+        completion = await provider_for(provider_id).complete(
+            model=bare, system=system, prompt=prompt,
+            price_in=info.price_in if info else None, price_out=info.price_out if info else None)
+        sid = str(self._session_id)
+        marker = {"model": model, **({"reason": hit.message[:200]} if hit else {})}
+        self._pubsub.publish({"type": "turn_done", "data": {"session_id": sid, "from": participant}})
+        env = await self._conversation.send(
+            sender=participant, to=[self._mode.moderator or "moderator"], kind="answer", body=completion.text,
+            meta={"tokens_in": completion.tokens_in, "tokens_out": completion.tokens_out, "cost": completion.cost,
+                  "provider": provider_id, "local_fallback": marker, **self._attachment_meta()})
+        self._pubsub.publish({"type": "message_meta", "data": {
+            "session_id": sid, "message_id": env.message_id, "from": participant, "meta": {"local_fallback": marker}}})
+        audit.emit(action="turn.local_fallback", summary=f"{participant} answered on the local model {model}",
+                   task_id=await self._task_id(), session_id=self._session_id, actor="system",
+                   subject_type="message", subject_id=env.message_id,
+                   detail={"seat": participant, "model": model, "tokens_in": completion.tokens_in,
+                           "tokens_out": completion.tokens_out})
+
+    async def _back_on_claude(self, participant: str, entry: dict) -> None:
+        """Claude answered a seat that was on the local model: switch it back and say so."""
+        await self._fallback_write(participant, None)
+        await self._notice(f"Claude is available again. {participant} is back on Claude.")
+        audit.emit(action="turn.claude_restored", summary=f"{participant} is back on Claude",
+                   task_id=await self._task_id(), session_id=self._session_id, actor="system",
+                   detail={"seat": participant, "was_on": entry.get("model"), "since": entry.get("since")})
+
+    async def _task_id(self) -> uuid.UUID | None:
+        async with self._sessionmaker() as session:
+            return await session.scalar(select(SessionRow.task_id).where(SessionRow.id == self._session_id))
 
     async def _gateway_turn(self, view: ConversationView, participant: str, model: str) -> bool:
         """One streamed turn of a seat on a gateway model. The gateway environment and the bare model name go to
@@ -879,6 +1009,7 @@ class ModeratorRunner:
             elif isinstance(event, TurnResult):
                 result = event
         if result is None or result.is_error:
+            self._turn_limit = result.limit if result is not None else None
             self._pubsub.publish({"type": "turn_error", "data": {"session_id": sid, "from": participant}})
             return False
         self._pubsub.publish({"type": "turn_done", "data": {"session_id": sid, "from": participant}})
