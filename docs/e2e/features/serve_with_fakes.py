@@ -28,9 +28,24 @@ def _current_session_dir() -> Path:
     return max(dirs, key=lambda d: d.stat().st_mtime)
 
 
+LIMIT_FILE = Path(os.environ.get("E2E_CLAUDE_LIMIT_FILE", "/tmp/e2e/claude_limit"))
+
+
+def _limit_for(role: str) -> str | None:
+    """While LIMIT_FILE holds '<role or *> <reset epoch>', a woken seat answers like Claude does when it is out of usage."""
+    try: who, epoch = LIMIT_FILE.read_text().split()
+    except (FileNotFoundError, ValueError): return None
+    return epoch if who in ("*", role) else None
+
+
 async def on_wake(role: str) -> None:
     await asyncio.sleep(SEAT_DELAY)  # slow enough that a test can add context mid-session
     d = _current_session_dir()
+    epoch = _limit_for(role)
+    if epoch:
+        FileTransport(d).send(Envelope(conversation_id=d.name, from_=role, to=["moderator"], kind="answer",
+                                        body=f"Claude AI usage limit reached|{epoch}", meta={}))
+        return
     FileTransport(d).send(Envelope(conversation_id=d.name, from_=role, to=["moderator"], kind="answer",
                                     body=f"{role} here: I take a position and add one concrete point (turn at {time.time():.0f}).",
                                     meta={"tokens_in": 900, "tokens_out": 60, "cost": 0.004}))

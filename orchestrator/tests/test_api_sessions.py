@@ -959,6 +959,22 @@ async def test_a_running_session_cannot_be_archived_or_deleted(client, live_sess
         assert await db.get(Session, session_id) is not None
 
 
+async def test_the_roster_in_session_detail_carries_mute_and_drops_removed_seats(client, live_sessionmaker):
+    task_id, session_id = await _created_session(client, live_sessionmaker)
+    async with live_sessionmaker() as db:
+        (await db.get(Session, session_id)).status = "active"
+        await db.commit()
+    seats = (await client.get(f"/sessions/{session_id}")).json()["session"]["turn_counts"]
+    assert len(seats) >= 1 and all(tc["turns"] == 0 and tc["muted"] is False for tc in seats)  # silent seats are listed once under way
+    first = seats[0]["agent_id"]
+    assert (await client.post(f"/sessions/{session_id}/participants/{first}/mute")).status_code == 200
+    seats = (await client.get(f"/sessions/{session_id}")).json()["session"]["turn_counts"]
+    assert {tc["agent_id"]: tc["muted"] for tc in seats}[first] is True
+    assert (await client.post(f"/sessions/{session_id}/participants/{first}/remove")).status_code == 200
+    seats = (await client.get(f"/sessions/{session_id}")).json()["session"]["turn_counts"]
+    assert first not in {tc["agent_id"] for tc in seats}
+
+
 async def test_a_session_lifecycle_is_written_to_the_audit_trail(client, live_sessionmaker, tmp_path, span_exporter):
     from audit_helpers import audit_events
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)

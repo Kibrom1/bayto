@@ -649,6 +649,7 @@ class TurnCountOut(BaseModel):
     agent_id: uuid.UUID
     turns: int
     model: str | None = None  # what this seat runs on: its own choice for the session, else the agent's default
+    muted: bool = False  # the seat stays in the room but is not given the floor
 
 
 class SessionDetailOut(BaseModel):
@@ -692,21 +693,26 @@ async def get_session(
             .join(Agent, Agent.id == SessionAgent.agent_id)
             .where(SessionAgent.session_id == session_id))).all()}
 
-        turn_counts_rows = (await db.execute(
-            select(Agent.role, Agent.id, func.count(Turn.id))
-            .select_from(Turn)
-            .join(Agent, Agent.id == Turn.speaker_id)
-            .where(Turn.session_id == session_id)
-            .group_by(Agent.id, Agent.role)
-        )).all()
+        turn_totals = {aid: count for aid, count in (await db.execute(
+            select(Turn.speaker_id, func.count(Turn.id)).where(Turn.session_id == session_id)
+            .group_by(Turn.speaker_id))).all()}
+        seats = (await db.execute(
+            select(Agent.role, Agent.id, SessionAgent.muted, SessionAgent.removed_at)
+            .select_from(SessionAgent).join(Agent, Agent.id == SessionAgent.agent_id)
+            .where(SessionAgent.session_id == session_id)
+            .order_by(SessionAgent.seat_order.nulls_last(), Agent.role))).all()
+        # The roster: every seat still at the table once the session is under way (a seat added or not yet called has
+        # no turns), minus removed ones. Before the start only seats that have spoken are listed, as before.
+        turn_counts_rows = [(role, aid, turn_totals.get(aid, 0), muted) for role, aid, muted, removed_at in seats
+                            if removed_at is None and (row.status != "created" or aid in turn_totals)]
 
     usage = await session_usage(sessionmaker, session_id)
     return SessionDetailResponse(session=SessionDetailOut(
         id=row.id, task_id=row.task_id, mode_id=row.mode_id, status=row.status,
         started_at=row.started_at, ended_at=row.ended_at, round=max_round or 0, budget=row.budget, archived_at=row.archived_at,
         usage=UsageOut(tokens_in=usage.tokens_in, tokens_out=usage.tokens_out, cost=usage.cost),
-        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count, model=seat_models.get(agent_id))
-                     for role, agent_id, count in turn_counts_rows],
+        turn_counts=[TurnCountOut(participant=role, agent_id=agent_id, turns=count, model=seat_models.get(agent_id), muted=muted)
+                     for role, agent_id, count, muted in turn_counts_rows],
         failure_reason=(session_failures.get(session_id) or row.failure_reason) if row.status == "failed" else None,
         stage=session_stages.get(session_id) if row.status == "starting" else None,
         stop_reason=row.stop_reason,
