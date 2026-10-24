@@ -500,10 +500,9 @@ class LocalSbxSandboxProvider(SandboxProvider):
         if not saw_result:
             raise SandboxProviderError(f"turn for {role} in {sandbox.name} ended without a result event")
 
-    async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
-        cmd = "crew-notify-fallback" if fallback else "crew-notify"
+    async def wake_role(self, sandbox: SandboxInfo, role: str) -> None:
         try:
-            await self._run(["exec", sandbox.name, cmd, role])
+            await self._run(["exec", sandbox.name, "crew-notify", role])
         except SandboxCommandError as exc:
             # A second poke for an assignment the seat was already notified about (a resumed or retried
             # grant) is harmless -- the reply is on its way -- not a failure that should end the session.

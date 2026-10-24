@@ -13,7 +13,7 @@ import {
 import { agentHue, initials } from '../agentColor'
 import { buildModels, claudeOnly, costFactor, getModels, modelOptionText, type ModelCatalog } from '../api/models'
 import { archiveAgent, createAgent, updateAgent, type AgentDraft } from '../api/agents'
-import { setTaskWorkspace } from '../api/tasks'
+import { LOCAL_FALLBACK_LABEL, LOCAL_FALLBACK_NOTE, setLocalFallback, setTaskWorkspace } from '../api/tasks'
 import { AgentDialog } from '../components/AgentDialog'
 import { ConfirmDialog } from '../components/Dialog'
 import { TableRing } from '../components/TableRing'
@@ -84,6 +84,8 @@ export function SessionSetup() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null) // null until loaded, or if the server has no /models
   const [synthesisModel, setSynthesisModel] = useState('') // '' = the app default
   const [seatModels, setSeatModels] = useState<Record<string, string>>({}) // agent id -> chosen model; absent = the agent's default
+  const [fbOn, setFbOn] = useState(false) // opt-in local model when Claude runs out of usage
+  const [fbModel, setFbModel] = useState('') // '' = the server's default local model
   const [dollars, setDollars] = useState('5')
   const [tokens, setTokens] = useState('200000')
   const [touched, setTouched] = useState(false)
@@ -113,7 +115,10 @@ export function SessionSetup() {
             test_command: found.workspace.test_command ?? '', allowed_commands: (found.workspace.allowed_commands ?? []).join('\n'),
           })
         }
-        if (found) setTask(found)
+        if (found) {
+          setTask(found)
+          if (found.local_fallback) { setFbOn(found.local_fallback.enabled); setFbModel(found.local_fallback.model ?? '') }
+        }
         else setTaskMissing(true)
       })
       .catch(() => {})
@@ -263,6 +268,10 @@ export function SessionSetup() {
         },
       }
       if (isBuild && task) await setTaskWorkspace(taskId, workspaceBody(ws))
+      const before = task?.local_fallback ?? { enabled: false, model: null }
+      if (!isBuild && (fbOn !== before.enabled || (fbOn && (fbModel || null) !== (before.model ?? null)))) {
+        await setLocalFallback(taskId, fbOn, fbModel || null)
+      }
       const { session } = await createSession(req)
       await startSession(session.id)
       navigate(`/room/${session.id}`)
@@ -419,6 +428,26 @@ export function SessionSetup() {
             {smallDeveloper && (
               <p className="hint" role="note">The developer is on a small model. It is cheaper, but it writes the code the tester and
                 reviewer then judge, so a failed build is more likely. Sonnet or Opus is the safer choice for that seat.</p>
+            )}
+            {!isBuild && (
+              <div className="field local-fallback">
+                <label>
+                  <input type="checkbox" checked={fbOn} onChange={(e) => setFbOn(e.target.checked)} />{' '}
+                  {LOCAL_FALLBACK_LABEL}
+                </label>
+                {fbOn && (
+                  <>
+                    <label htmlFor="fallback-model">Local model</label>
+                    <select id="fallback-model" value={fbModel} onChange={(e) => setFbModel(e.target.value)}>
+                      <option value="">Server default</option>
+                      {(catalog?.models ?? []).filter((m) => m.provider === 'ollama').map((m) => (
+                        <option key={m.id} value={m.id}>{modelOptionText(m)}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                <span className="hint">{LOCAL_FALLBACK_NOTE}</span>
+              </div>
             )}
             {catalog && catalog.models.length > 0 && roster.length > 0 && (
               <div className="field">

@@ -94,6 +94,22 @@ One workable route is an Anthropic-compatible gateway in front of the local mode
 
 Risks to test before promising it: small local models are weak at the tool use the Build roles need, so limit local models to discussion seats at first; latency and context limits differ; and a seat that quietly falls back to a hosted model would defeat the reason for choosing a local one, so a gateway failure should fail the turn loudly.
 
+## Local fallback when Claude runs out of usage
+
+Off by default. A task can opt in (`local_fallback = {enabled, model}`, set on the session setup page or with `GET`/`PUT /tasks/{id}/local-fallback`; a task can also be created with it). The model must be an `ollama/...` catalogue model and `OLLAMA_HOST` must be set (the same check as a seat on that model); `BAYTO_LOCAL_FALLBACK_MODEL` is the default when none is chosen.
+
+How it works, per seat, for discussion seats only:
+
+1. **Detection** (`limits.py`). The primary signal is the CLI's structured final result: `is_error: true` plus a known limit shape (`...usage limit reached|<epoch>`, `You've hit your limit · resets 5pm (America/New_York)`, `api_error_status: 429`, `rate_limit_error`, a rejected `rate_limit_info` with `resetsAt`, `credit balance is too low`). `is_error` is the guard, so a normal answer that talks about rate limits never triggers it. A short-message phrase match (400 characters at most, phrases such as "usage limit reached" or "hit your weekly limit", not the bare words "rate limit") stays as a backstop for stderr and for a seat that answers through the message log.
+2. **Failover.** The seat's turn is retried once on the local model through the direct Ollama adapter (`providers/`), with the FULL prompt the Claude path gets (task, brief, retrieved passages, recall, summary, human notes). The turn's message carries `meta.local_fallback = {model, reason}`, an audit event `turn.local_fallback` (and `turn.claude_limit`) is written, a `message_meta` event is sent live, the room shows a "Local model" badge on the message and the moderator posts one notice line when the seat first switches.
+3. **Return.** The reset time from the message (or 30 minutes when there is none, or it is already past) is stored per seat in `session.fallback_state`. Until then the seat answers locally without calling Claude. After it, the seat's next real turn asks Claude; if that works the seat switches back and the moderator posts a notice, if it hits the limit again the wait is renewed with no new notice.
+4. **Never for Build.** Build (pipeline) seats need tools and history, so a limit pauses the session for a human with the reason and the reset time, whatever the setting.
+5. **Option off.** A limit pauses the session for a human with a clear reason ("...usage limit was reached... the local model fallback is off for this task"); it no longer loops. If the local model also fails, the session pauses with both reasons.
+
+The old session-wide `fallback_active` flag, the `wake_role(fallback=True)` path and the `crew-notify-fallback` call from the orchestrator are gone (migration `e1f2a3b4c5d6`; the flag is dropped, not converted). The script itself stays in `agent-comms` for the dev-team sandbox but Bayto no longer calls it.
+
+Not verified: the exact shape of Claude Code's output when an account is really out of usage (the shapes above are from what the CLI is known to print, not captured from an exhausted account), and the network path to Ollama (only run against a mock server; whether the orchestrator host reaches `OLLAMA_HOST`, and model names, latency and quality on real hardware, are untested). The other seats of a session each discover the limit on their own first turn, costing one failed Claude call each.
+
 ## Providers (OpenAI, Gemini, others)
 
 Today every agent turn runs through the `claude` command inside the sandbox, so only Claude models work. Choosing a provider means changing what runs a turn, not just a setting. Three routes:

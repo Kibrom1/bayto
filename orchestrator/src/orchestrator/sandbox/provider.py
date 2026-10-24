@@ -115,8 +115,8 @@ class SandboxProvider(abc.ABC):
         raise NotImplementedError(f"{type(self).__name__} does not support streamed turns")
 
     @abc.abstractmethod
-    async def wake_role(self, sandbox: SandboxInfo, role: str, fallback: bool = False) -> None:
-        """Notify a single role it has a new assignment. If fallback=True, use a local model. """
+    async def wake_role(self, sandbox: SandboxInfo, role: str) -> None:
+        """Notify a single role it has a new assignment."""
 
     @abc.abstractmethod
     async def stop(self, sandbox: SandboxInfo) -> SandboxInfo:

@@ -16,6 +16,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from .. import audit
+from .. import local_fallback as lf
+from ..providers import provider_id_of
 from ..models import Artifact, Session, Task, TaskAttachment, UsageLedger
 from ..providers.embeddings import NEEDS, embedding_model, embedding_provider
 from ..build_policy import parse_test_command, permission_summary, suggest_test_command, validate_extra_commands
@@ -98,6 +100,11 @@ async def _validated_workspace(ws: WorkspaceIn) -> dict:
             "allowed_commands": extra}
 
 
+class LocalFallbackIn(BaseModel):
+    enabled: bool
+    model: str | None = None  # an ollama/... catalogue model; null = BAYTO_LOCAL_FALLBACK_MODEL
+
+
 class TaskCreateRequest(BaseModel):
     title: text(TITLE_MAX)
     brief: text(BRIEF_MAX)
@@ -107,6 +114,8 @@ class TaskCreateRequest(BaseModel):
     workspace: WorkspaceIn | None = None
     # Opt in to meaning-based ranking of long attachments. Sends attachment text to the embedding provider.
     semantic_retrieval: bool = False
+    # Opt in to a local model taking over a seat when Claude runs out of usage. Off unless given.
+    local_fallback: LocalFallbackIn | None = None
 
 
 class TaskOut(BaseModel):
@@ -118,6 +127,7 @@ class TaskOut(BaseModel):
     owner_id: uuid.UUID | None
     workspace: dict | None = None
     semantic_retrieval: bool = False
+    local_fallback: dict | None = None
     created_at: datetime
 
 
@@ -131,10 +141,11 @@ async def create_task(
     sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker),
 ) -> TaskCreateResponse:
     workspace = await _validated_workspace(req.workspace) if req.workspace is not None else None
+    fallback = _checked_fallback(req.local_fallback, build=workspace is not None) if req.local_fallback is not None else None
     async with sessionmaker() as db:
         row = Task(title=req.title, brief=req.brief, output_type=req.output_type,
                     success_criteria=req.success_criteria, owner_id=req.owner_id, workspace=workspace,
-                    semantic_retrieval=req.semantic_retrieval)
+                    semantic_retrieval=req.semantic_retrieval, local_fallback=fallback)
         db.add(row)
         await db.flush()
         audit.emit(action="task.created", summary=f"Created task {row.title}", task_id=row.id,
@@ -217,6 +228,69 @@ async def set_task_retrieval(task_id: uuid.UUID, req: RetrievalIn,
         return _retrieval_out(row)
 
 
+# ---------------------------------------------------------------- local fallback switch
+
+class LocalFallbackOut(BaseModel):
+    enabled: bool
+    model: str | None          # as stored (null = use the default)
+    effective_model: str | None  # what a switch would actually run on
+    default_model: str | None  # BAYTO_LOCAL_FALLBACK_MODEL
+    ready: bool                # the effective model could run now (catalogue + OLLAMA_HOST)
+    needs: str | None          # why not, in words
+    build: bool                # Build tasks never fall back; the setting is stored but ignored
+
+
+def _checked_fallback(req: LocalFallbackIn, *, build: bool) -> dict:
+    """The value to store. Turning it on needs a usable local model; turning it off never fails (and keeps the choice)."""
+    model = (req.model or "").strip() or None
+    if req.enabled:
+        problem = lf.model_problem(model or lf.env_default_model())
+        if problem:
+            raise HTTPException(status_code=422, detail={"error": {"code": problem[0], "detail": problem[1], "field": "local_fallback"}})
+    elif model is not None and provider_id_of(model) != lf.PROVIDER:
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_model",
+                            "detail": f"{model} is not a local Ollama model", "field": "local_fallback"}})
+    return {"enabled": req.enabled, "model": model}
+
+
+def _fallback_out(task: Task) -> LocalFallbackOut:
+    cfg = lf.resolve(task.local_fallback)
+    problem = lf.model_problem(cfg.model)
+    return LocalFallbackOut(enabled=cfg.enabled, model=(task.local_fallback or {}).get("model"), effective_model=cfg.model,
+                            default_model=lf.env_default_model(), ready=problem is None, needs=problem[1] if problem else None,
+                            build=task.workspace is not None)
+
+
+@router.get("/tasks/{task_id}/local-fallback", response_model=LocalFallbackOut)
+async def get_task_local_fallback(task_id: uuid.UUID,
+                                  sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> LocalFallbackOut:
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
+        return _fallback_out(row)
+
+
+@router.put("/tasks/{task_id}/local-fallback", response_model=LocalFallbackOut)
+async def set_task_local_fallback(task_id: uuid.UUID, req: LocalFallbackIn,
+                                  sessionmaker: async_sessionmaker = Depends(get_db_sessionmaker)) -> LocalFallbackOut:
+    """Opt a task in or out of the local fallback. Takes effect on each seat's next turn. Build tasks accept the setting
+    but never use it: a Build seat needs tools, which a local text model does not have."""
+    async with sessionmaker() as db:
+        row = await db.get(Task, task_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error": {"code": "task_not_found", "detail": "task not found"}})
+        value = _checked_fallback(req, build=row.workspace is not None)
+        if value != (row.local_fallback or {"enabled": False, "model": None}):
+            row.local_fallback = value
+            audit.emit(action="task.local_fallback_set",
+                       summary=("Turned on" if req.enabled else "Turned off") + f" the local model fallback for {row.title}",
+                       task_id=row.id, subject_type="task", subject_id=row.id, detail=value)
+        await db.commit()
+        await db.refresh(row)
+        return _fallback_out(row)
+
+
 # ---------------------------------------------------------------- DELETE /tasks/{id}
 
 @router.delete("/tasks/{task_id}", status_code=204)
@@ -258,6 +332,7 @@ class TaskListOut(BaseModel):
     output_artifact_id: uuid.UUID | None
     workspace: dict | None = None  # Build mode: {repo_path, base_branch, test_command}
     semantic_retrieval: bool = False
+    local_fallback: dict | None = None
 
 
 @router.get("/tasks", response_model=list[TaskListOut])
@@ -289,7 +364,7 @@ async def list_tasks(sessionmaker: async_sessionmaker = Depends(get_db_sessionma
                 status=last_session.status if last_session is not None else None,
                 last_session_id=last_session.id if last_session is not None else None,
                 output_artifact_id=output_artifact_id, workspace=task.workspace,
-                semantic_retrieval=task.semantic_retrieval,
+                semantic_retrieval=task.semantic_retrieval, local_fallback=task.local_fallback,
             ))
         return out
 

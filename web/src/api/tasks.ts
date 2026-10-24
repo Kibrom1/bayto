@@ -15,6 +15,8 @@ export interface Task {
   workspace?: Workspace | null
   // Opt-in meaning-based search of long attachments; sends document text to the embedding provider.
   semantic_retrieval?: boolean
+  // Opt-in: a local model answers a seat's turn when Claude has run out of usage.
+  local_fallback?: { enabled: boolean; model: string | null } | null
 }
 
 export interface Workspace {
@@ -43,6 +45,7 @@ export interface TaskCreateRequest {
   success_criteria?: string | null
   workspace?: Workspace | null
   semantic_retrieval?: boolean
+  local_fallback?: { enabled: boolean; model?: string | null }
 }
 
 export interface RetrievalSetting {
@@ -123,4 +126,36 @@ export async function deleteTask(taskId: string): Promise<void> {
   if (!res.ok) {
     throw new ApiError(res.status, `DELETE /tasks/${taskId} failed: ${res.status} ${await parseError(res)}`)
   }
+}
+
+export interface LocalFallbackSetting {
+  enabled: boolean
+  model: string | null // as stored; null = use the server default
+  effective_model: string | null
+  default_model: string | null // BAYTO_LOCAL_FALLBACK_MODEL on the server
+  ready: boolean // the model could run now
+  needs: string | null
+  build: boolean // Build tasks never fall back
+}
+
+/** The honest wording shown wherever the option is chosen. */
+export const LOCAL_FALLBACK_LABEL = 'If Claude runs out of usage, let a local model answer instead'
+export const LOCAL_FALLBACK_NOTE =
+  "A local model is usually much weaker than Claude, so those answers will differ in quality and are marked 'Local model'. " +
+  'It sees the same discussion but cannot use tools. Build seats never fall back: they pause for you. Bayto tries Claude again after the limit resets.'
+
+export async function getLocalFallback(taskId: string): Promise<LocalFallbackSetting> {
+  const res = await fetch(`/tasks/${taskId}/local-fallback`)
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  return res.json()
+}
+
+export async function setLocalFallback(taskId: string, enabled: boolean, model: string | null): Promise<LocalFallbackSetting> {
+  const res = await fetch(`/tasks/${taskId}/local-fallback`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, model }),
+  })
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  return res.json()
 }

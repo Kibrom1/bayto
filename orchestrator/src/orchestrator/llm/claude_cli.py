@@ -20,6 +20,7 @@ import json
 import os
 
 from ..child_env import child_env
+from ..limits import LimitHit, detect_limit, detect_limit_in_text
 import shutil
 import tempfile
 import time
@@ -28,7 +29,12 @@ from typing import Any
 
 
 class ClaudeCliError(RuntimeError):
-    """The `claude` CLI failed, timed out, or returned something that is not the requested JSON."""
+    """The `claude` CLI failed, timed out, or returned something that is not the requested JSON.
+    `limit` is set when the CLI said the account is out of usage or credit (see limits.py)."""
+
+    def __init__(self, message: str = "", *, limit: LimitHit | None = None) -> None:
+        super().__init__(message)
+        self.limit = limit
 
 
 @dataclass
@@ -195,13 +201,20 @@ class ClaudeCliClient:
                 await proc.wait()
                 raise ClaudeCliError(f"claude -p timed out after {self._timeout:.0f}s") from exc
         if proc.returncode != 0:
-            raise ClaudeCliError(f"claude -p exited {proc.returncode}: {failure_detail(stdout.decode(), stderr.decode())}")
+            detail = failure_detail(stdout.decode(), stderr.decode())
+            try:
+                structured = json.loads(stdout.decode())
+            except json.JSONDecodeError:
+                structured = None
+            limit = detect_limit(structured) or detect_limit_in_text(detail)
+            raise ClaudeCliError(f"claude -p exited {proc.returncode}: {detail}", limit=limit)
         try:
             env_json = json.loads(stdout.decode())
         except json.JSONDecodeError as exc:
             raise ClaudeCliError(f"claude -p output was not JSON: {stdout.decode()[:200]!r}") from exc
         if env_json.get("is_error"):
-            raise ClaudeCliError(f"claude -p reported an error: {str(env_json.get('result'))[:300]}")
+            raise ClaudeCliError(f"claude -p reported an error: {str(env_json.get('result'))[:300]}",
+                                 limit=detect_limit(env_json))
         u = env_json.get("usage") or {}
         tokens_in = int(u.get("input_tokens", 0)) + int(u.get("cache_read_input_tokens", 0)) \
             + int(u.get("cache_creation_input_tokens", 0))

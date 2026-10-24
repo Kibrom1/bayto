@@ -7,6 +7,7 @@ export interface Task {
   status: string | null
   last_session_id: string | null
   output_artifact_id: string | null
+  local_fallback?: { enabled: boolean; model: string | null } | null
   workspace?: { repo_path: string; base_branch: string; test_command?: string | null; allowed_commands?: string[] } | null
 }
 
