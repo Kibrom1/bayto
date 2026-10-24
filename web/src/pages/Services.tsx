@@ -127,7 +127,7 @@ export function Services() {
       {error && (
         <div className="svc-alert bad" role="alert">
           <strong>The control panel isn't running.</strong>
-          <span>Bayto could not reach the local control script, so there is nothing to show yet. Start it, then try again.</span>
+          <span>Bayto could not reach the local control script, so there is nothing to show yet. Start it with <code>python3 scripts/bayto-control.py</code>, then try again.</span>
           <details className="svc-details"><summary>Technical details</summary><code>{error}</code></details>
           <button type="button" className="btn sm" onClick={() => { void refresh() }}>Retry</button>
         </div>

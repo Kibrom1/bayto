@@ -112,7 +112,7 @@ with sync_playwright() as p:
     try: page.get_by_text("salary-bands.md").first.wait_for(timeout=15000)   # the list loads after the page shell
     except Exception: pass
     body = page.inner_text("body")
-    check("context", "the Context card lists both attachments with their audience", "handbook.md" in body and "salary-bands.md" in body and f"Only {roleB}" in body and "Everyone" in body, body[-600:])
+    check("context", "the Context card lists both attachments with their audience", "handbook.md" in body and "salary-bands.md" in body and f"{roleB} only".lower() in body.lower() and "everyone" in body.lower(), body[-600:])
     page.screenshot(path=str(OUT / "room-context.png"))
     link = page.locator("a.feedback-link")
     check("feedback", "the room header shows the feedback link, opening safely, with only the session id added",
@@ -180,7 +180,7 @@ check("export", "the export names the attachments but holds none of their text",
 check("export", "an unsupported format is refused and an unknown session is 404", raw_get(f"/sessions/{sid}/export?format=pdf")[0] == 422 and raw_get(f"/sessions/{uuid.uuid4()}/export")[0] == 404)
 
 # (b) search over past sessions
-s, r = call("GET", "/search?q=concrete")
+s, r = call("GET", f"/search?q=concrete&task_id={task}&limit=50")
 hits = r.get("results", []) if isinstance(r, dict) else []
 check("search", "a word from a finished session's messages is found, pointing at that session", s == 200 and any(h["session_id"] == sid for h in hits), (s, str(r)[:200]))
 s, r = call("GET", "/search?q=E2E+synthesis")
@@ -192,10 +192,13 @@ with sync_playwright() as p:
     errs = []; page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto(f"{WEB}/room/{sid}"); page.wait_for_selector("h1, h2", timeout=15000)
     btn = page.get_by_role("button", name=re.compile("^Export"))
-    check("export", "the finished room has an Export button", btn.count() >= 1, page.inner_text("body")[:200])
+    check("export", "the finished room has an Export menu button", btn.count() >= 1, page.inner_text("body")[:200])
     if btn.count():
-        with page.expect_download(timeout=15000) as dl: btn.first.click()
-        check("export", "clicking Export downloads a .md file", dl.value.suggested_filename.endswith(".md"), dl.value.suggested_filename)
+        btn.first.click()
+        item = page.get_by_role("menuitem", name=re.compile("^Decision record"))
+        check("export", "the Export menu offers the decision record and the transcript", item.count() == 1 and page.get_by_role("menuitem", name=re.compile("^Full transcript")).count() == 1, page.inner_text("body")[:200])
+        with page.expect_download(timeout=15000) as dl: item.click()
+        check("export", "choosing the decision record downloads a .md file", dl.value.suggested_filename.endswith(".md"), dl.value.suggested_filename)
     page.goto(f"{WEB}/"); page.get_by_label("Search past discussions").wait_for(timeout=15000)
     page.get_by_label("Search past discussions").fill("concrete"); page.get_by_role("button", name="Search", exact=True).click()
     res = page.locator(".deep-results li"); wait(lambda: res.count() > 0 or None, 15)
@@ -283,6 +286,138 @@ with sync_playwright() as p:
     check("provider-failure", "the room shows the reason to the person, without the key", "provider" in body.lower() and "sk-test-e2e" not in body, body[:300])
     br.close()
 MOCK_FAIL.unlink(missing_ok=True)
+
+# ------------------------------------------------------------------ room rail: mute, unmute, add, remove (a live room)
+LIMIT = E2E / "claude_limit"; LIMIT.unlink(missing_ok=True)
+call("PUT", f"/tasks/{task}/local-fallback", {"enabled": False, "model": None})
+sidR = new_session(None); call("POST", f"/sessions/{sidR}/start")
+wait(lambda: status(sidR) == "active", 40)
+nameA, nameB = A["name"], B["name"]
+muted_of = lambda aid: next((tc.get("muted") for tc in call("GET", f"/sessions/{sidR}")[1]["session"]["turn_counts"] if tc["agent_id"] == aid), None)
+with sync_playwright() as p:
+    br = p.chromium.launch(); page = br.new_page(viewport={"width": 1360, "height": 950})
+    errs = []; page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(f"{WEB}/room/{sidR}"); page.get_by_role("button", name=f"More actions for {nameA}").wait_for(timeout=20000)
+    kebab = page.get_by_role("button", name=f"More actions for {nameA}"); kebab.click()
+    check("rail", "a seat's kebab menu offers Mute and Remove", page.get_by_role("menuitem", name="Mute").count() == 1 and page.get_by_role("menuitem", name="Remove").count() == 1)
+    page.get_by_role("menuitem", name="Mute").click()
+    row = page.locator(".roster-item", has_text=nameA)
+    check("rail", "muting shows the Muted chip in the rail", wait(lambda: row.locator(".muted-chip").count() == 1 or None, 10), page.inner_text("body")[:200])
+    check("rail", "the mute reached the server", wait(lambda: muted_of(A["id"]) is True or None, 10), muted_of(A["id"]))
+    page.screenshot(path=str(OUT / "rail-muted.png"))
+    kebab.click(); check("rail", "a muted seat's menu now says Unmute", page.get_by_role("menuitem", name="Unmute").count() == 1)
+    page.get_by_role("menuitem", name="Unmute").click()
+    check("rail", "unmuting clears the chip and the server flag", wait(lambda: row.locator(".muted-chip").count() == 0 and muted_of(A["id"]) is False or None, 10), muted_of(A["id"]))
+    # add a third agent
+    page.get_by_role("button", name="Add agent").click()
+    dlg = page.get_by_role("dialog", name="Add an agent"); dlg.wait_for(timeout=10000)
+    extra = next(t for t in tpl if not t["role"].startswith("build-") and t["role"] not in (roleA, roleB))
+    dlg.get_by_role("button", name=re.compile(re.escape(extra["name"]))).first.wait_for(timeout=10000)   # the list loads after the dialog opens
+    check("rail", "the Add agent dialog lists agents not yet at the table, not the seated ones", dlg.get_by_role("button", name=re.compile(re.escape(extra["name"]))).count() >= 1 and dlg.get_by_role("button", name=re.compile("^" + re.escape(nameA))).count() == 0)
+    dlg.get_by_role("button", name=re.compile(re.escape(extra["name"]))).first.click()
+    check("rail", "the added agent appears in the roster", wait(lambda: page.locator(".roster-item", has_text=extra["name"]).count() == 1 or None, 15), page.inner_text("body")[:200])
+    check("rail", "the server now has three seats", wait(lambda: len(call("GET", f"/sessions/{sidR}")[1]["session"]["turn_counts"]) == 3 or None, 10))
+    # remove it again, behind a confirmation
+    page.get_by_role("button", name=f"More actions for {extra['name']}").click(); page.get_by_role("menuitem", name="Remove").click()
+    conf = page.get_by_role("dialog"); conf.wait_for(timeout=5000)
+    check("rail", "removing asks first and can be cancelled", f"Remove {extra['name']}?" in conf.inner_text()); conf.get_by_role("button", name="Keep").click()
+    check("rail", "keeping leaves the seat in place", page.locator(".roster-item", has_text=extra["name"]).count() == 1)
+    page.get_by_role("button", name=f"More actions for {extra['name']}").click(); page.get_by_role("menuitem", name="Remove").click()
+    page.get_by_role("dialog").get_by_role("button", name="Remove").click()
+    check("rail", "confirming removes the seat from the rail", wait(lambda: page.locator(".roster-item", has_text=extra["name"]).count() == 0 or None, 15), page.inner_text("body")[:200])
+    check("rail", "the server is back to two seats", wait(lambda: len(call("GET", f"/sessions/{sidR}")[1]["session"]["turn_counts"]) == 2 or None, 10))
+    check("ui", "no page errors in the rail checks", not errs, errs[:3])
+    br.close()
+call("POST", f"/sessions/{sidR}/stop", {"synthesize": False}); wait(lambda: status(sidR) == "finished", 60)
+
+# ------------------------------------------------------------------ ended-session bar
+with sync_playwright() as p:
+    br = p.chromium.launch(); page = br.new_page(viewport={"width": 1360, "height": 950})
+    page.goto(f"{WEB}/room/{sidR}"); bar = page.locator(".ended-bar"); bar.wait_for(timeout=20000)
+    new_link = bar.get_by_role("link", name="Start a new session")
+    check("ended", "a finished room replaces the composer with the ended bar", "Session ended." in bar.inner_text() and page.locator("textarea").count() == 0, page.inner_text("body")[-300:])
+    check("ended", "the bar links to a new session setup for the same task", (new_link.get_attribute("href") or "").startswith("/setup/"), new_link.get_attribute("href"))
+    check("ended", "the bar has an Export button that downloads the decision record", bar.get_by_role("button", name="Export decision record").count() == 1)
+    page.screenshot(path=str(OUT / "room-ended.png"))
+    new_link.click(); page.get_by_role("button", name="Start session").wait_for(timeout=15000)
+    check("ended", "Start a new session opens the setup page", "/setup/" in page.url, page.url); br.close()
+
+# ------------------------------------------------------------------ setup: Start stays disabled until two seats
+with sync_playwright() as p:
+    br = p.chromium.launch(); page = br.new_page(viewport={"width": 1360, "height": 950})
+    page.goto(f"{WEB}/setup/{task}"); page.get_by_role("radio", name=re.compile("^Debate")).wait_for(timeout=15000)
+    page.get_by_role("radio", name=re.compile("^Debate")).click()
+    st = page.get_by_role("button", name="Start session"); bottom = page.locator(".setup-bar button.primary")
+    check("setup-seats", "with no agents, Start is disabled and says why", st.is_disabled() and "at least two agents" in page.inner_text("body").lower(), page.inner_text("body")[-300:])
+    page.get_by_role("button", name="Add to roster").first.click()
+    check("setup-seats", "with one agent, Start is still disabled (both the main and the sticky mobile button)", st.is_disabled() and bottom.evaluate("e => e.disabled"))
+    page.get_by_role("button", name="Add to roster").first.click()
+    check("setup-seats", "with two agents, Start is enabled", st.is_enabled() and not bottom.evaluate("e => e.disabled"))
+    page.get_by_role("button", name=re.compile("^Remove$")).first.click()
+    check("setup-seats", "dropping back to one agent disables Start again", st.is_disabled()); br.close()
+
+# ------------------------------------------------------------------ local model fallback (mock Ollama on :9100 + a fake Claude limit)
+s, t = call("POST", "/tasks", {"title": "E2E local fallback", "brief": "Decide whether to adopt weekly releases. FALLBACK-BRIEF-MARKER", "output_type": "decision",
+                               "local_fallback": {"enabled": True, "model": "ollama/llama3"}})
+tfb = t["task"]["id"]
+fb = call("GET", f"/tasks/{tfb}/local-fallback")[1]
+check("fallback", "the task has the local fallback on with a ready Ollama model", fb.get("enabled") and fb.get("ready") and fb.get("effective_model") == "ollama/llama3", fb)
+s, b = call("POST", "/sessions", {"task_id": tfb, "mode_id": debate["id"], "budget": {"dollars": 5, "tokens": 400000},
+                                  "roster": [{"agent_id": A["id"], "seat_order": 0}, {"agent_id": B["id"], "seat_order": 1}]})
+sidF = b["session"]["id"]
+n_before = len(MOCK_LOG.read_text().splitlines()) if MOCK_LOG.exists() else 0
+LIMIT.write_text(f"{roleA} {int(time.time()) + 16}")      # only seat A is out of usage; its limit "resets" 16 seconds from now
+call("POST", f"/sessions/{sidF}/start")
+local_msgs = lambda: sql("select \"from\", body, meta from message where session_id=%s and kind='answer' and meta ? 'local_fallback' order by seq", sidF)
+got = wait(lambda: local_msgs() or None, 60)
+LIMIT.unlink(missing_ok=True)                                # Claude is "back" from now on; the seat must only return after the reset time
+check("fallback", "a Claude limit on seat A makes its turn a local-model turn, marked in the message meta", got and got[0][0] == roleA and got[0][2]["local_fallback"]["model"] == "ollama/llama3", got[:1])
+calls_fb = [json.loads(l) for l in MOCK_LOG.read_text().splitlines()][n_before:]
+local_calls = [c for c in calls_fb if c["model"] == "llama3"]
+check("fallback", "the local model was called on the Ollama endpoint with the task brief in its prompt", local_calls and "FALLBACK-BRIEF-MARKER" in local_calls[0]["prompt"], local_calls[:1])
+check("fallback", "the other seat (no limit) kept answering on Claude, unmarked", wait(lambda: sql("select count(*) from message where session_id=%s and kind='answer' and \"from\"=%s and not (meta ? 'local_fallback')", sidF, roleB)[0][0] >= 1 or None, 40))
+fstate = sql("select fallback_state from session where id=%s", sidF)[0][0]
+check("fallback", "the session records which seat is on the local model, until when", fstate and roleA in fstate and fstate[roleA].get("retry_at"), fstate)
+notes = [x[0] for x in sql("select body from message where session_id=%s and kind='note'", sidF)]
+check("fallback", "the room got one notice that the seat moved to the local model", sum("usage limit was reached" in n and "ollama/llama3" in n for n in notes) == 1, notes[:3])
+with sync_playwright() as p:
+    br = p.chromium.launch(); page = br.new_page(viewport={"width": 1360, "height": 950})
+    page.goto(f"{WEB}/room/{sidF}"); badge = page.locator(".local-model")
+    check("fallback", "the room marks the local turn with a 'Local model' badge", wait(lambda: badge.count() >= 1 or None, 20) and badge.first.inner_text().strip() == "Local model", page.inner_text("body")[:300])
+    page.screenshot(path=str(OUT / "room-local-model.png")); br.close()
+# after the reset time Claude is asked again (limit file is gone), answers, and the seat goes back
+back = wait(lambda: sql("select count(*) from message where session_id=%s and kind='answer' and \"from\"=%s and not (meta ? 'local_fallback') and seq > (select min(seq) from message where session_id=%s and meta ? 'local_fallback')", sidF, roleA, sidF)[0][0] >= 1 or None, 90)
+check("fallback", "after the reset time seat A answers on Claude again (unmarked)", back, status(sidF))
+check("fallback", "the room is told Claude is back and the seat's local state is cleared", wait(lambda: any("is back on Claude" in x[0] for x in sql("select body from message where session_id=%s and kind='note'", sidF)) and not (sql("select fallback_state from session where id=%s", sidF)[0][0] or {}).get(roleA) or None, 20))
+actions = {x[0] for x in sql("select action from audit_event where session_id=%s", sidF)} if sql("select to_regclass('audit_event')")[0][0] else None
+if actions is not None:
+    check("fallback", "the audit trail has the limit, the local turn and the restore", {"turn.claude_limit", "turn.local_fallback", "turn.claude_restored"} <= actions, actions)
+call("POST", f"/sessions/{sidF}/stop", {"synthesize": False}); wait(lambda: status(sidF) == "finished", 60)
+
+# a Build seat never falls back: the limit pauses the session for a person
+import tempfile
+broot = tempfile.mkdtemp(prefix="e2e-build-"); brepo = os.path.join(broot, "r"); os.mkdir(brepo)
+for c in (["git", "init", "-q", "-b", "main"], ["git", "config", "user.email", "t@e.com"], ["git", "config", "user.name", "t"]):
+    subprocess.run(c, cwd=brepo, capture_output=True)
+open(os.path.join(brepo, "a.py"), "w").write("x = 1\n"); subprocess.run(["git", "add", "."], cwd=brepo); subprocess.run(["git", "commit", "-qm", "i"], cwd=brepo, capture_output=True)
+s, t = call("POST", "/tasks", {"title": "E2E build limit", "brief": "Fix a bug", "output_type": "code change", "workspace": {"repo_path": brepo, "base_branch": "main", "test_command": "python3 -m unittest"},
+                               "local_fallback": {"enabled": True, "model": "ollama/llama3"}})
+tb = t["task"]["id"] if s == 201 else None
+check("fallback-build", "a Build task is created even with the fallback switched on", bool(tb), (s, str(t)[:200]))
+if tb:
+    bmode = next(m for m in modes if m["name"] == "build"); byrole = {x["role"]: x for x in tpl}
+    s, b = call("POST", "/sessions", {"task_id": tb, "mode_id": bmode["id"], "budget": {"dollars": 5, "tokens": 400000},
+                                      "roster": [{"agent_id": byrole[r]["id"], "seat_order": i} for i, r in enumerate(["build-architect", "build-developer", "build-tester", "build-reviewer"])]})
+    sidB = b["session"]["id"]; n_before = len(MOCK_LOG.read_text().splitlines()) if MOCK_LOG.exists() else 0
+    LIMIT.write_text(f"* {int(time.time()) + 600}")
+    call("POST", f"/sessions/{sidB}/start")
+    stB = wait(lambda: status(sidB) in ("needs_human", "paused", "failed") and status(sidB), 60); LIMIT.unlink(missing_ok=True)
+    check("fallback-build", "a usage limit on a Build seat pauses the session for a person", stB in ("needs_human", "paused"), stB)
+    bn = " ".join(x[0] for x in sql("select body from message where session_id=%s", sidB))
+    check("fallback-build", "the reason says Build seats never fall back to a local model", "usage limit was reached" in bn and "Build seats need tools" in bn, bn[-400:])
+    check("fallback-build", "no turn was marked local and the local model was not called", not sql("select 1 from message where session_id=%s and meta ? 'local_fallback'", sidB)
+          and not [c for c in [json.loads(l) for l in MOCK_LOG.read_text().splitlines()][n_before:] if c["model"] == "llama3"])
+    call("POST", f"/sessions/{sidB}/stop", {"synthesize": False})
 
 # ------------------------------------------------------------------ setup page: pickers
 with sync_playwright() as p:

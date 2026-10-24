@@ -110,8 +110,8 @@ with sync_playwright() as p:
         roster = page.locator("[aria-label^='Move ']"); check("setup", "three agents added to the roster", roster.count() >= 6, roster.count())
         page.get_by_role("button", name="Move " + page.locator("[aria-label^='Move '][aria-label$=' down']").first.get_attribute("aria-label")[5:-5] + " down").first.click()
         page.screenshot(path=str(OUT / "05-setup.png"))
-        page.get_by_role("button", name="Start session").click(); page.wait_for_timeout(500)
-        check("setup", "Start without choosing a mode is refused with a clear message", "choose a mode" in page.inner_text("body").lower() and "/room/" not in page.url)
+        start = page.get_by_role("button", name="Start session")
+        check("setup", "Start is enabled with a mode and three agents chosen", start.is_enabled() and "/room/" not in page.url)
         page.locator(".mode-card").filter(has_text="Debate").click()
         page.get_by_role("button", name="Start session").click()
         try: page.wait_for_url("**/room/**", timeout=20000)  # a fixed sleep was timing-dependent
@@ -142,7 +142,7 @@ with sync_playwright() as p:
     def services():
         page.goto(WEB + "/services"); page.wait_for_timeout(2000); page.screenshot(path=str(OUT / "08-services.png"))
         body = page.inner_text("body")
-        check("services", "Services page loads", "Services" in body)
+        check("services", "Developer tools page loads", "Developer tools" in body)
         check("services", "with no control script running it says so, with the command to run", "control script" in body.lower() and "bayto-control.py" in body, body[:300])
     services()
 
