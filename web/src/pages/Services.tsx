@@ -1,3 +1,4 @@
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { controlAction, getControlState, getLog, type ControlState } from '../api/control'
@@ -25,6 +26,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 export function Services() {
+  useDocumentTitle('Developer tools')
   const [state, setState] = useState<ControlState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -116,15 +118,18 @@ export function Services() {
       <header className="svc-header">
         <div>
           <p className="svc-kicker">For developers</p>
-          <h1>Services</h1>
+          <h1>Developer tools</h1>
+          <p className="svc-lede">Start, stop and inspect the local pieces Bayto runs on: the orchestrator, the web app and the agent sandboxes. You only need this if you run Bayto yourself.</p>
         </div>
         <Link className="btn" to="/">← Tasks</Link>
       </header>
 
       {error && (
         <div className="svc-alert bad" role="alert">
-          <strong>The control script isn't reachable.</strong>
-          <span>{error}</span>
+          <strong>The control panel isn't running.</strong>
+          <span>Bayto could not reach the local control script, so there is nothing to show yet. Start it, then try again.</span>
+          <details className="svc-details"><summary>Technical details</summary><code>{error}</code></details>
+          <button type="button" className="btn sm" onClick={() => { void refresh() }}>Retry</button>
         </div>
       )}
 

@@ -5,10 +5,11 @@ import { ConfirmDialog } from '../components/Dialog'
 import { createTask, deleteTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
 import { searchTranscripts, snippetParts, type SearchHit } from '../api/search'
 import { NewTaskForm } from './NewTaskForm'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import './TaskBoard.css'
 
 const STATUS_LABEL: Record<string, string> = {
-  created: 'Ready',
+  created: 'Not started',
   starting: 'Starting',
   active: 'In progress',
   needs_human: 'Paused',
@@ -39,21 +40,33 @@ function matches(task: Task, f: Filter): boolean {
   if (f === 'all') return true
   if (f === 'live') return LIVE.includes(task.status ?? '')
   if (f === 'finished') return DONE.includes(task.status ?? '') || task.status === 'orphaned' || !!task.output_artifact_id
-  return !task.status
+  return !task.status || task.status === 'created'
 }
 
+const BRANCH_ICON = (
+  <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+    <circle cx="4" cy="3.5" r="1.6" /><circle cx="4" cy="12.5" r="1.6" /><circle cx="12" cy="6" r="1.6" />
+    <path d="M4 5.1v5.8M12 7.6c0 2.4-3 2.4-7 3.6" />
+  </svg>
+)
+const isChangeReady = (t: Task) => !!t.output_artifact_id && !!t.workspace
+
 function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task, whole: boolean) => void) {
-  const live = ['active', 'needs_human', 'starting', 'stopping'].includes(task.status ?? '')
-  const done = ['finished', 'completed'].includes(task.status ?? '')
+  const status = task.status ?? ''
+  const live = ['active', 'starting', 'stopping'].includes(status)
+  const paused = status === 'needs_human'
+  const done = ['finished', 'completed'].includes(status)
+  const retry = status === 'failed' || status === 'orphaned'
+  const room = task.last_session_id ? `/room/${task.last_session_id}` : null
   return (
     <>
-      {task.last_session_id && (
-        <Link className={`btn ${live || done ? 'primary' : ''}`} to={`/room/${task.last_session_id}`}>
-          {live ? 'Open room' : done ? 'View result' : 'View last session'}
+      {room && (
+        <Link className={`btn ${retry ? 'ghost' : 'primary'}`} to={room}>
+          {paused ? 'Resume' : live ? 'Open room' : done ? 'View result' : retry ? 'View session' : 'Open room'}
         </Link>
       )}
-      <Link className={`btn ${task.last_session_id ? 'ghost' : 'primary'}`} to={`/setup/${task.id}`}>
-        {task.last_session_id ? 'New session' : 'Start session'}
+      <Link className={`btn ${!room || retry ? 'primary' : 'ghost'}`} to={`/setup/${task.id}`}>
+        {!room ? 'Start session' : retry ? 'Retry' : 'New session'}
       </Link>
       {!['active', 'starting', 'stopping'].includes(task.status ?? '') && (
         <details
@@ -68,7 +81,9 @@ function actionsFor(task: Task, onArchive: (t: Task) => void, onDelete: (t: Task
           }}
           onToggle={(e) => { if (e.currentTarget.open) e.currentTarget.querySelector<HTMLButtonElement>('.row-menu-list button')?.focus() }}
         >
-          <summary className="btn ghost sm" aria-label={`More actions for ${task.title}`}>More</summary>
+          <summary className="btn ghost sm kebab" aria-label={`More actions for ${task.title.trim() || 'untitled task'}`}>
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="8" cy="3" r="1.5" /><circle cx="8" cy="8" r="1.5" /><circle cx="8" cy="13" r="1.5" /></svg>
+          </summary>
           <div className="row-menu-list" role="group" aria-label="Task actions">
             {task.last_session_id && <button type="button" onClick={() => onArchive(task)}>Archive</button>}
             {task.last_session_id && <button type="button" className="danger" onClick={() => onDelete(task, false)}>Delete session</button>}
@@ -87,6 +102,7 @@ const SAMPLE_TASK: TaskCreateRequest = {
 }
 
 export function TaskBoard() {
+  useDocumentTitle('Tasks')
   const navigate = useNavigate()
   const [tasks, setTasks] = useState<Task[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -167,7 +183,13 @@ export function TaskBoard() {
   }
 
   const q = query.trim().toLowerCase()
-  const visible = (tasks ?? []).filter((t) => matches(t, filter) && (!q || `${t.title} ${t.brief ?? ''}`.toLowerCase().includes(q)))
+  // Tasks with a change waiting for review come first; otherwise the server's order is kept.
+  const visible = (tasks ?? [])
+    .filter((t) => matches(t, filter) && (!q || `${t.title} ${t.brief ?? ''}`.toLowerCase().includes(q)))
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => Number(isChangeReady(b.t)) - Number(isChangeReady(a.t)) || a.i - b.i)
+    .map(({ t }) => t)
+  const filterLabel = FILTERS.find((f) => f.id === filter)?.label ?? ''
 
   return (
     <section className="page">
@@ -214,7 +236,7 @@ export function TaskBoard() {
                 <button key={f.id} type="button" className="filter-pill" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>
               ))}
             </div>
-            <input type="search" className="input task-search" aria-label="Search tasks" placeholder="Search tasks" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <input type="search" className="input task-search" aria-label="Filter by title" placeholder="Filter by title" value={query} onChange={(e) => setQuery(e.target.value)} />
           </div>
           <form className="deep-search" role="search" onSubmit={runDeepSearch}>
             <input type="search" className="input" aria-label="Search past discussions" placeholder="Search what was said in past discussions"
@@ -247,14 +269,25 @@ export function TaskBoard() {
                 </div>
                 <div className="task-meta">
                   <span className="task-output">{task.output_type}</span>
-                  {task.output_artifact_id && <span className="chip accent">{task.workspace ? 'Change ready' : 'Synthesis ready'}</span>}
+                  {task.output_artifact_id && (isChangeReady(task)
+                    ? <span className="chip change">{BRANCH_ICON}Change ready</span>
+                    : <span className="chip accent">Synthesis ready</span>)}
                 </div>
                 <div className="task-actions">{actionsFor(task, archive, (t, whole) => setToDelete({ task: t, whole }))}</div>
               </li>
             ))}
           </ul>
           {visible.length === 0 && (
-            <p className="empty-note">Nothing matches. Try another filter or search.</p>
+            <div className="empty-note" role="status">
+              <p>
+                {q ? <>No tasks match “{query.trim()}”{filter !== 'all' ? <> under {filterLabel}</> : null}.</> : <>No tasks are {filterLabel.toLowerCase()}.</>}
+                {q && ' This box only filters task titles; to search what was said, use the box below.'}
+              </p>
+              <div className="empty-actions">
+                {q && <button type="button" className="btn" onClick={() => setQuery('')}>Clear search</button>}
+                {filter !== 'all' && <button type="button" className="btn" onClick={() => setFilter('all')}>Show all tasks</button>}
+              </div>
+            </div>
           )}
         </>
       )}

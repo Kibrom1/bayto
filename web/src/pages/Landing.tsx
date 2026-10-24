@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { BrandMark } from '../components/AppShell'
 import { TableRing } from '../components/TableRing'
+import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import './Landing.css'
 
 // The public landing page is a static site (see web/landing). The app only runs on the person's own
@@ -110,6 +111,7 @@ const DEMO_SEATS = [
 ]
 
 export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
+  useDocumentTitle(staticSite ? undefined : 'Welcome')
   return (
     <div className="landing" id="top">
       <header className="ld-header">
@@ -261,7 +263,8 @@ export function Landing({ staticSite = false }: { staticSite?: boolean } = {}) {
           <div className="ld-shots">
             {SHOTS.map((s) => (
               <figure key={s.file}>
-                <img src={asset(s.file)} alt={s.alt} loading="lazy" width="1280" height="800" />
+                <img src={asset(s.file)} alt={s.alt} loading="lazy" width="1280" height="800"
+                  onLoad={(e) => { e.currentTarget.dataset.loaded = '1' }} onError={(e) => { e.currentTarget.dataset.loaded = '1' }} />
                 <figcaption>{s.title}</figcaption>
               </figure>
             ))}

@@ -51,12 +51,33 @@ describe('sign-in gate', () => {
     expect(calls).toContain('POST /auth/login')
   })
 
-  it('shows the server message on a wrong token and stays on the page', async () => {
+  it('has a heading, helper text, and a reveal toggle', async () => {
+    stub({ feedback_url: null, auth_required: true, authenticated: false })
+    renderApp()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.getByText(/asks for an access token/)).toBeInTheDocument()
+    const field = screen.getByLabelText('Access token')
+    expect(field).toHaveAttribute('type', 'password')
+    await userEvent.click(screen.getByRole('button', { name: 'Show token' }))
+    expect(field).toHaveAttribute('type', 'text')
+    expect(document.title).toBe('Sign in · Bayto')
+  })
+
+  it('asks for a token instead of disabling the button', async () => {
+    stub({ feedback_url: null, auth_required: true, authenticated: false })
+    renderApp()
+    const btn = await screen.findByRole('button', { name: 'Sign in' })
+    expect(btn).toBeEnabled()
+    await userEvent.click(btn)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter your access token')
+  })
+
+  it('says the token was not accepted on a wrong token and stays on the page', async () => {
     stub({ feedback_url: null, auth_required: true, authenticated: false }, 401)
     renderApp()
     await userEvent.type(await screen.findByLabelText('Access token'), 'bad')
     await userEvent.click(screen.getByRole('button', { name: 'Sign in' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('that token is not right')
+    expect(await screen.findByRole('alert')).toHaveTextContent('That token was not accepted')
     expect(screen.queryByText('home')).toBeNull()
   })
 

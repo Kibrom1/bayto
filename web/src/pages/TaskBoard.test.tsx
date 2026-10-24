@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -65,13 +65,13 @@ describe('TaskBoard', () => {
     })
     render(<MemoryRouter><TaskBoard /></MemoryRouter>)
     await screen.findByText('Write a launch memo')
-    expect(screen.getAllByText('More')).toHaveLength(2)  // every task that is not running
+    expect(screen.getAllByLabelText(/More actions for/)).toHaveLength(2)  // every task that is not running
 
-    await userEvent.click(screen.getAllByText('More')[0])
+    await userEvent.click(screen.getAllByLabelText(/More actions for/)[0])
     await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/sessions/s1/archive', { method: 'POST' }))
 
-    await userEvent.click(screen.getAllByText('More')[0])
+    await userEvent.click(screen.getAllByLabelText(/More actions for/)[0])
     await userEvent.click(screen.getByRole('button', { name: 'Delete session' }))
     expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'DELETE')).toBe(false)
     const confirmBtns = await screen.findAllByRole('button', { name: 'Delete session' })
@@ -87,7 +87,7 @@ describe('TaskBoard', () => {
     })
     render(<MemoryRouter><TaskBoard /></MemoryRouter>)
     await screen.findByText('Write a launch memo')
-    const more = screen.getAllByText('More')
+    const more = screen.getAllByLabelText(/More actions for/)
     await userEvent.click(more[more.length - 1])
     expect(screen.getAllByRole('button', { name: 'Archive' })).toHaveLength(1) // only the task with a session
     const menuItems = screen.getAllByRole('button', { name: 'Delete task' })
@@ -174,7 +174,7 @@ describe('TaskBoard', () => {
   it('moves through the row menu with the arrow keys and closes it with Escape', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(TASKS))
     render(<MemoryRouter><TaskBoard /></MemoryRouter>)
-    const more = (await screen.findAllByText('More'))[0]
+    const more = (await screen.findAllByLabelText(/More actions for/))[0]
     await userEvent.click(more)
     const archive = screen.getByRole('button', { name: 'Archive' })
     const del = screen.getByRole('button', { name: 'Delete session' })
@@ -243,5 +243,74 @@ describe('TaskBoard transcript search', () => {
     await userEvent.type(screen.getByRole('searchbox', { name: /search past discussions/i }), 'zzz')
     await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
     expect(await screen.findByText(/no past discussion matches/i)).toBeInTheDocument()
+  })
+})
+
+describe('TaskBoard wording and row actions', () => {
+  const T = (over: object) => ({ id: 'x', title: 'X', brief: 'b', output_type: 'memo', status: null, last_session_id: null, output_artifact_id: null, ...over })
+  async function board(tasks: object[]) {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(tasks))
+    render(<MemoryRouter><TaskBoard /></MemoryRouter>)
+    await screen.findByRole('list')
+  }
+
+  it('sets the tab title', async () => {
+    await board([T({})])
+    expect(document.title).toBe('Tasks · Bayto')
+  })
+
+  it('labels a created-but-unstarted task like its filter, and the filter finds it', async () => {
+    await board([T({ id: 'a', title: 'Alpha', status: 'created', last_session_id: 's1' }), T({ id: 'b', title: 'Beta', status: 'finished', last_session_id: 's2' })])
+    const row = screen.getByText('Alpha').closest('li')!
+    expect(row).toHaveTextContent('Not started')
+    await userEvent.click(screen.getByRole('button', { name: 'Not started' }))
+    expect(screen.getByText('Alpha')).toBeInTheDocument()
+    expect(screen.queryByText('Beta')).toBeNull()
+  })
+
+  it('gives each state the action that fits it', async () => {
+    await board([
+      T({ id: '1', title: 'Paused one', status: 'needs_human', last_session_id: 's1' }),
+      T({ id: '2', title: 'Failed one', status: 'failed', last_session_id: 's2' }),
+      T({ id: '3', title: 'Ready one', status: 'created', last_session_id: 's3' }),
+    ])
+    const links = (title: string) => within(screen.getByText(title).closest('li')!).getAllByRole('link').map((l) => l.textContent)
+    expect(links('Paused one')).toContain('Resume')
+    expect(links('Failed one')).toEqual(['View session', 'Retry'])
+    expect(links('Ready one')).toContain('Open room')
+    expect(within(screen.getByText('Failed one').closest('li')!).getByRole('link', { name: 'Retry' })).toHaveAttribute('href', '/setup/2')
+  })
+
+  it('renders More as a kebab with a per-row accessible name', async () => {
+    await board([T({ id: '1', title: 'Alpha', status: 'finished', last_session_id: 's1' })])
+    const kebab = screen.getByRole('group', { hidden: true, name: 'Task actions' }).closest('details')!.querySelector('summary')!
+    expect(kebab).toHaveAttribute('aria-label', 'More actions for Alpha')
+    expect(kebab.textContent).toBe('')
+  })
+
+  it('relabels the first search as a title filter', async () => {
+    await board([T({})])
+    expect(screen.getByLabelText('Filter by title')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Search tasks')).toBeNull()
+  })
+
+  it('names the query in the empty state and clears it', async () => {
+    await board([T({ title: 'Alpha' })])
+    await userEvent.type(screen.getByLabelText('Filter by title'), 'zzz')
+    expect(screen.getByRole('status')).toHaveTextContent('No tasks match “zzz”')
+    await userEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+    expect(screen.getByText('Alpha')).toBeInTheDocument()
+  })
+
+  it('shows a distinct "Change ready" chip and sorts it above plain results', async () => {
+    await board([
+      T({ id: '1', title: 'Plain result', status: 'finished', last_session_id: 's1', output_artifact_id: 'a1' }),
+      T({ id: '2', title: 'Code task', status: 'finished', last_session_id: 's2', output_artifact_id: 'a2', workspace: { repo_path: '/r', base_branch: 'main' } }),
+    ])
+    const titles = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(titles).toEqual(['Code task', 'Plain result'])
+    const change = screen.getByText('Change ready')
+    expect(change).toHaveClass('change')
+    expect(screen.getByText('Synthesis ready')).not.toHaveClass('change')
   })
 })

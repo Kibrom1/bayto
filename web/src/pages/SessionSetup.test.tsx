@@ -173,7 +173,7 @@ describe('SessionSetup with an unknown task', () => {
       return json({ detail: 'nope' }, 404)
     })
     renderSetup()
-    expect(await screen.findByText(/that task doesn't exist/i)).toBeInTheDocument()
+    expect(await screen.findByText(/this task doesn't exist/i)).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /session setup/i })).not.toBeInTheDocument()
   })
 })

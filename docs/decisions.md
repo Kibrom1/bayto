@@ -171,3 +171,9 @@ Debate is preselected and Open Chat is described as "Agents speak when they have
 
 ## 2026-10-23 UX W1: room shell and ended states
 Ended rooms open at the synthesis or change set and swap the composer for a one-line "Session ended" bar. One Export menu (decision record, transcript, copy Markdown) replaces four buttons, and feedback is a toast. Banners are neutral by default, green for a finished Build, amber only for pause, interruption, budget stop and failure. The failure banner names the cause and offers "Retry with same team". The Jump pill sits at the composer edge, counts new turns and is announced politely. Header gets a "Team & context" button (`railOpen` state, `data-rail-open` on `.room-body`) for the rail to consume.
+
+## 2026-10-23 UX W4: shell, board, new task, peripherals
+- Tab titles are "<page> · Bayto" through `useDocumentTitle`; the shell only sets a fallback (Room, Set up session) that a page naming itself overrides. The room should call `useDocumentTitle(task title)`.
+- Board: one status vocabulary ("Not started" matches its filter), row primary action follows state (Resume, Open room, View result, Retry), More is a kebab with a per-row name, and "Change ready" is a green branch chip sorted first. The title box is "Filter by title"; the empty state names the query with "Clear search".
+- Dark mode primary is a light neutral (`--accent: #f1f2f8`) so amber stays for warnings.
+- Missing room or task reuses `NotFound` (one h1, same layout as the 404). Services is "Developer tools" with a one-line purpose and Retry.
