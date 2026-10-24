@@ -112,7 +112,7 @@ s, b, _ = call("POST", f"/sessions/{s1}/resume"); check("lifecycle", "resume a n
 s, b, _ = call("POST", f"/sessions/{uuid.uuid4()}/start"); check("lifecycle", "start an unknown session -> 404", s == 404, s)
 s, b, _ = call("POST", f"/sessions/{s1}/interject", {"body": ""}); check("lifecycle", "empty interject body -> 4xx", 400 <= s < 500, s)
 s, b, _ = call("POST", f"/sessions/{s1}/participants/{agent['pm']['id']}/mute"); check("lifecycle", "mute a seat before the session starts (accepted or 409, never 500)", s < 500, (s, str(b)[:120]))
-s, b, _ = call("POST", f"/sessions/{s1}/participants/{uuid.uuid4()}/mute"); check("lifecycle", "mute an agent not in the session -> 404", s == 404, (s, str(b)[:120]))
+s, b, _ = call("POST", f"/sessions/{s1}/participants/{uuid.uuid4()}/mute"); check("lifecycle", "mute an agent not in a (never-started) session -> 404, or 409 as the session is not live", s in (404, 409), (s, str(b)[:120]))
 
 # ---------- start without the sandbox tooling (this host has no sbx / claude login)
 s, b, _ = call("POST", f"/sessions/{s1}/start")

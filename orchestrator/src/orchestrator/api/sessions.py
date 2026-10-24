@@ -819,6 +819,9 @@ async def session_events(
     last_id = _last_event_id(request)
     if last_id is not None:
         since_seq = last_id
+    async with sessionmaker() as db:
+        if await db.get(Session, session_id) is None:   # an unknown id is a 404, not an empty stream that says "end"
+            raise HTTPException(404, detail=_error("not_found", f"session {session_id} not found", "id"))
 
     async def event_stream():
         runtime = await _wait_for_runtime(request, sessionmaker, session_id)
