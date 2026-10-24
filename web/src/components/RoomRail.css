@@ -1,0 +1,47 @@
+/* Room rail: roster, context and usage. Desktop shows all blocks; under 640px it is a bottom sheet with tabs. */
+.room-rail .rail-sheet-head { display: none; }
+.roster-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-3); }
+.roster-head h2 { margin: 0; }
+.roster-item { position: relative; }
+.roster-text { min-width: 0; flex: 1; }
+.roster-name { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.roster-item.is-muted .roster-name, .roster-item.is-muted .roster-sub { opacity: 0.7; }
+.muted-chip { font-size: 0.7rem; padding: 0 0.4rem; }
+.roster-menu { position: relative; margin-left: auto; }
+.speaking + .roster-menu { margin-left: 0; }
+.kebab { min-width: 1.75rem; min-height: 1.75rem; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--ink-2); font-size: 1.1rem; line-height: 1; cursor: pointer; }
+.kebab:hover, .kebab[aria-expanded='true'] { background: var(--surface-2); }
+.roster-menu-list { position: absolute; right: 0; top: 100%; z-index: 5; min-width: 9rem; display: grid; padding: var(--space-1); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); box-shadow: 0 6px 20px color-mix(in srgb, var(--ink) 16%, transparent); }
+.roster-menu-list button { text-align: left; min-height: 1.75rem; padding: 0.35rem 0.6rem; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.roster-menu-list button:hover, .roster-menu-list button:focus-visible { background: var(--surface-2); }
+.roster-menu-list button.danger { color: var(--danger); }
+.add-agent-list { list-style: none; margin: var(--space-3) 0 0; padding: 0; display: grid; gap: var(--space-2); max-height: 50svh; overflow-y: auto; }
+.add-agent-list .btn { width: 100%; justify-content: flex-start; gap: var(--space-2); }
+
+/* Context: the list grows with its content (the rail itself scrolls) */
+.room-rail .context-list { max-height: none; overflow: visible; }
+.room-rail .context-list li { gap: 0.4rem 0.6rem; }
+.room-rail .context-name { flex: 1 1 8rem; }
+.context-dup { flex: 1 0 100%; font-size: 0.78rem; color: var(--warn); }
+.audience-chip { display: inline-flex; align-items: center; gap: 0.3rem; min-height: 1.5rem; padding: 0.1rem 0.55rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); color: var(--ink-2); font: inherit; font-size: 0.78rem; font-weight: 600; cursor: pointer; text-decoration: none; }
+.audience-chip.restricted { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
+.audience-chip:hover { filter: brightness(0.97); }
+.retrieval-label { font-weight: 400; font-size: 0.9rem; display: flex; gap: var(--space-2); align-items: flex-start; }
+
+.rail-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 1.15rem; height: 1.15rem; margin-left: 0.35rem; padding: 0 0.3rem; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 0.7rem; font-weight: 700; }
+
+@media (max-width: 640px) {
+  .room-rail { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; max-height: 78svh; padding: 0 var(--space-4) var(--space-5); border: 1px solid var(--line); border-radius: 16px 16px 0 0; box-shadow: 0 -8px 30px color-mix(in srgb, var(--ink) 22%, transparent); overflow-y: auto; }
+  .room-rail.open { display: block; }
+  .room-rail .rail-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); position: sticky; top: 0; z-index: 1; padding: var(--space-3) 0; margin-bottom: var(--space-3); background: var(--surface); border-bottom: 1px solid var(--line); }
+  .rail-tabs { display: flex; gap: var(--space-1); }
+  .rail-tab { min-height: 44px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; }
+  .rail-tab[aria-selected='true'] { background: var(--surface-2); color: var(--ink); }
+  .rail-close { min-height: 44px; }
+  .room-rail .rail-panel { display: none; border-bottom: 0; }
+  .room-rail[data-tab='team'] [data-panel='team'], .room-rail[data-tab='context'] [data-panel='context'], .room-rail[data-tab='usage'] [data-panel='usage'] { display: block; }
+  .room-rail .btn.sm, .room-rail .link-btn, .audience-chip, .kebab, .roster-menu-list button { min-height: 44px; }
+  .kebab { min-width: 44px; }
+  .audience-chip { padding: 0 0.8rem; }
+  .room-rail input[type='checkbox'], .room-rail input[type='radio'] { width: 1.25rem; height: 1.25rem; }
+}
