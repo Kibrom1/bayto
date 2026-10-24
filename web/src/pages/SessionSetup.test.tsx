@@ -73,7 +73,7 @@ describe('SessionSetup', () => {
     expect(screen.getByRole('button', { name: /start session/i })).toBeEnabled()
   })
 
-    const user = userEvent.setup()
+  it('explains what is missing instead of submitting an incomplete setup', async () => {
     mockApi()
     renderSetup()
     await screen.findByRole('heading', { name: /session setup/i })
