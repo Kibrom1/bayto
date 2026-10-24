@@ -136,17 +136,17 @@ describe('ContextCard visibility', () => {
     const user = userEvent.setup()
     await withFile(user)
     const toggle = screen.getByRole('button', { name: /who can read notes\.md/i })
-    expect(toggle).toHaveTextContent('Everyone')
+    expect(toggle).toHaveTextContent('Visible to: everyone')
     await user.click(toggle)
     await user.click(screen.getByRole('radio', { name: /only chosen roles/i }))
     expect(calls.some((c) => c.method === 'PATCH')).toBe(false) // nothing is saved until a role is ticked
     await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Only lawyer'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Visible to: lawyer only'))
     const patch = calls.find((c) => c.method === 'PATCH')!
     expect(patch.url).toBe('/tasks/t1/attachments/f0?session_id=s1')
     expect(patch.body).toEqual({ roles: ['lawyer'] })
     await user.click(screen.getByRole('checkbox', { name: 'developer' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Only lawyer, developer'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Visible to: lawyer, developer only'))
   })
 
   it('goes back to Everyone, and will not save an empty choice', async () => {
@@ -155,12 +155,12 @@ describe('ContextCard visibility', () => {
     await user.click(screen.getByRole('button', { name: /who can read notes\.md/i }))
     await user.click(screen.getByRole('radio', { name: /only chosen roles/i }))
     await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
-    await screen.findByText('Only lawyer')
+    await screen.findByText('Visible to: lawyer only', { exact: false })
     await user.click(screen.getByRole('checkbox', { name: 'lawyer' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/at least one role/i)
     expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1)
     await user.click(screen.getByRole('radio', { name: 'Everyone' }))
-    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Everyone'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /who can read notes\.md/i })).toHaveTextContent('Visible to: everyone'))
     expect(calls.filter((c) => c.method === 'PATCH').pop()!.body).toEqual({ roles: null })
   })
 
@@ -168,7 +168,7 @@ describe('ContextCard visibility', () => {
     mockApi()
     items = [{ ...NOTES, id: 'c1', name: 'contract.md', roles: ['lawyer'] }]
     render(<ContextCard taskId="t1" sessionId="s1" roles={['lawyer', 'developer']} />)
-    expect(await screen.findByRole('button', { name: /who can read contract\.md/i })).toHaveTextContent('Only lawyer')
+    expect(await screen.findByRole('button', { name: /who can read contract\.md/i })).toHaveTextContent('Visible to: lawyer only')
   })
 })
 
@@ -248,18 +248,54 @@ describe('ContextCard semantic search switch', () => {
     const user = userEvent.setup()
     mockApi()
     render(<ContextCard taskId="t1" sessionId="s1" />)
-    const box = await screen.findByLabelText(/find passages by meaning \(sends your documents' text to an embedding provider\)/i)
+    const box = await screen.findByLabelText('Search long documents by meaning')
     expect(box).not.toBeChecked()
     await user.click(box)
     await waitFor(() => expect(box).toBeChecked())
     expect(calls.find((c) => c.method === 'PUT' && c.url.endsWith('/retrieval'))?.body).toEqual({ semantic_retrieval: true })
   })
 
-  it('tells you what to set when no embedding provider is configured', async () => {
+  it('disables the switch with a plain reason, and never names env vars, when no provider is configured', async () => {
     mockApi()
     retrieval = { semantic_retrieval: false, ready: false, provider: null, model: null, needs: 'OPENAI_API_KEY or OLLAMA_HOST' }
     render(<ContextCard taskId="t1" sessionId="s1" />)
-    expect(await screen.findByText(/set OPENAI_API_KEY or OLLAMA_HOST on the orchestrator/)).toBeInTheDocument()
+    expect(await screen.findByText(/Not set up on this server/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Search long documents by meaning')).toBeDisabled()
+    expect(document.body.textContent).not.toMatch(/OPENAI_API_KEY|OLLAMA_HOST/)
     retrieval = { semantic_retrieval: false, ready: true, provider: 'openai', model: 'text-embedding-3-small', needs: null }
+  })
+})
+
+describe('ContextCard attachment list (UX-10, UX-23)', () => {
+  const lockedFile = { ...NOTES, id: 'a2', name: 'contract.md', roles: ['lawyer'] }
+
+  it('lists every attachment without a clipped height and names the audience in a chip that starts with its visible text', async () => {
+    mockApi()
+    const dup = { ...NOTES, id: 'a3' }
+    items = [NOTES, dup, lockedFile]
+    render(<ContextCard taskId="t1" sessionId="s1" roles={['lawyer']} />)
+    const open = await screen.findByRole('button', { name: /^Visible to: lawyer only\. Change who can read contract\.md/ })
+    expect(open).toHaveTextContent('Visible to: lawyer only')
+    expect(open.querySelector('svg.lock')).not.toBeNull()
+    expect(screen.getAllByRole('button', { name: /^Visible to: everyone/ })).toHaveLength(2)
+    // The accessible name starts with the text people see (voice control).
+    for (const b of screen.getAllByRole('button', { name: /^Visible to:/ })) {
+      expect(b.getAttribute('aria-label')!.startsWith(b.textContent!.trim())).toBe(true)
+    }
+  })
+
+  it('warns when two attachments share a name', async () => {
+    mockApi()
+    items = [NOTES, { ...NOTES, id: 'a3' }, lockedFile]
+    render(<ContextCard taskId="t1" sessionId="s1" />)
+    expect(await screen.findAllByText(/Another attachment has this name/)).toHaveLength(2)
+  })
+
+  it('reports how many attachments there are, for the Context tab badge', async () => {
+    mockApi()
+    items = [NOTES, lockedFile]
+    const onCount = vi.fn()
+    render(<ContextCard taskId="t1" sessionId="s1" onCount={onCount} />)
+    await waitFor(() => expect(onCount).toHaveBeenLastCalledWith(2))
   })
 })

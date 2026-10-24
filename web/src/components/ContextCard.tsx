@@ -2,9 +2,10 @@ import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
   attachFile, attachFolder, attachUrl, listAttachments, removeAttachment, setAttachmentRoles, type Attachment,
 } from '../api/attachments'
-import { SEMANTIC_LABEL, getRetrieval, setRetrieval, type RetrievalSetting } from '../api/tasks'
+import { getRetrieval, setRetrieval, type RetrievalSetting } from '../api/tasks'
 import { RolePicker } from './RolePicker'
 
+export const RETRIEVAL_LABEL = 'Search long documents by meaning'
 const KIND_LABEL = { file: 'File', folder: 'Folder', url: 'Link' } as const
 // What one turn can carry for all attachments together; mirrors the orchestrator's cap.
 const PROMPT_BUDGET_CHARS = 40_000
@@ -20,7 +21,7 @@ function size(chars: number) {
 // Reference material for a task. Agents read a text snapshot taken when it is attached; they never get the
 // folder, the file or the network.
 // `roles` are the seats in this session; an attachment can be limited to some of them ("the contract is for the lawyer only").
-export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string; sessionId: string; roles?: string[] }) {
+export function ContextCard({ taskId, sessionId, roles = [], onCount }: { taskId: string; sessionId: string; roles?: string[]; onCount?: (n: number) => void }) {
   const [items, setItems] = useState<Attachment[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -38,6 +39,8 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
   useEffect(() => {
     listAttachments(taskId).then((list) => setItems(Array.isArray(list) ? list : [])).catch((e) => { setItems([]); setError(e instanceof Error ? e.message : String(e)) })
   }, [taskId])
+
+  useEffect(() => { if (items) onCount?.(items.length) }, [items]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let live = true
@@ -130,33 +133,41 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
     setRoles(a, next)
   }
 
+  const nameCount = new Map<string, number>()
+  for (const a of items ?? []) nameCount.set(a.name, (nameCount.get(a.name) ?? 0) + 1)
   const total = (items ?? []).reduce((n, a) => n + a.chars, 0)
   const perTurn = Math.min(total, PROMPT_BUDGET_CHARS)
 
   return (
-    <section className="rail-block" aria-labelledby="context-h">
+    <section className="rail-block context-card" aria-labelledby="context-h">
       <h2 id="context-h">Context</h2>
       <p className="hint">Add a document, folder or web page while the team talks. The team is told, and every agent reads it
         from its next turn. They read a text copy taken now, and can't reach the folder or the web themselves.</p>
 
       {items && items.length > 0 && (
         <ul className="context-list">
-          {items.map((a) => (
-            <li key={a.id}>
-              <span className="chip">{KIND_LABEL[a.kind]}</span>
-              <span className="context-name" title={a.source ?? a.name}>{a.name}</span>
-              <span className="muted">{size(a.chars)}{a.passages && a.chars > WHOLE_BELOW_CHARS ? ` · ${a.passages} passages` : ''}{a.truncated ? ' · shortened' : ''}</span>
-              <button type="button" className="link-btn" aria-label={`Who can read ${a.name}`} aria-expanded={picking === a.id}
-                onClick={() => setPicking(picking === a.id ? null : a.id)}>
-                {a.roles ? `Only ${a.roles.join(', ')}` : 'Everyone'}
-              </button>
-              <button type="button" className="link-btn" aria-label={`Remove ${a.name}`} onClick={() => remove(a)}>Remove</button>
-              {picking === a.id && (
-                <RolePicker name={`who-${a.id}`} legend={`Who can read ${a.name}`} roles={roles} value={a.roles ?? null} chosen={chosen.has(a.id)}
-                  onEveryone={() => setRoles(a, null)} onChoose={() => setChosen((cur) => new Set(cur).add(a.id))} onToggle={(r) => toggleRole(a, r)} />
-              )}
-            </li>
-          ))}
+          {items.map((a) => {
+            const audience = a.roles?.length ? `${a.roles.join(', ')} only` : 'everyone'
+            return (
+              <li key={a.id}>
+                <span className="chip">{KIND_LABEL[a.kind]}</span>
+                <span className="context-name" title={a.source ?? a.name}>{a.name}</span>
+                <span className="muted">{size(a.chars)}{a.passages && a.chars > WHOLE_BELOW_CHARS ? ` · ${a.passages} passages` : ''}{a.truncated ? ' · shortened' : ''}</span>
+                {(nameCount.get(a.name) ?? 0) > 1 && <span className="context-dup" role="note">Another attachment has this name. Agents may mix them up.</span>}
+                <button type="button" className={`audience-chip${a.roles?.length ? ' restricted' : ''}`}
+                  aria-label={`Visible to: ${audience}. Change who can read ${a.name}`} aria-expanded={picking === a.id}
+                  onClick={() => setPicking(picking === a.id ? null : a.id)}>
+                  {a.roles?.length ? <svg className="lock" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path d="M4 7V5a4 4 0 118 0v2h1v7H3V7h1zm2 0h4V5a2 2 0 10-4 0v2z" fill="currentColor" /></svg> : null}
+                  Visible to: {audience}
+                </button>
+                <button type="button" className="link-btn" aria-label={`Remove ${a.name}`} onClick={() => remove(a)}>Remove</button>
+                {picking === a.id && (
+                  <RolePicker name={`who-${a.id}`} legend={`Who can read ${a.name}`} roles={roles} value={a.roles ?? null} chosen={chosen.has(a.id)}
+                    onEveryone={() => setRoles(a, null)} onChoose={() => setChosen((cur) => new Set(cur).add(a.id))} onToggle={(r) => toggleRole(a, r)} />
+                )}
+              </li>
+            )
+          })}
         </ul>
       )}
 
@@ -191,14 +202,15 @@ export function ContextCard({ taskId, sessionId, roles = [] }: { taskId: string;
       )}
 
       {retrieval && (
-        <div className="field">
-          <label>
-            <input type="checkbox" checked={retrieval.semantic_retrieval} onChange={(e) => toggleSemantic(e.target.checked)} />{' '}
-            {SEMANTIC_LABEL}
+        <div className="field retrieval-field">
+          <label className="retrieval-label">
+            <input type="checkbox" checked={retrieval.semantic_retrieval && retrieval.ready} disabled={!retrieval.ready}
+              aria-describedby={`${inputId}-ret`} onChange={(e) => toggleSemantic(e.target.checked)} />{' '}
+            {RETRIEVAL_LABEL}
           </label>
-          <span className="hint">{retrieval.ready
+          <span className="hint" id={`${inputId}-ret`}>{retrieval.ready
             ? `Used only when the attachments are too long to send whole. ${retrieval.provider === 'ollama' ? 'Their text is sent to your Ollama host.' : 'Their text is sent to the OpenAI embeddings endpoint.'} Any failure falls back to keyword search.`
-            : `Not set up: set ${retrieval.needs} on the orchestrator and restart. Until then keyword search is used.`}</span>
+            : 'Not set up on this server. Keyword search is used instead.'}</span>
         </div>
       )}
 

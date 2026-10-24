@@ -70,6 +70,7 @@ export interface TurnCountOut {
   agent_id: string
   turns: number
   model?: string | null
+  muted?: boolean
 }
 
 export interface SessionDetailOut {
@@ -252,3 +253,19 @@ export async function exportSession(sessionId: string): Promise<void> {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+async function participantCall(sessionId: string, path: string, body?: unknown): Promise<SessionAgentOut> {
+  const res = await fetch(`/sessions/${sessionId}/participants${path}`, {
+    method: 'POST',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) throw new ApiError(res.status, await parseError(res))
+  return (await res.json()).session_agent
+}
+
+export const muteParticipant = (sessionId: string, agentId: string) => participantCall(sessionId, `/${agentId}/mute`)
+export const unmuteParticipant = (sessionId: string, agentId: string) => participantCall(sessionId, `/${agentId}/unmute`)
+/** Permanent for this session: there is no un-remove. */
+export const removeParticipant = (sessionId: string, agentId: string) => participantCall(sessionId, `/${agentId}/remove`)
+export const addParticipant = (sessionId: string, agentId: string) => participantCall(sessionId, '', { agent_id: agentId })

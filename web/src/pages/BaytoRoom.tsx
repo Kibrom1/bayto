@@ -23,12 +23,11 @@ import { ApiError, isNotFound } from '../api/errors'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
-import { ContextCard } from '../components/ContextCard'
+import { RoomRail } from '../components/RoomRail'
 import { ReadNote } from '../components/ReadNote'
 import { Synthesis } from './Synthesis'
 import { agentHue, initials } from '../agentColor'
-import { getModels, modelLabel, type ModelCatalog } from '../api/models'
-import { TableRing } from '../components/TableRing'
+import { getModels, type ModelCatalog } from '../api/models'
 import './BaytoRoom.css'
 
 interface AgentInfo {
@@ -36,7 +35,6 @@ interface AgentInfo {
   stance: string | null
 }
 
-const fmt = (n: number) => n.toLocaleString('en-US')
 const STOP_REASONS: Record<string, string> = {
   max_rounds: 'it reached its round limit',
   staleness: 'the agents stopped adding new arguments',
@@ -82,6 +80,7 @@ export function BaytoRoom() {
   const [target, setTarget] = useState('*')
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
+  const [railOpen, setRailOpen] = useState(false) // mobile bottom sheet (Team, Context, Usage)
   const [confirmStop, setConfirmStop] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const navigate = useNavigate()
@@ -248,11 +247,7 @@ export function BaytoRoom() {
   // A paused session still accepts a message: it waits in the log and the agents see it after Resume.
   const canType = canSend || paused
   const sendBlocked = finished ? 'ended' : paused ? 'paused' : canSend ? null : 'starting'
-  const tokens = session.usage.tokens_in + session.usage.tokens_out
-  const budgetTokens: number | null = session.budget?.tokens ?? session.budget?.max_tokens ?? null
-  const pct = budgetTokens ? Math.min(100, Math.round((tokens / budgetTokens) * 100)) : null
   const costCap: number | null = session.budget?.dollars ?? session.budget?.max_cost ?? null
-  const costPct = costCap ? Math.min(100, Math.round((session.usage.cost / costCap) * 100)) : null
   const liveEntries = Object.entries(live)
 
   return (
@@ -449,60 +444,20 @@ export function BaytoRoom() {
           </form>
         </div>
 
-        <aside className="rail" aria-label="Moderator panel">
-        <section className="rail-block" aria-label="Roster">
-          <h2>Roster</h2>
-          {roster.length === 0 && <p className="hint">Agents appear here once the session starts.</p>}
-          {roster.length > 0 && (
-            <TableRing
-              size={132}
-              seats={roster.map((tc) => {
-                const role = tc.participant ?? 'unknown'
-                return { key: tc.agent_id, initials: initials(display(role).name), hue: hue(role), active: role in live, label: display(role).name }
-              })}
-            >
-              {liveEntries.length > 0 ? `${display(liveEntries[0][0]).name} has the floor` : `Round ${session.round}`}
-            </TableRing>
-          )}
-          {roster.map((tc) => {
-            const role = tc.participant ?? 'unknown'
-            const info = display(role)
-            return (
-              <div className="roster-item" key={tc.agent_id} style={{ ['--agent-h' as string]: hue(role) }}>
-                <span className="avatar" aria-hidden="true">{initials(info.name)}</span>
-                <div>
-                  <div className="roster-name">{info.name}</div>
-                  <div className="roster-sub">{info.stance ? `${info.stance} · ` : ''}{tc.model ? `${modelLabel(catalog, tc.model)} · ` : ''}{tc.turns} {tc.turns === 1 ? 'turn' : 'turns'}</div>
-                </div>
-                {role in live && <span className="speaking" role="img" aria-label="Speaking now" />}
-              </div>
-            )
-          })}
-        </section>
-
-          {(canSend || paused) && session.task_id && sessionId && <ContextCard taskId={session.task_id} sessionId={sessionId} roles={roster.map((tc) => tc.participant).filter((p): p is string => !!p)} />}
-
-          <div className="rail-block">
-          <div className="mod-card">
-            <h2>Moderator summary</h2>
-            <p className="summary">{(rollingSummary && splitVerdict(rollingSummary).text) || 'The summary appears after the first turns.'}</p>
-          </div>
-          <h2>Usage vs budget</h2>
-          {pct !== null && (
-            <div className="meter" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Token budget used">
-              <div className={`meter-fill${pct >= 100 ? ' over' : pct >= 80 ? ' warn' : ''}`} style={{ width: `${pct}%` }} />
-            </div>
-          )}
-          {budgetTokens !== null && tokens > budgetTokens && <p className="hint">Past the suggested token budget. The session continues; only the dollar cap stops it.</p>}
-          <div className="usage-line"><span>Tokens</span><strong>{fmt(tokens)}{budgetTokens ? ` / ${fmt(budgetTokens)} suggested` : ''}</strong></div>
-          <div className="usage-line"><span>Cost</span><strong>${session.usage.cost.toFixed(4)}{costCap ? ` / $${costCap.toFixed(2)} cap` : ''}</strong></div>
-          {costPct !== null && (
-            <div className="meter" role="progressbar" aria-valuenow={costPct} aria-valuemin={0} aria-valuemax={100} aria-label="Dollar cap used">
-              <div className={`meter-fill cost${costPct >= 100 ? ' over' : costPct >= 80 ? ' warn' : ''}`} style={{ width: `${costPct}%` }} />
-            </div>
-          )}
-          </div>
-        </aside>
+        <RoomRail
+          detail={session}
+          sessionId={sessionId!}
+          railOpen={railOpen}
+          onRailClose={() => setRailOpen(false)}
+          display={display}
+          hue={hue}
+          live={live}
+          catalog={catalog}
+          summary={rollingSummary ? splitVerdict(rollingSummary).text : null}
+          canEdit={canSend || paused}
+          flash={flash}
+          onChanged={loadSession}
+        />
       </div>
     </section>
   )
