@@ -17,7 +17,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
@@ -957,7 +957,11 @@ async def delete_session(session_id: uuid.UUID, request: Request,
 
     async with sessionmaker() as db:
         # Children first: usage and artifacts point at turns, reports at messages.
-        for model in (Report, UsageLedger, Artifact):
+        # A report's own session_id can be null, so find reports through the session's messages too.
+        await db.execute(delete(Report).where(or_(
+            Report.session_id == session_id,
+            Report.message_id.in_(select(Message.message_id).where(Message.session_id == session_id)))))
+        for model in (UsageLedger, Artifact):
             await db.execute(delete(model).where(model.session_id == session_id))
         for model in (Message, Turn, SessionAgent):
             await db.execute(delete(model).where(model.session_id == session_id))

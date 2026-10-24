@@ -24,7 +24,7 @@ from sqlalchemy import select
 from fakes import FakeSandboxProvider
 from orchestrator.api.deps import get_hand_raise_scorer_factory, get_sandbox_provider, get_summarizer, get_synthesizer
 from orchestrator.app import app
-from orchestrator.models import Agent, Artifact, Mode, Session, SessionAgent, Task, Turn
+from orchestrator.models import Agent, Artifact, Message, Mode, Report, Session, SessionAgent, Task, Turn, UsageLedger
 from orchestrator.moderator import FakeSummarizer, FakeSynthesizer, SummaryResult, SynthesisResult
 
 FIXTURES = Path(__file__).parent / "fixtures" / "modes"
@@ -944,6 +944,33 @@ async def test_delete_removes_the_session_and_what_belongs_to_it(client, live_se
         assert await db.scalar(select(SessionAgent).where(SessionAgent.session_id == session_id)) is None
         assert await db.get(Task, task_id) is not None  # the task stays
     assert (await client.delete(f"/sessions/{session_id}")).status_code == 404
+
+
+@pytest.mark.parametrize("status", ["needs_human", "paused", "failed", "orphaned", "interrupted", "finished", "ended"])
+async def test_delete_removes_a_session_with_messages_turns_reports_artifacts_and_usage(client, live_sessionmaker, status):
+    _, session_id = await _created_session(client, live_sessionmaker)
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        row.status = status
+        agent_id = (await db.scalar(select(SessionAgent).where(SessionAgent.session_id == session_id))).agent_id
+        turn = Turn(session_id=session_id, seq=1, speaker_id=agent_id, content="hi")
+        db.add(turn)
+        await db.flush()
+        db.add(Message(message_id="m-del-1", session_id=session_id, conversation_id="c", seq=1, from_="a", to=["b"],
+                       kind="chat", created_at=datetime.now(timezone.utc)))
+        await db.flush()
+        # A report whose own session_id was never filled in still hangs off the session's message.
+        db.add(Report(message_id="m-del-1", from_="b", session_id=None, status="ok", verified=True))
+        db.add(Report(message_id="m-del-1", from_="c", session_id=session_id, status="ok", verified=True))
+        db.add(Artifact(session_id=session_id, type="summary", content_json={}, source_turn_ids=[turn.id]))
+        db.add(UsageLedger(session_id=session_id, tokens_in=1, tokens_out=1, cost=0.01, turn_id=turn.id))
+        await db.commit()
+
+    assert (await client.delete(f"/sessions/{session_id}")).status_code == 204
+    async with live_sessionmaker() as db:
+        assert await db.get(Session, session_id) is None
+        for model in (Message, Report, Turn, Artifact, UsageLedger):
+            assert (await db.scalars(select(model))).first() is None
 
 
 async def test_a_running_session_cannot_be_archived_or_deleted(client, live_sessionmaker):
