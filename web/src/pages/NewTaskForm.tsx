@@ -10,7 +10,14 @@ interface NewTaskFormProps {
   onCancel: () => void
 }
 
-const OUTPUT_TYPES = ['decision', 'plan', 'memo', 'review', 'ideas', 'report', 'code change']
+// Common finishes, shown as chips; the field below still takes any other type.
+const OUTPUT_CHOICES: { label: string; value: string }[] = [
+  { label: 'Decision', value: 'decision' },
+  { label: 'Plan', value: 'plan' },
+  { label: 'List', value: 'list' },
+  { label: 'Document', value: 'document' },
+  { label: 'Code', value: 'code change' },
+]
 
 export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFormProps) {
   const [title, setTitle] = useState('')
@@ -21,7 +28,6 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
   const titleId = useId()
   const briefId = useId()
   const outputTypeId = useId()
-  const listId = useId()
   const successCriteriaId = useId()
 
   // Build mode: a task that changes code names the repository the team works in.
@@ -71,10 +77,15 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
 
           <div className="field">
             <label htmlFor={outputTypeId}>Output type</label>
-            <input id={outputTypeId} list={listId} value={outputType} onChange={(e) => setOutputType(e.target.value)}
-              placeholder="Pick one or type your own" required />
-            <datalist id={listId}>{OUTPUT_TYPES.map((t) => <option key={t} value={t} />)}</datalist>
-            <span className="hint">What the final synthesis should be, for example a decision or a plan.</span>
+            <div className="chip-choices" role="group" aria-label="Quick picks">
+              {OUTPUT_CHOICES.map((c) => (
+                <button key={c.value} type="button" className="chip-choice" aria-pressed={outputType.trim().toLowerCase() === c.value}
+                  onClick={() => setOutputType(c.value)}>{c.label}</button>
+              ))}
+            </div>
+            <input id={outputTypeId} value={outputType} onChange={(e) => setOutputType(e.target.value)}
+              placeholder="Or type your own, for example memo" required />
+            <span className="hint">What the final synthesis should be.</span>
             <span className="error-text">Choose or type an output type.</span>
           </div>
 
@@ -89,10 +100,10 @@ export function NewTaskForm({ submitting, error, onSubmit, onCancel }: NewTaskFo
               <input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} />{' '}
               {SEMANTIC_LABEL}
             </label>
-            <span className="hint">Off by default. Only used when attached documents are too long to send whole. Needs OPENAI_API_KEY or OLLAMA_HOST on the orchestrator; without one, keyword search is used.</span>
+            <span className="hint">Off by default. Only used when attached documents are too long to send whole. If this server has no search provider set up, keyword search is used instead.</span>
           </div>
 
-          <div className="field build-toggle">
+          <div className="field build-toggle card-toggle">
             <label>
               <input type="checkbox" checked={build} onChange={(e) => toggleBuild(e.target.checked)} />{' '}
               This task changes code (Build mode)

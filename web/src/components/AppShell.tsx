@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useMatch } from 'react-router-dom'
+import { useFallbackTitle } from '../hooks/useDocumentTitle'
 import { feedbackHref, getAppConfig, login, logout } from '../api/appConfig'
 import { SignIn } from '../pages/SignIn'
 
@@ -19,6 +20,9 @@ export function AppShell() {
   const [feedbackUrl, setFeedbackUrl] = useState<string | null>(null)
   const [auth, setAuth] = useState<{ required: boolean; ok: boolean }>({ required: false, ok: true })
   const roomId = useMatch('/room/:sessionId')?.params.sessionId
+  const onSetup = useMatch('/setup/:taskId')
+  // Rooms and setup pages can name themselves (a room uses its task title); this is only the fallback.
+  useFallbackTitle(roomId ? 'Room' : onSetup ? 'Set up session' : undefined)
   useEffect(() => {
     let live = true
     getAppConfig().then((c) => {
@@ -42,7 +46,7 @@ export function AppShell() {
         </NavLink>
         <nav className="shell-nav" aria-label="Main">
           <NavLink to="/" end>Tasks</NavLink>
-          <NavLink to="/services">Services</NavLink>
+          <NavLink to="/services">Developer tools</NavLink>
         </nav>
         {feedback && (
           <a className="feedback-link" href={feedback} target="_blank" rel="noopener noreferrer">Send feedback</a>

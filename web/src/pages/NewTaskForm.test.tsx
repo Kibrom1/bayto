@@ -121,3 +121,40 @@ describe('NewTaskForm semantic search', () => {
     expect(onSubmit.mock.calls[0][0]).toMatchObject({ semantic_retrieval: true })
   })
 })
+
+describe('NewTaskForm layout and wording', () => {
+  it('offers output types as chips that fill the field', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn()
+    render(<NewTaskForm submitting={false} error={null} onSubmit={onSubmit} onCancel={() => {}} />)
+    const group = screen.getByRole('group', { name: 'Quick picks' })
+    for (const name of ['Decision', 'Plan', 'List', 'Document', 'Code']) {
+      expect(group).toHaveTextContent(name)
+    }
+    await user.click(screen.getByRole('button', { name: 'Plan' }))
+    expect(screen.getByRole('button', { name: 'Plan' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Output type')).toHaveValue('plan')
+    await fillBasics(user)
+    await user.click(screen.getByRole('button', { name: 'Create task' }))
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ output_type: 'plan' }))
+  })
+
+  it('keeps Cancel and Create in a footer outside the scrolling body', () => {
+    render(<NewTaskForm submitting={false} error={null} onSubmit={() => {}} onCancel={() => {}} />)
+    const footer = screen.getByRole('button', { name: 'Create task' }).closest('.modal-actions')
+    expect(footer).not.toBeNull()
+    expect(footer!.closest('.modal-body')).toBeNull()
+    expect(footer!.previousElementSibling).toHaveClass('modal-body')
+  })
+
+  it('does not show environment variable names in help text', () => {
+    render(<NewTaskForm submitting={false} error={null} onSubmit={() => {}} onCancel={() => {}} />)
+    expect(document.body.textContent).not.toMatch(/OPENAI_API_KEY|OLLAMA_HOST|BAYTO_[A-Z_]+/)
+  })
+
+  it('reveals the repository fields inline when the Build box is ticked', async () => {
+    render(<NewTaskForm submitting={false} error={null} onSubmit={() => {}} onCancel={() => {}} />)
+    await userEvent.setup().click(screen.getByLabelText(/this task changes code/i))
+    expect(screen.getByLabelText('Repository path').closest('.modal-body')).not.toBeNull()
+  })
+})

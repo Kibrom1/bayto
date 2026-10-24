@@ -1,3 +1,4 @@
+import { NotFound } from './NotFound'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
@@ -271,15 +272,7 @@ export function SessionSetup() {
     }
   }
 
-  if (taskMissing) {
-    return (
-      <div className="page">
-        <div className="alert bad" role="alert">
-          That task doesn't exist, or the link is wrong. <Link to="/">Back to tasks</Link>
-        </div>
-      </div>
-    )
-  }
+  if (taskMissing) return <NotFound title="Task not found" message="This task doesn't exist, or the link is wrong." />
   if (loadError) {
     return (
       <div className="page">

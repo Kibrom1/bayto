@@ -104,3 +104,8 @@ html { scroll-behavior: smooth; }
 .ld-contact-note { margin: 0; font-size: 0.88rem; color: var(--ink-3); }
 .ld-contact-error { margin: 0; color: var(--danger, #b42318); }
 .ld-contact-done { text-align: center; font-weight: 500; }
+
+/* Placeholders: cards keep their shape and a skeleton tone while images or posters load (or fail). */
+.ld-shots img { aspect-ratio: 1280 / 800; background: linear-gradient(90deg, var(--surface-2), var(--line), var(--surface-2)); background-size: 200% 100%; animation: ld-shimmer 1.4s linear infinite; }
+.ld-shots img[data-loaded] { animation: none; background: var(--surface-2); }
+@keyframes ld-shimmer { to { background-position: -200% 0; } }

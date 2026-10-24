@@ -20,6 +20,7 @@ import {
   type SessionDetailOut,
 } from '../api/sessions'
 import { ApiError, isNotFound } from '../api/errors'
+import { NotFound } from './NotFound'
 import { useSessionEvents } from '../hooks/useSessionEvents'
 import { isConversational } from './messageKinds'
 import { ChangeSet } from './ChangeSet'
@@ -259,6 +260,7 @@ export function BaytoRoom() {
   const roster = session?.turn_counts ?? []
   const hue = useMemo(() => (role: string) => agentHue(role), [])
 
+  if (notFound && !session) return <NotFound title="Session not found" message="This session doesn't exist, or the link is wrong." />
   if (error && !session) {
     return (
       <div className="room-error" role="alert">

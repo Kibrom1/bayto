@@ -60,3 +60,12 @@
 .deep-who { font-size: 0.85em; opacity: 0.75; }
 .deep-snippet { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
 .deep-snippet mark { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; border-radius: 2px; }
+
+.chip.change { background: var(--ok-soft); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); }
+.row-menu summary.kebab { min-width: 2.25rem; padding-inline: 0.5rem; }
+.empty-note p { margin: 0 0 var(--space-2); }
+@media (max-width: 640px) {
+  .task-actions .btn, .row-menu summary.kebab { min-height: 2.75rem; }
+  .task-actions .btn { white-space: nowrap; }
+  .row-menu summary.kebab { min-width: 2.75rem; border: 1px solid var(--line); }
+}

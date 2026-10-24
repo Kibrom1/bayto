@@ -64,7 +64,7 @@
     --ink: #f1f2f8;
     --ink-2: #c5c8e0;
     --ink-3: #9ca1c4;
-    --accent: #f5b301;
+    --accent: #f1f2f8;  /* light neutral: primary never shares a hue with the amber warnings */
     --accent-ink: #12152e;
     --accent-soft: #3a2c0b;
     --accent-text: #f5b301;
@@ -74,7 +74,7 @@
     --warn-soft: #3a2c0b;
     --danger: #ff9aa8;
     --danger-soft: #3d1a22;
-    --jump-bg: #f5b301;
+    --jump-bg: #f1f2f8;
     --jump-ink: #12152e;
     --shadow: none;
   }
