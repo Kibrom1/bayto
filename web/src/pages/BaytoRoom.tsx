@@ -90,7 +90,6 @@ export function BaytoRoom() {
   const [target, setTarget] = useState('*')
   const [sending, setSending] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
-  const [railOpen, setRailOpen] = useState(false) // mobile bottom sheet (Team, Context, Usage)
   const [confirmStop, setConfirmStop] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const navigate = useNavigate()
@@ -522,7 +521,7 @@ export function BaytoRoom() {
           detail={session}
           sessionId={sessionId!}
           railOpen={railOpen}
-          onRailClose={() => setRailOpen(false)}
+          onRailClose={closeRail}
           display={display}
           hue={hue}
           live={live}
