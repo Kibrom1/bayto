@@ -238,6 +238,22 @@ describe('BaytoRoom', () => {
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
   })
 
+  it('has an Export button that downloads the decision record from the export endpoint', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x')
+    URL.revokeObjectURL = vi.fn()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await renderWithStatus('active')
+    const fetchMock = vi.mocked(fetch)
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (url, init) => String(url).includes('/export')
+      ? new Response('# Decision record', { status: 200, headers: { 'Content-Disposition': 'attachment; filename="bayto-t-1234.md"' } })
+      : base(url, init))
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await waitFor(() => expect(click).toHaveBeenCalled())
+    expect(fetchMock.mock.calls.some(([u]) => u === '/sessions/session-123/export?format=md')).toBe(true)
+    click.mockRestore()
+  })
+
   it('asks before deleting a session, then deletes it', async () => {
     await renderWithStatus('finished')
     const fetchMock = vi.mocked(fetch)
