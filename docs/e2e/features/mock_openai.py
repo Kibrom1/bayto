@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """A stand-in for an OpenAI-compatible /v1/chat/completions endpoint. Logs every request (model, system, prompt) as a
-JSON line so a test can see exactly what a provider seat was sent. Create the file named by MOCK_FAIL_FILE to make it
-answer 401 like a bad key."""
+JSON line (with the status it answered) so a test can see exactly what a provider seat was sent. Create the file named
+by MOCK_FAIL_FILE to make it answer 401 like a bad key; create the file named by MOCK_429_FILE to make it answer 429
+(Retry-After: 1) exactly once, deleting the file as it does."""
 import json, os, sys, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 LOG = os.environ.get("MOCK_LOG", "/tmp/e2e/mock_openai.jsonl")
 FAIL = os.environ.get("MOCK_FAIL_FILE", "/tmp/e2e/mock_fail")
+ONCE_429 = os.environ.get("MOCK_429_FILE", "/tmp/e2e/mock_429_once")
 PORT = int(os.environ.get("MOCK_PORT", "9100"))
 n = {"calls": 0}
 
@@ -19,18 +21,24 @@ class H(BaseHTTPRequestHandler):
         msgs = body.get("messages", [])
         system = next((m["content"] for m in msgs if m["role"] == "system"), "")
         prompt = "\n".join(m["content"] for m in msgs if m["role"] == "user")
-        with open(LOG, "a") as f:
-            f.write(json.dumps({"path": self.path, "auth": self.headers.get("authorization"), "model": body.get("model"),
-                                "system": system, "prompt": prompt}) + "\n")
         time.sleep(0.4)
-        if os.path.exists(FAIL):
+        throttle = False
+        try: os.unlink(ONCE_429); throttle = True   # unlink succeeds for exactly one request
+        except FileNotFoundError: pass
+        if throttle:
+            out, code = {"error": {"message": "Rate limit reached: mock"}}, 429
+        elif os.path.exists(FAIL):
             out, code = {"error": {"message": "Incorrect API key provided: mock"}}, 401
         else:
             n["calls"] += 1
             out, code = {"choices": [{"message": {"content": f"Mock GPT turn {n['calls']}: I weigh the evidence and add one new point."}}],
                          "usage": {"prompt_tokens": 1200, "completion_tokens": 40}}, 200
+        with open(LOG, "a") as f:
+            f.write(json.dumps({"path": self.path, "auth": self.headers.get("authorization"), "model": body.get("model"),
+                                "system": system, "prompt": prompt, "status": code}) + "\n")
         data = json.dumps(out).encode()
         self.send_response(code); self.send_header("content-type", "application/json")
+        if code == 429: self.send_header("retry-after", "1")
         self.send_header("content-length", str(len(data))); self.end_headers(); self.wfile.write(data)
 
 

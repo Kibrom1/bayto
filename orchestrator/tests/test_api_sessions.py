@@ -503,6 +503,12 @@ async def test_stop_a_session_that_was_never_started_is_conflict(client, live_se
 
 # ---------------------------------------------------------------- GET /sessions/{id}/events (SSE)
 
+async def test_sse_for_an_unknown_session_is_404(client):
+    resp = await client.get(f"/sessions/{uuid.uuid4()}/events")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"]["code"] == "not_found"
+
+
 async def test_sse_replays_backlog_since_seq(client, live_sessionmaker, tmp_path):
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
     resp = await client.post("/sessions", json={

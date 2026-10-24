@@ -3,7 +3,7 @@
 Real: Postgres, runner, floor policy, attachments, retrieval, role visibility, the provider adapter over HTTP, SSE, the
 React UI in headless Chromium. Faked: the sandbox responder, the moderator's summary/synthesis/hand-raise models.
 Prints PASS/FAIL per check and exits non-zero on any FAIL."""
-import json, os, re, sys, time, urllib.error, urllib.request, uuid
+import json, os, re, signal, subprocess, sys, time, urllib.error, urllib.request, uuid
 from pathlib import Path
 
 import psycopg
@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright
 
 API = os.environ.get("API", "http://127.0.0.1:8000"); WEB = os.environ.get("WEB", "http://127.0.0.1:5173")
 DB = os.environ.get("DATABASE_URL", "postgresql+psycopg://bayto:bayto@localhost:5432/bayto_e2e").replace("+psycopg", "")
-E2E = Path("/tmp/e2e"); MOCK_LOG = E2E / "mock_openai.jsonl"; MOCK_FAIL = E2E / "mock_fail"; SYNTH = E2E / "synth_hint.txt"
+E2E = Path("/tmp/e2e"); MOCK_LOG = E2E / "mock_openai.jsonl"; MOCK_FAIL = E2E / "mock_fail"; MOCK_429 = E2E / "mock_429_once"; SYNTH = E2E / "synth_hint.txt"
 OUT = Path(os.environ.get("OUT", "/tmp/e2e/shots")); OUT.mkdir(parents=True, exist_ok=True)
 SECRET = "SECRET-BAND-7"; NEEDLE = "The renewal notice period is ninety days"
 R = []
@@ -58,7 +58,7 @@ def filler(n, seed):  # words that share nothing with the queries
     return "\n\n".join(" ".join(rnd.choice(words) for _ in range(120)) for _ in range(n))
 
 
-for p in (MOCK_LOG, MOCK_FAIL, SYNTH):
+for p in (MOCK_LOG, MOCK_FAIL, MOCK_429, SYNTH):
     p.unlink(missing_ok=True)
 
 # ------------------------------------------------------------------ catalogue and setup
@@ -69,7 +69,8 @@ debate = next(m for m in modes if m["name"] == "debate")
 s, cat = call("GET", "/models"); mock = next((m for m in cat["models"] if m["id"] == "openai/mock"), {})
 check("models", "the provider model is listed, ready, and labelled OpenAI", mock.get("ready") and mock.get("provider_label") == "OpenAI", mock)
 check("models", "the provider model is not offered for Build seats", mock.get("build_ok") is False, mock)
-check("config", "/app-config exposes the feedback URL", call("GET", "/app-config")[1] == {"feedback_url": "https://example.com/feedback"})
+cfg = call("GET", "/app-config")[1]
+check("config", "/app-config exposes the feedback URL, and says auth is off and the caller is in", cfg.get("feedback_url") == "https://example.com/feedback" and cfg.get("auth_required") is False and cfg.get("authenticated") is True, cfg)
 
 s, t = call("POST", "/tasks", {"title": "E2E renewal terms", "brief": "Decide whether to renew the vendor contract. What is the renewal notice period and who pays?", "output_type": "decision"})
 task = t["task"]["id"]
@@ -108,6 +109,8 @@ with sync_playwright() as p:
     errors = []; page.on("pageerror", lambda e: errors.append(str(e))); page.on("response", lambda r: errors.append(f"{r.status} {r.url}") if r.status >= 500 else None)
     page.goto(f"{WEB}/room/{sid}"); page.wait_for_selector("h1, h2", timeout=15000)
     # the restricted attachment's picker in the Context card
+    try: page.get_by_text("salary-bands.md").first.wait_for(timeout=15000)   # the list loads after the page shell
+    except Exception: pass
     body = page.inner_text("body")
     check("context", "the Context card lists both attachments with their audience", "handbook.md" in body and "salary-bands.md" in body and f"Only {roleB}" in body and "Everyone" in body, body[-600:])
     page.screenshot(path=str(OUT / "room-context.png"))
@@ -161,6 +164,107 @@ check("lifecycle", "the stopped session finishes", wait(lambda: status(sid3) == 
 hint = SYNTH.read_text() if SYNTH.exists() else ""
 check("write-up", "the stop-time write-up got open attachments only", "notes.md" in hint and SECRET not in hint and "private.md" not in hint, hint[:200])
 check("write-up", "the stopped session stored a synthesis", ("synthesis",) in sql("select type from artifact where session_id=%s", sid3))
+
+# ------------------------------------------------------------------ export, search, retry, auth (new work)
+# (a) export of the finished session 1: markdown with the synthesis, never attachment text
+def raw_get(path, headers=None):
+    req = urllib.request.Request(API + path, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r: return r.status, r.read().decode(), r.headers
+    except urllib.error.HTTPError as e: return e.code, e.read().decode(), e.headers
+
+s, md, hd = raw_get(f"/sessions/{sid}/export?format=md")
+check("export", "export of a finished session is markdown served as an attachment", s == 200 and "text/markdown" in hd.get("content-type", "") and "attachment" in hd.get("content-disposition", "") and ".md" in hd.get("content-disposition", ""), (s, dict(hd)))
+check("export", "the export contains the synthesis", "E2E synthesis" in md, md[:300])
+check("export", "the export names the attachments but holds none of their text", "handbook.md" in md and NEEDLE not in md and SECRET not in md and "lorem ipsum" not in md, md[:300])
+check("export", "an unsupported format is refused and an unknown session is 404", raw_get(f"/sessions/{sid}/export?format=pdf")[0] == 422 and raw_get(f"/sessions/{uuid.uuid4()}/export")[0] == 404)
+
+# (b) search over past sessions
+s, r = call("GET", "/search?q=concrete")
+hits = r.get("results", []) if isinstance(r, dict) else []
+check("search", "a word from a finished session's messages is found, pointing at that session", s == 200 and any(h["session_id"] == sid for h in hits), (s, str(r)[:200]))
+s, r = call("GET", "/search?q=E2E+synthesis")
+check("search", "the synthesis text is searchable", s == 200 and any(h["kind"] == "synthesis" and h["session_id"] == sid for h in r.get("results", [])), (s, str(r)[:200]))
+check("search", "a one-character query is refused with 422", call("GET", "/search?q=a")[0] == 422)
+check("search", "restricting to the task works", all(h["task_id"] == task for h in call("GET", f"/search?q=concrete&task_id={task}")[1]["results"]))
+with sync_playwright() as p:
+    br = p.chromium.launch(); page = br.new_page(viewport={"width": 1360, "height": 950})
+    errs = []; page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(f"{WEB}/room/{sid}"); page.wait_for_selector("h1, h2", timeout=15000)
+    btn = page.get_by_role("button", name=re.compile("^Export"))
+    check("export", "the finished room has an Export button", btn.count() >= 1, page.inner_text("body")[:200])
+    if btn.count():
+        with page.expect_download(timeout=15000) as dl: btn.first.click()
+        check("export", "clicking Export downloads a .md file", dl.value.suggested_filename.endswith(".md"), dl.value.suggested_filename)
+    page.goto(f"{WEB}/"); page.get_by_label("Search past discussions").wait_for(timeout=15000)
+    page.get_by_label("Search past discussions").fill("concrete"); page.get_by_role("button", name="Search", exact=True).click()
+    res = page.locator(".deep-results li"); wait(lambda: res.count() > 0 or None, 15)
+    check("search", "the task board search box shows a result linking to a room", res.count() > 0 and "/room/" in (res.first.locator("a").get_attribute("href") or ""), page.inner_text("body")[-300:])
+    page.screenshot(path=str(OUT / "task-board-search.png")); check("ui", "no page errors on the export/search pages", not errs, errs[:3]); br.close()
+
+# (d) the provider answers 429 once, then recovers: the retry completes the seat turn
+n_before = len(MOCK_LOG.read_text().splitlines()) if MOCK_LOG.exists() else 0
+MOCK_429.write_text("1")
+sid4 = new_session("openai/mock"); call("POST", f"/sessions/{sid4}/start")
+got = wait(lambda: sql("select count(*) from message where session_id=%s and kind='answer' and \"from\"=%s", sid4, roleA)[0][0] >= 1, 60)
+lines = [json.loads(l) for l in MOCK_LOG.read_text().splitlines()][n_before:]
+codes = [c.get("status") for c in lines]
+check("retry", "the provider throttled once (429) and was called again", 429 in codes and 200 in codes[codes.index(429):], codes[:6])
+check("retry", "the provider seat's turn still completed after the 429", got, status(sid4))
+check("retry", "the session was not paused by the transient 429", status(sid4) in ("active", "finished"), status(sid4))
+call("POST", f"/sessions/{sid4}/stop", {"synthesize": False}); wait(lambda: status(sid4) == "finished", 60)
+
+# (c) a second server with BAYTO_API_TOKEN set, plus a second web dev server pointed at it
+TOKEN = "e2e-token-" + uuid.uuid4().hex[:8]; A2 = "http://127.0.0.1:8001"; W2 = "http://127.0.0.1:5174"
+procs = []
+try:
+    REPO = os.path.abspath(os.environ.get("BAYTO_REPO", "."))
+    env = {**os.environ, "PYTHONPATH": os.path.join(REPO, "orchestrator", "src"), "BAYTO_API_TOKEN": TOKEN, "API_PORT": "8001", "BAYTO_API_URL": A2}
+    PY = os.environ.get("BAYTO_SERVER_PYTHON") or (REPO + "/orchestrator/.venv/bin/python" if os.path.exists(REPO + "/orchestrator/.venv/bin/python") else sys.executable)   # the interpreter that has the orchestrator installed
+    procs.append(subprocess.Popen([PY, str(Path(__file__).resolve().parent / "serve_with_fakes.py")], env=env, cwd=REPO + "/orchestrator", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    procs.append(subprocess.Popen(["npm", "run", "dev", "--", "--port", "5174", "--strictPort"], env=env, cwd=REPO + "/web", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    def up(url): 
+        try: return urllib.request.urlopen(url, timeout=3).status == 200
+        except Exception: return False
+    check("auth", "the token-protected server and its web app came up", wait(lambda: up(A2 + "/healthz") and up(W2 + "/"), 60, 1))
+    def call2(method, path, headers=None, body=None):
+        req = urllib.request.Request(A2 + path, method=method, headers={"Content-Type": "application/json", **(headers or {})}, data=json.dumps(body).encode() if body is not None else None)
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r: return r.status, r.read().decode(), r.headers
+        except urllib.error.HTTPError as e: return e.code, e.read().decode(), e.headers
+    st, b, h = call2("GET", "/tasks"); check("auth", "the API answers 401 without a token", st == 401 and "Bearer" in (h.get("www-authenticate") or ""), (st, b[:100]))
+    check("auth", "a wrong bearer token is 401 and the sessions export/search routes are protected too", call2("GET", "/tasks", {"Authorization": "Bearer nope"})[0] == 401 and call2("GET", "/search?q=concrete")[0] == 401 and call2("GET", f"/sessions/{sid}/export")[0] == 401)
+    check("auth", "the API answers 200 with the bearer token", call2("GET", "/tasks", {"Authorization": f"Bearer {TOKEN}"})[0] == 200)
+    check("auth", "/healthz stays open", call2("GET", "/healthz")[0] == 200)
+    cfg2 = json.loads(call2("GET", "/app-config")[1]); check("auth", "/app-config is open and reports auth required, not authenticated", cfg2.get("auth_required") is True and cfg2.get("authenticated") is False, cfg2)
+    st, b, h = call2("POST", "/auth/login", body={"token": "wrong"}); check("auth", "login with a wrong token is 401 and sets no cookie", st == 401 and not h.get("set-cookie"), (st, b[:100]))
+    st, b, h = call2("POST", "/auth/login", body={"token": TOKEN}); ck = (h.get("set-cookie") or "")
+    check("auth", "login with the token sets an HttpOnly session cookie that does not contain the token", st == 200 and "bayto_session=" in ck and "httponly" in ck.lower() and TOKEN not in ck, (st, ck[:120]))
+    cookie = ck.split(";")[0]
+    check("auth", "the cookie alone authenticates API calls", call2("GET", "/tasks", {"Cookie": cookie})[0] == 200)
+    with sync_playwright() as p:
+        br = p.chromium.launch(); page = br.new_page(viewport={"width": 1360, "height": 950})
+        page.goto(W2 + "/"); box = page.get_by_label("Access token"); box.wait_for(timeout=20000)
+        body = page.inner_text("body"); page.screenshot(path=str(OUT / "sign-in.png"))
+        check("auth", "the web app shows the sign-in page, not the task board, without a session", "access token" in body.lower() and page.get_by_role("button", name="Sign in").count() == 1 and page.locator(".task-list").count() == 0, body[:200])
+        box.fill("wrong-token"); page.get_by_role("button", name="Sign in").click(); page.wait_for_selector("[role=alert]", timeout=10000)
+        check("auth", "a wrong token shows an error and stays on sign-in", box.count() == 1, page.inner_text("body")[:200])
+        box.fill(TOKEN); page.get_by_role("button", name="Sign in").click()
+        check("auth", "the right token signs in and the app loads", wait(lambda: page.get_by_label("Access token").count() == 0 or None, 15), page.inner_text("body")[:200])
+        page.reload(); page.wait_for_timeout(1500)
+        check("auth", "the session survives a reload", page.get_by_label("Access token").count() == 0, page.inner_text("body")[:200]); br.close()
+finally:
+    for pr in procs:
+        pr.terminate()
+    for pr in procs:
+        try: pr.wait(10)
+        except Exception: pr.kill()
+    # npm spawns vite as a child: stop whatever still holds the extra ports, by PID
+    for port in (8001, 5174):
+        out = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True).stdout.split()
+        for pid in out:
+            try: os.kill(int(pid), signal.SIGTERM)
+            except Exception: pass
 
 # ------------------------------------------------------------------ session 2: the provider rejects the key
 MOCK_FAIL.write_text("1")
