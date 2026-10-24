@@ -32,3 +32,14 @@
 .cs-pr form { display: grid; gap: var(--space-3); }
 .cs-pr textarea { width: 100%; font: inherit; }
 .cs-pr-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.cs-head-side { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
+.cs-head-side .cs-pr { margin: 0; }
+.cs-head-side .cs-pr:has(form) { flex: 1 1 100%; }
+.cs-switchback { margin: var(--space-2) 0 var(--space-3); font-size: 0.88rem; color: var(--ink-3); }
+.cs-switchback summary { cursor: pointer; }
+.cs-switchback .cs-sub { margin-top: var(--space-1); }
+@media (max-width: 640px) {
+  .changeset { padding: 1.1rem 1rem; }
+  .cs-head-side { justify-content: flex-start; }
+  .cs-head-side .btn, .cs-branch .btn { min-height: 44px; }
+}

@@ -54,7 +54,10 @@ export function ChangeSet({ artifacts, sessionId }: { artifacts: ArtifactOut[]; 
           <p className="room-kicker">Change set</p>
           <h2 className="cs-title">{ready ? 'Ready to review and merge' : 'Needs your attention'}</h2>
         </div>
-        <span className={`chip ${ready ? 'ok' : 'warn'}`}>{ready ? 'Tests passed · reviewed' : 'Not finished'}</span>
+        <div className="cs-head-side">
+          <span className={`chip ${ready ? 'ok' : 'warn'}`}>{ready ? 'Tests passed · reviewed' : 'Not finished'}</span>
+          {sessionId && <PullRequestPanel sessionId={sessionId} hasCommits={cs.commits.length > 0} opened={cs.pull_request?.url ?? null} />}
+        </div>
       </header>
 
       <div className="cs-branch">
@@ -64,10 +67,13 @@ export function ChangeSet({ artifacts, sessionId }: { artifacts: ArtifactOut[]; 
       <p className="cs-sub">
         On branch <code>{cs.branch}</code>, based on <code>{cs.base_branch}</code>. Nothing was pushed until you choose to open a pull request; you merge it.
       </p>
-      <p className="cs-sub" data-testid="repo-left-on">
-        Your repository is still checked out on <code>{cs.branch}</code>. When you have finished reviewing, go
-        back with <code>git switch {cs.base_branch}</code>.
-      </p>
+      <details className="cs-switchback" data-testid="repo-left-on">
+        <summary>Your repository is on this branch</summary>
+        <p className="cs-sub">
+          Your repository is still checked out on <code>{cs.branch}</code>. When you have finished reviewing, go
+          back with <code>git switch {cs.base_branch}</code>.
+        </p>
+      </details>
 
       {cs.open_issues.length > 0 && (
         <ul className="cs-issues" aria-label="Open issues">
@@ -130,7 +136,6 @@ export function ChangeSet({ artifacts, sessionId }: { artifacts: ArtifactOut[]; 
         </details>
       )}
 
-      {sessionId && <PullRequestPanel sessionId={sessionId} hasCommits={cs.commits.length > 0} opened={cs.pull_request?.url ?? null} />}
     </article>
   )
 }

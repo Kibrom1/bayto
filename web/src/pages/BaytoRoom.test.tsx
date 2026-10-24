@@ -1,8 +1,8 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { BaytoRoom, friendlyFailure, splitVerdict, stopReasonText } from './BaytoRoom'
+import { BaytoRoom, endedBanner, friendlyFailure, splitVerdict, stopReasonText } from './BaytoRoom'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => (
@@ -63,7 +63,7 @@ describe('BaytoRoom', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/bayto room/i, undefined, { timeout: 5000 })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Bayto room' }, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.getByText(/transcript/i)).toBeInTheDocument()
     expect(screen.getByText(/roster/i)).toBeInTheDocument()
     expect(screen.getByText(/moderator summary/i)).toBeInTheDocument()
@@ -84,7 +84,7 @@ describe('BaytoRoom', () => {
         </Routes>
       </MemoryRouter>,
     )
-    await screen.findByText(/bayto room/i, undefined, { timeout: 5000 })
+    await screen.findByRole('region', { name: 'Bayto room' }, { timeout: 5000 })
     Element.prototype.scrollIntoView = vi.fn() // jsdom has none
     const source = (globalThis as any).EventSource.instances.at(-1)
     const send = (m: object) => act(() => source.onmessage({ data: JSON.stringify({ kind: 'answer', to: ['moderator'], from: 'lawyer', ...m }) }))
@@ -111,7 +111,7 @@ describe('BaytoRoom', () => {
         </Routes>
       </MemoryRouter>,
     )
-    await screen.findByText(/bayto room/i, undefined, { timeout: 5000 })
+    await screen.findByRole('region', { name: 'Bayto room' }, { timeout: 5000 })
     Element.prototype.scrollIntoView = vi.fn()
     const source = (globalThis as any).EventSource.instances.at(-1)
     const named = (name: string, data: object) => {
@@ -146,7 +146,68 @@ describe('BaytoRoom', () => {
         </Routes>
       </MemoryRouter>,
     )
-    expect(await screen.findByText(/ended because it reached its round limit/i, undefined, { timeout: 5000 })).toBeInTheDocument()
+    const banner = await screen.findByText(/ended because it reached its round limit/i, undefined, { timeout: 5000 })
+    expect(banner).toHaveClass('notice')
+    expect(banner).not.toHaveClass('warn') // a normal ending is not a caution
+    expect(screen.queryByRole('button', { name: 'Export decision record' })).toBeInTheDocument() // the bar, not the banner
+  })
+
+  it('shows a successful Build ending as success, and a budget stop as a caution', () => {
+    expect(endedBanner('build_complete')).toEqual({ text: 'The build finished: tests passed and the reviewer approved.', tone: 'ok' })
+    expect(endedBanner('budget_exceeded')?.tone).toBe('warn')
+    expect(endedBanner('max_rounds')?.tone).toBe('')
+    expect(endedBanner('user_stop')?.tone).toBe('')
+    expect(endedBanner(null)).toBeNull()
+  })
+
+  it('titles the breadcrumb with the task, labels the cost, and shows one status', async () => {
+    const task = { id: 'task-1', title: 'Pick a vendor' }
+    const body = JSON.stringify({ session: {
+      id: 'session-123', task_id: 'task-1', mode_id: 'debate', status: 'running', started_at: null, ended_at: null,
+      round: 1, budget: { max_cost: 5 }, usage: { tokens_in: 1, tokens_out: 1, cost: 0.01 }, turn_counts: [] } })
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) =>
+      new Response(String(url).includes('/tasks') ? JSON.stringify([task]) : body, { status: 200, headers: { 'Content-Type': 'application/json' } })))
+    render(<MemoryRouter initialEntries={['/sessions/session-123']}><Routes><Route path="/sessions/:sessionId" element={<BaytoRoom />} /></Routes></MemoryRouter>)
+    expect(await screen.findByText('Spent $0.01 of $5.00 cap', undefined, { timeout: 5000 })).toBeInTheDocument()
+    expect(screen.queryByText('Bayto room')).toBeNull()
+    expect(screen.queryByText('Live')).toBeNull()
+    await waitFor(() => expect(document.querySelector('.room-kicker')?.textContent).toBe('Tasks / Pick a vendor'))
+  })
+
+  it('has a Team & context button that toggles the rail panel', async () => {
+    await renderWithStatus('active')
+    const btn = screen.getByRole('button', { name: 'Team & context' })
+    expect(btn).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(btn)
+    expect(btn).toHaveAttribute('aria-expanded', 'true')
+    expect(document.querySelector('.room-body')).toHaveAttribute('data-rail-open', 'true')
+  })
+
+  it('puts the export choices in one menu, and confirms with a toast', async () => {
+    await renderWithStatus('finished')
+    expect(screen.queryByRole('button', { name: 'Download transcript' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Export' }))
+    expect(screen.getByRole('menuitem', { name: /decision record/i })).toBeInTheDocument()
+  })
+
+  it('counts new turns on a pill anchored above the composer that is announced politely', async () => {
+    await renderWithStatus('active')
+    Element.prototype.scrollIntoView = vi.fn()
+    const scroller = screen.getByRole('region', { name: 'Conversation' })
+    Object.defineProperties(scroller, { scrollHeight: { value: 2000, configurable: true }, clientHeight: { value: 500, configurable: true }, scrollTop: { value: 0, configurable: true } })
+    fireEvent.scroll(scroller)
+    const source = (globalThis as any).EventSource.instances.at(-1)
+    const say = (n: number) => act(() => source.onmessage({ data: JSON.stringify({ kind: 'answer', to: ['moderator'], from: 'lawyer', message_id: `m${n}`, seq: n, body: `turn ${n}`, meta: {} }) }))
+    say(1); say(2)
+    const pill = await screen.findByRole('button', { name: '2 new turns' })
+    expect(pill.parentElement).toHaveAttribute('aria-live', 'polite')
+  })
+
+  it('shows the cause and a primary retry on a failed session, and the cause for an API key error', async () => {
+    expect(friendlyFailure('401 Unauthorized: invalid x-api-key')).toMatch(/rejected the API key/)
+    expect(friendlyFailure('KeyError: foo\n  at x')).toBe('It stopped with an error: KeyError: foo')
+    await renderWithStatus('failed')
+    expect(screen.getByRole('button', { name: 'Retry with same team' })).toBeInTheDocument()
   })
 
   it('offers Start, not Pause, for a session that was never started', async () => {
@@ -225,7 +286,7 @@ describe('BaytoRoom', () => {
         </Routes>
       </MemoryRouter>,
     )
-    return screen.findByLabelText('Interject', undefined, { timeout: 5000 })
+    return screen.findByRole('region', { name: 'Bayto room' }, { timeout: 5000 })
   }
 
   it('offers Archive and Delete for an ended session but not a running one', async () => {
@@ -249,6 +310,7 @@ describe('BaytoRoom', () => {
       ? new Response('# Decision record', { status: 200, headers: { 'Content-Disposition': 'attachment; filename="bayto-t-1234.md"' } })
       : base(url, init))
     await userEvent.click(screen.getByRole('button', { name: 'Export' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /decision record/i }))
     await waitFor(() => expect(click).toHaveBeenCalled())
     expect(fetchMock.mock.calls.some(([u]) => u === '/sessions/session-123/export?format=md')).toBe(true)
     click.mockRestore()
@@ -267,20 +329,22 @@ describe('BaytoRoom', () => {
   })
 
   it('lets you message a running session', async () => {
-    const box = await renderWithStatus('active')
-    expect(box).toBeEnabled()
+    await renderWithStatus('active')
+    expect(screen.getByLabelText('Interject')).toBeEnabled()
   })
 
-  it('turns the message box off, with the reason, once the session has ended', async () => {
-    const box = await renderWithStatus('finished')
-    expect(box).toBeDisabled()
-    expect(screen.getByText(/this session has ended and can't take messages/i)).toBeInTheDocument()
+  it('replaces the message box with a one-line bar once the session has ended', async () => {
+    await renderWithStatus('finished')
+    expect(screen.queryByLabelText('Interject')).toBeNull()
+    expect(screen.getByText('Session ended.')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /start a new session/i })).toHaveAttribute('href', '/setup/task-1')
+    expect(screen.getByRole('button', { name: 'Export decision record' })).toBeInTheDocument()
+    expect(screen.getByText('No turns were recorded.')).toBeInTheDocument()
   })
 
   it('explains an interrupted session and offers no controls that would fail', async () => {
-    const box = await renderWithStatus('orphaned')
-    expect(box).toBeDisabled()
+    await renderWithStatus('orphaned')
+    expect(screen.queryByLabelText('Interject')).toBeNull()
     expect(screen.getByText(/this session was interrupted/i)).toBeInTheDocument()
     expect(screen.getByText('Interrupted')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /continue with the same team/i })).toBeInTheDocument()
@@ -289,8 +353,8 @@ describe('BaytoRoom', () => {
   })
 
   it('lets you answer a paused session and says the message waits for Resume', async () => {
-    const box = await renderWithStatus('needs_human')
-    expect(box).toBeEnabled()
+    await renderWithStatus('needs_human')
+    expect(screen.getByLabelText('Interject')).toBeEnabled()
     expect(screen.getByText(/the agents see it when you press resume/i)).toBeInTheDocument()
   })
 
