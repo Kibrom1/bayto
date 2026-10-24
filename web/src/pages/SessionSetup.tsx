@@ -41,6 +41,9 @@ const MODE_BLURBS: Record<string, string> = {
   brainstorm: 'Diverge first: many ideas, little judgement.',
   debate: 'Opposing stances argue; the moderator keeps it fair.',
   build: 'Plan, code, test and review on a git branch. You review and merge it.',
+  raise_hand: 'Agents speak when they have something to add.',
+  'raise-hand': 'Agents speak when they have something to add.',
+  open_chat: 'Agents speak when they have something to add.',
   review: 'Agents critique a draft and converge on fixes.',
   decision: 'Weigh options and end with a recommendation.',
 }
@@ -57,6 +60,9 @@ const COST_PER_SEAT = 0.5
 const BUILD_COST_PER_SEAT = 3
 const BUILD_ROLES = ['build-architect', 'build-developer', 'build-tester', 'build-reviewer']
 const isBuildTemplate = (t: { role?: string }) => (t.role ?? '').startsWith('build-')
+
+const MODE_LABELS: Record<string, string> = { raise_hand: 'Open Chat', 'raise-hand': 'Open Chat', open_chat: 'Open Chat' }
+const modeLabel = (name: string) => MODE_LABELS[name.toLowerCase()] ?? titleCase(name)
 
 function titleCase(s: string) {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -81,6 +87,7 @@ export function SessionSetup() {
   const [tokens, setTokens] = useState('200000')
   const [touched, setTouched] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [agentFilter, setAgentFilter] = useState('')
 
   // Custom agents: create, edit (dialog) and archive (confirm).
   const [agentDialog, setAgentDialog] = useState<{ edit?: AgentTemplate } | null>(null)
@@ -123,6 +130,10 @@ export function SessionSetup() {
         const wanted = search.get('mode')
         const pick = wanted && m.find((x: Mode) => x.name === wanted)
         if (pick) chooseModeFrom(pick, t)
+        else if (m.length > 1) {
+          const debate = m.find((x: Mode) => x.name.toLowerCase() === 'debate')
+          if (debate) setModeId(debate.id)
+        }
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)))
   }, [])
@@ -179,6 +190,12 @@ export function SessionSetup() {
     if (wasBuild && mode.name !== 'build') { setDollars('5'); setTokens('200000') }
   }
 
+  const shownTemplates = useMemo(() => {
+    const q = agentFilter.trim().toLowerCase()
+    if (!q) return visibleTemplates
+    return visibleTemplates.filter((t) => [t.name, t.role, t.stance].some((v) => (v ?? '').toLowerCase().includes(q)))
+  }, [visibleTemplates, agentFilter])
+
   const roster = useMemo(
     () => agentIds.map((id) => templates?.find((t) => t.id === id)).filter((t): t is AgentTemplate => !!t),
     [agentIds, templates],
@@ -192,8 +209,10 @@ export function SessionSetup() {
   // The developer writes the code the others judge: a small model there tends to loop or break the build.
   const smallDeveloper = isBuild && roster.some((t) => t.role === 'build-developer' &&
     catalog?.models.find((m) => m.id === seatModel(t))?.tier === 'small')
+  const suggested = Math.max(1, Math.ceil(estimate * 1.25))
   const pct = cap > 0 ? Math.round((estimate / cap) * 100) : null
 
+  const seatsReason = !modeId ? 'Choose a mode.' : !isBuild && roster.length < 2 ? 'Choose at least two agents.' : null
   const problems: string[] = []
   if (!modeId) problems.push('Choose a mode.')
   if (isBuild) {
@@ -284,6 +303,12 @@ export function SessionSetup() {
       <header className="page-head">
         <div>
           <h1>Session setup</h1>
+          {task && (
+            <div className="setup-task">
+              <p className="setup-task-title">{task.title}</p>
+              {task.brief && <p className="setup-task-brief">{task.brief}</p>}
+            </div>
+          )}
           <p className="muted">{isBuild
             ? 'Pick who builds, and how much the build may spend. The team works on a new branch in your repository.'
             : 'Pick how the discussion runs, who takes part, and how much it may spend.'}</p>
@@ -293,13 +318,13 @@ export function SessionSetup() {
 
       <div className="setup-layout">
         <div className="setup-main">
-          <section className="card card-pad" aria-labelledby="mode-h">
+          <section className="card card-pad s-mode" aria-labelledby="mode-h">
             <h2 id="mode-h">1. Mode</h2>
             <div className="mode-grid" role="radiogroup" aria-label="Mode">
               {modes.map((m) => (
                 <label key={m.id} className={`mode-card${modeId === m.id ? ' selected' : ''}`}>
                   <input type="radio" name="mode" value={m.id} checked={modeId === m.id} onChange={() => chooseMode(m)} />
-                  <span className="mode-name">{titleCase(m.name)}</span>
+                  <span className="mode-name">{modeLabel(m.name)}</span>
                   <span className="mode-blurb">{MODE_BLURBS[m.name.toLowerCase()] ?? titleCase(m.floor_policy ?? m.turn_policy ?? '')}</span>
                 </label>
               ))}
@@ -307,7 +332,7 @@ export function SessionSetup() {
           </section>
 
           {isBuild && task && (
-            <section className="card card-pad" aria-labelledby="repo-h">
+            <section className="card card-pad s-repo" aria-labelledby="repo-h">
               <h2 id="repo-h">Repository and permissions</h2>
               <p className="hint">The team works on a new branch in this repository; nothing is pushed. What each role may run is fixed when the session starts.</p>
               <WorkspaceFields value={ws} onChange={setWs} legend="" autoCheck={!!task.workspace} />
@@ -315,7 +340,7 @@ export function SessionSetup() {
           )}
 
 
-          <section className="card card-pad" aria-labelledby="agents-h">
+          <section className="card card-pad s-agents" aria-labelledby="agents-h">
             <h2 id="agents-h">2. Agent explorer</h2>
             <p className="hint">{isBuild
               ? 'The pipeline decides who speaks: plan, build, test, review. Fixes go back to the developer.'
@@ -324,8 +349,13 @@ export function SessionSetup() {
               <button type="button" className="btn sm" onClick={() => { setAgentError(null); setAgentNote(null); setAgentDialog({}) }}>Create agent</button>
             )}
             {agentNote && <p className="hint" role="status">{agentNote}</p>}
+            <div className="field agent-filter">
+              <label htmlFor="agent-filter">Filter agents</label>
+              <input id="agent-filter" type="search" value={agentFilter} placeholder="Name, role or stance" onChange={(e) => setAgentFilter(e.target.value)} />
+            </div>
+            {shownTemplates.length === 0 && <p className="muted" role="status">No agents match "{agentFilter}".</p>}
             <ul className="agent-list">
-              {visibleTemplates.map((t) => {
+              {shownTemplates.map((t) => {
                 const on = agentIds.includes(t.id)
                 return (
                   <li key={t.id} className={`agent-card${on ? ' on' : ''}`} style={{ ['--agent-h' as string]: agentHue(t.role ?? t.name) }}>
@@ -355,11 +385,11 @@ export function SessionSetup() {
         </div>
 
         <aside className="setup-side">
-          <section className="card card-pad" aria-labelledby="roster-h">
+          <section className="card card-pad s-roster" aria-labelledby="roster-h">
             <h2 id="roster-h">Selected roster</h2>
             {roster.length > 0 && (
               <TableRing size={150} seats={roster.map((t) => ({ key: t.id, initials: initials(t.name), hue: agentHue(t.role ?? t.name), label: t.name }))}>
-                {titleCase(modes.find((m) => m.id === modeId)?.name ?? 'Choose a mode')}
+                {modeLabel(modes.find((m) => m.id === modeId)?.name ?? 'Choose a mode')}
               </TableRing>
             )}
             {roster.length === 0 ? (
@@ -369,6 +399,7 @@ export function SessionSetup() {
                 {roster.map((t, i) => (
                   <li key={t.id}>
                     <span className="seat">{i + 1}</span>
+                    <span className="roster-main">
                     <span className="roster-name">{t.name}</span>
                     {catalog && catalog.models.length > 0 && (
                       <select className="seat-model" aria-label={`Model for ${t.name}`} value={seatModels[t.id] ?? ''}
@@ -379,6 +410,7 @@ export function SessionSetup() {
                         ))}
                       </select>
                     )}
+                    </span>
                     <button type="button" className="btn ghost sm" aria-label={`Move ${t.name} up`} disabled={i === 0} onClick={() => move(t.id, -1)}>↑</button>
                     <button type="button" className="btn ghost sm" aria-label={`Move ${t.name} down`} disabled={i === roster.length - 1} onClick={() => move(t.id, 1)}>↓</button>
                   </li>
@@ -407,11 +439,11 @@ export function SessionSetup() {
             )}
           </section>
 
-          <section className="card card-pad" aria-labelledby="budget-h">
+          <section className="card card-pad s-budget" aria-labelledby="budget-h">
             <h2 id="budget-h">Budget</h2>
             <div className="preset-row" role="group" aria-label="Budget presets">
               {BUDGET_PRESETS.map((p) => (
-                <button key={p.label} type="button" className="btn sm" onClick={() => preset(p)}>{p.label} · ${p.dollars}</button>
+                <button key={p.label} type="button" className={`btn sm${Number(dollars) === p.dollars ? ' selected' : ''}`} aria-pressed={Number(dollars) === p.dollars} onClick={() => preset(p)}>{p.label} · ${p.dollars}</button>
               ))}
             </div>
             <div className="field">
@@ -437,6 +469,7 @@ export function SessionSetup() {
               {pct !== null && pct > 100 && (
                 <p className="alert warn" role="status">
                   This cap is below the estimate, so the session will likely stop early, after a turn or two. Raise the cap or seat fewer agents.
+                  {' '}<button type="button" className="btn sm" onClick={() => setDollars(String(suggested))}>Use suggested ${suggested}</button>
                 </p>
               )}
               <p className="hint">A planning estimate, not a quote. The session stops before a turn that would cross the dollar cap.</p>
@@ -450,10 +483,19 @@ export function SessionSetup() {
           )}
           {submitError && <div className="alert bad" role="alert">{submitError}</div>}
 
-          <button type="button" className="btn primary lg block" disabled={submitting} onClick={submit}>
+          <button type="button" className="btn primary lg block start-main" disabled={submitting || !!seatsReason} aria-describedby={seatsReason ? 'start-reason' : undefined} onClick={submit}>
             {submitting ? 'Starting…' : 'Start session'}
           </button>
+          {seatsReason && <p id="start-reason" className="hint start-reason">{seatsReason}</p>}
         </aside>
+      </div>
+
+      <div className="setup-bar">
+        <span className="setup-bar-text" role="status">
+          {roster.length} {roster.length === 1 ? 'seat' : 'seats'}, about ${estimate.toFixed(2)} / ${Number.isFinite(cap) ? cap : 0} cap
+          {seatsReason && <span className="hint"> {seatsReason}</span>}
+        </span>
+        <button type="button" className="btn primary" disabled={submitting || !!seatsReason} onClick={submit}>Start</button>
       </div>
 
       {agentDialog && (

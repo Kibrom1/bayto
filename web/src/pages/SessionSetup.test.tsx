@@ -79,9 +79,9 @@ describe('SessionSetup', () => {
     renderSetup()
     await screen.findByRole('heading', { name: /session setup/i })
 
-    await user.click(screen.getByRole('button', { name: /start session/i }))
-
-    expect(await screen.findByRole('alert')).toHaveTextContent(/choose a mode/i)
+    // Debate is preselected, Start is disabled until two agents are seated and says why.
+    expect(screen.getByRole('button', { name: /start session/i })).toBeDisabled()
+    expect(screen.getAllByText(/choose at least two agents/i).length).toBeGreaterThan(0)
     expect(fetch).not.toHaveBeenCalledWith('/sessions', expect.anything())
   })
 

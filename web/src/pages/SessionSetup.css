@@ -73,3 +73,30 @@
 
 .seat-model { max-width: 11rem; font-size: 0.85rem; margin-inline: auto 0.5rem; }
 .roster-list li { flex-wrap: wrap; }
+
+/* UX-12..15 */
+.setup-task { margin-top: 0.5rem; }
+.setup-task-title { margin: 0; font-weight: 650; color: var(--ink); font-size: 1.05rem; }
+.setup-task-brief { margin: 0.2rem 0 0; color: var(--ink-2); font-size: 0.92rem; max-width: 60ch; }
+.agent-filter { margin: var(--space-3) 0; max-width: 20rem; }
+.roster-list li { flex-wrap: nowrap; align-items: flex-start; }
+.roster-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+.roster-name { flex: none; overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.seat-model { max-width: 100%; width: 100%; margin-inline: 0; }
+.preset-row .btn.selected { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); font-weight: 650; }
+.start-reason { margin: 0; text-align: center; }
+.alert .btn { margin-left: 0.4rem; }
+.setup-bar { display: none; }
+
+@media (max-width: 640px) {
+  .setup { padding-bottom: 5rem; }
+  .setup-layout, .setup-main, .setup-side { display: contents; }
+  .setup-layout { display: flex; flex-direction: column; gap: var(--space-5); }
+  .s-mode { order: 1; } .s-repo { order: 2; } .s-roster { order: 3; } .s-agents { order: 4; } .s-budget { order: 5; }
+  .alert { order: 6; } .start-main, .start-reason { order: 7; }
+  .start-main { display: none; }
+  .btn, .agent-manage .link-btn, .seat-model, #agent-filter { min-height: 44px; }
+  .setup-bar { display: flex; position: fixed; inset: auto 0 0 0; z-index: 20; align-items: center; justify-content: space-between; gap: var(--space-3);
+    padding: 0.6rem 16px calc(0.6rem + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); }
+  .setup-bar-text { font-size: 0.9rem; color: var(--ink); min-width: 0; }
+}

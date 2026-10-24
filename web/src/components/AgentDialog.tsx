@@ -70,6 +70,7 @@ export function AgentDialog({ initial, models, submitting, error, onSubmit, onCa
           {error && <p role="alert" className="alert bad" style={{ margin: 0 }}>{error}</p>}
         </div>
         <div className="modal-actions">
+          <p className="hint modal-note" style={{ flex: '1 1 100%', margin: 0 }}>Custom agents join discussions only; they cannot be Build seats.</p>
           {!ok && !submitting && <span className="hint" id="agent-hint">Add a name, a stance and instructions.</span>}
           <button type="button" className="btn" onClick={onCancel} disabled={submitting}>Cancel</button>
           <button type="submit" className="btn primary" disabled={!ok || submitting} aria-describedby={ok ? undefined : 'agent-hint'}>
