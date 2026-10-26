@@ -56,6 +56,7 @@ and `live_build_e2e.py` (Build, through the API; `--scenario fixcycle` forces a 
 
 | File | What it covers |
 | --- | --- |
+| [docs/architecture.html](docs/architecture.html) | Architecture diagrams: what runs where, one turn with the usage-limit fallback, and the Build pipeline (open the file in a browser) |
 | [docs/product-design.md](docs/product-design.md) | Product and system design: concepts, modes, agents, explorer, sandboxes, orchestration, UI, architecture, roadmap, decisions |
 | [docs/agent-communication-protocol.md](docs/agent-communication-protocol.md) | Reusable agent-to-agent communication protocol (`acp/1`), team roles and modes |
 | [docs/work-plan.md](docs/work-plan.md) | Task-level plan to start implementing (W0, M0–M2 in detail, M3–M6 deliverables) |
