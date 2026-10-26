@@ -190,3 +190,35 @@ def test_type_lists_and_null_are_accepted():
 
 def test_empty_hand_raises_is_a_valid_scorer_reply():
     assert schema_errors({"hand_raises": []}, _real_tools()["scorer"]["input_schema"]) == []
+
+
+async def test_moderator_falls_back_to_ollama_when_claude_is_out_of_credit(tmp_path, monkeypatch):
+    from orchestrator.llm.claude_cli import reset_claude_block
+    reset_claude_block()
+    log = tmp_path / "calls.txt"
+    ok = _envelope('{"x": 1}')
+    binary = _fake_claude(tmp_path, f'''if [ -n "$ANTHROPIC_BASE_URL" ]; then echo "local $ANTHROPIC_BASE_URL $*" >> {log}; printf '%s' '{ok}'; \
+else echo claude >> {log}; echo "You've hit your weekly limit" >&2; exit 1; fi
+''')
+    monkeypatch.setenv("BAYTO_MODERATOR_LOCAL_FALLBACK", "1")
+    monkeypatch.setenv("BAYTO_LOCAL_FALLBACK_MODEL", "ollama/qwen3:14b")
+    monkeypatch.setenv("OLLAMA_HOST", "localhost:11434")
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    cli = ClaudeCliClient(binary=binary)
+    out = await cli.run(model="claude-sonnet-5-5", system="s", prompt="p")
+    assert out["result"] == '{"x": 1}'
+    out2 = await cli.run(model="claude-sonnet-5-5", system="s", prompt="p")  # Claude is skipped while blocked
+    lines = log.read_text().splitlines()
+    assert lines[0] == "claude" and lines[1].startswith("local http://localhost:11434") and "qwen3:14b" in lines[1]
+    assert lines.count("claude") == 1 and len(lines) == 3
+    reset_claude_block()
+
+
+async def test_moderator_fallback_is_off_by_default(tmp_path, monkeypatch):
+    from orchestrator.llm.claude_cli import reset_claude_block
+    reset_claude_block()
+    binary = _fake_claude(tmp_path, 'echo "You\'ve hit your weekly limit" >&2\nexit 1\n')
+    monkeypatch.delenv("BAYTO_MODERATOR_LOCAL_FALLBACK", raising=False)
+    with pytest.raises(ClaudeCliError) as ei:
+        await ClaudeCliClient(binary=binary).run(model="m", system="s", prompt="p")
+    assert ei.value.limit is not None

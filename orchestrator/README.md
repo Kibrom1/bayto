@@ -29,6 +29,7 @@ answers `503 not_configured` naming the missing variable (and the server logs a 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | `postgresql+psycopg://bayto:bayto@localhost:5432/bayto` | Postgres connection |
+| `BAYTO_MODERATOR_LOCAL_FALLBACK` | off | `1` lets the moderator's `claude -p` calls (summary, turn order, synthesis) fall back to the local Ollama model in `BAYTO_LOCAL_FALLBACK_MODEL` (needs `OLLAMA_HOST`) when Claude is out of usage or credit; Claude is retried after its reset time |
 | `BAYTO_SUMMARY_MODEL` | none (required) | Model id for the moderator's rolling summary |
 | `BAYTO_SYNTHESIS_MODEL` | none (required) | Model id for the final synthesis |
 | `BAYTO_HAND_RAISE_MODEL` | none (raise-hand modes) | Model id for the hand-raise scorer |
