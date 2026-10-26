@@ -176,6 +176,37 @@ def failure_detail(stdout: str, stderr: str) -> str:
     return stdout.strip()[:400]
 
 
+_CLAUDE_BLOCKED_UNTIL = 0.0  # time.monotonic() until which Claude is known to be out of usage
+
+
+def moderator_fallback() -> tuple[str, dict[str, str]] | None:
+    """(local model name, child env) when the moderator may fall back to Ollama, else None. Off unless
+    BAYTO_MODERATOR_LOCAL_FALLBACK is 1/true/yes and both BAYTO_LOCAL_FALLBACK_MODEL (ollama/<name>) and OLLAMA_HOST are set."""
+    if os.environ.get("BAYTO_MODERATOR_LOCAL_FALLBACK", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return None
+    model = (os.environ.get("BAYTO_LOCAL_FALLBACK_MODEL") or "").strip()
+    host = (os.environ.get("OLLAMA_HOST") or "").strip()
+    if not model or not host:
+        return None
+    if model.startswith("ollama/"):
+        model = model[len("ollama/"):]
+    if "://" not in host:
+        host = "http://" + host
+    return model, {"ANTHROPIC_BASE_URL": host.rstrip("/"), "ANTHROPIC_AUTH_TOKEN": "ollama"}
+
+
+def _block_claude(limit: LimitHit) -> None:
+    global _CLAUDE_BLOCKED_UNTIL
+    from datetime import datetime, timezone
+    wait = (limit.retry_at() - datetime.now(timezone.utc)).total_seconds()
+    _CLAUDE_BLOCKED_UNTIL = time.monotonic() + max(60.0, wait)
+
+
+def reset_claude_block() -> None:
+    global _CLAUDE_BLOCKED_UNTIL
+    _CLAUDE_BLOCKED_UNTIL = 0.0
+
+
 class ClaudeCliClient:
     def __init__(self, *, binary: str | None = None, timeout: float = 240.0) -> None:
         self._binary = binary or os.environ.get("BAYTO_CLAUDE_BIN") or "claude"
@@ -183,10 +214,28 @@ class ClaudeCliClient:
         self.messages = _Messages(self)
 
     async def run(self, *, model: str, system: str, prompt: str) -> dict:
+        """One `claude -p` call. When Claude is out of usage or credit and the moderator local fallback is on
+        (BAYTO_MODERATOR_LOCAL_FALLBACK=1 with BAYTO_LOCAL_FALLBACK_MODEL and OLLAMA_HOST), the same call is
+        answered by the local Ollama model, and Claude is not tried again until its limit is due to reset."""
+        local = moderator_fallback()
+        if local is None:
+            return await self._run_once(model=model, system=system, prompt=prompt)
+        local_model, local_env = local
+        if time.monotonic() < _CLAUDE_BLOCKED_UNTIL:
+            return await self._run_once(model=local_model, system=system, prompt=prompt, extra_env=local_env)
+        try:
+            return await self._run_once(model=model, system=system, prompt=prompt)
+        except ClaudeCliError as exc:
+            if exc.limit is None:
+                raise
+            _block_claude(exc.limit)
+            return await self._run_once(model=local_model, system=system, prompt=prompt, extra_env=local_env)
+
+    async def _run_once(self, *, model: str, system: str, prompt: str, extra_env: dict[str, str] | None = None) -> dict:
         if shutil.which(self._binary) is None:
             raise ClaudeCliError(f"`{self._binary}` not found on PATH; install Claude Code and log in "
                                  "(or set BAYTO_CLAUDE_BIN)")
-        env = {k: v for k, v in child_env().items() if k != "ANTHROPIC_API_KEY"}
+        env = {k: v for k, v in child_env(extra_env).items() if k != "ANTHROPIC_API_KEY"}
         argv = [self._binary, "-p", prompt, "--model", model, "--output-format", "json",
                 "--append-system-prompt", system, "--max-turns", "1", "--tools", ""]
         # Run from an empty directory so no project CLAUDE.md or settings leak into the moderator.
