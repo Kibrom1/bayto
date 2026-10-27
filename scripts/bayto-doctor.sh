@@ -42,6 +42,16 @@ for p in 8000 5173; do
 done
 
 echo "Environment"
+case "$REPO" in
+  "$HOME"/Desktop/*|"$HOME"/Documents/*|*"Mobile Documents"*)
+    if [ "$(uname)" = "Darwin" ]; then
+      warn "this repository is in a folder iCloud syncs; it can swap files for unreadable placeholders (git, .venv, node_modules). Move it: mv '$REPO' ~/dev/bayto"
+    fi ;;
+esac
+if [ "$(uname)" = "Darwin" ]; then
+  n="$(find "$REPO" -path '*/node_modules' -prune -o -path '*/.git' -prune -o -flags +dataless -print 2>/dev/null | head -5 | wc -l | tr -d ' ')"
+  [ "$n" != 0 ] && warn "$n+ files here are iCloud placeholders (not downloaded); open them or move the repo out of iCloud"
+fi
 [ -n "${ANTHROPIC_API_KEY:-}" ] && warn "ANTHROPIC_API_KEY is set; Bayto runs on your Claude subscription and ignores it"
 [ -d "$REPO/orchestrator" ] && [ -d "$REPO/web" ] && ok "repository layout" || fail "repository layout" "run this from a full checkout of the repository"
 
