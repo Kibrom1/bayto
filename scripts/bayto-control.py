@@ -136,6 +136,8 @@ def in_icloud(path: Path) -> bool:
         return False
     home = Path.home()
     p = str(path.resolve())
+    if ".nosync" in p:  # a folder (or parent) named *.nosync is skipped by iCloud
+        return False
     return any(p == str(d) or p.startswith(str(d) + os.sep) for d in (home / "Desktop", home / "Documents")) \
         or "Mobile Documents" in p
 
