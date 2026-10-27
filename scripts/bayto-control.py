@@ -153,7 +153,12 @@ ORCH_PROC = Proc("orchestrator", ["uv", "run", "--all-extras", "uvicorn", "orche
                  # new release's migrations never leave the API answering 500. Needs Postgres to be running first.
                  pre=["sh", "-c", "uv sync --all-extras && uv run --all-extras alembic upgrade head"
                                   " && uv run --all-extras python -m orchestrator.seed"])
-WEB_PROC = Proc("web", ["npm", "run", "dev"], str(ROOT / "web"))
+# Before every start, check that Vite can actually be loaded. If node_modules is missing, half-synced (iCloud turns files
+# in ~/Desktop into placeholders that cannot be read) or BAYTO_REINSTALL_WEB=1 is set, delete it and `npm install`.
+WEB_PROC = Proc("web", ["npm", "run", "dev"], str(ROOT / "web"),
+                pre=["sh", "-c",
+                     'if [ -n "$BAYTO_REINSTALL_WEB" ] || ! node -e "require(\'vite/package.json\')" >/dev/null 2>&1; then '
+                     'echo "reinstalling web dependencies"; rm -rf node_modules && npm install; fi'])
 
 
 def port_open(port=5432):
