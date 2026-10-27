@@ -17,6 +17,7 @@ import shutil
 import socket
 import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -128,11 +129,25 @@ def run(argv, timeout=60):
         return 124, "timed out"
 
 
+def in_icloud(path: Path) -> bool:
+    """True when `path` is in a folder macOS may sync to iCloud (Desktop, Documents, iCloud Drive). iCloud swaps files there
+    for placeholders that cannot be read ("Resource deadlock avoided"), which breaks .venv, node_modules and .git."""
+    if sys.platform != "darwin":
+        return False
+    home = Path.home()
+    p = str(path.resolve())
+    return any(p == str(d) or p.startswith(str(d) + os.sep) for d in (home / "Desktop", home / "Documents")) \
+        or "Mobile Documents" in p
+
+
 def orch_env():
     # `src` on the path is a safety net for an editable install that went missing from the venv.
     e = {"PYTHONPATH": str(ROOT / "orchestrator" / "src") + os.pathsep + str(ROOT / "agent-comms" / "src"),
          "BAYTO_SUMMARY_MODEL": CONFIG["summary_model"], "BAYTO_SYNTHESIS_MODEL": CONFIG["synthesis_model"],
          "BAYTO_HAND_RAISE_MODEL": CONFIG["hand_raise_model"]}
+    # Keep the Python environment outside any folder iCloud syncs. An explicit UV_PROJECT_ENVIRONMENT still wins.
+    if not os.environ.get("UV_PROJECT_ENVIRONMENT"):
+        e["UV_PROJECT_ENVIRONMENT"] = str(Path.home() / ".venvs" / "bayto-orchestrator")
     if CONFIG["streaming"]:
         e["BAYTO_STREAMING_TURNS"] = "1"
     if CONFIG["llm_backend"] == "api":
@@ -358,6 +373,11 @@ class H(BaseHTTPRequestHandler):
 
 
 def main():
+    if in_icloud(ROOT):
+        print("WARNING: this repository is in a folder iCloud syncs (Desktop or Documents). iCloud can replace files with\n"
+              "         placeholders that cannot be read, which breaks git, .venv and node_modules. Move it, for example:\n"
+              f"         mv '{ROOT}' ~/dev/bayto\n"
+              "         The Python environment is already kept in ~/.venvs/bayto-orchestrator.")
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
     print(WEB_PROC.start() and "web dev server: " + WEB_PROC.status())
     print(f"Bayto control on http://127.0.0.1:{PORT}  (Ctrl+C stops this panel and the services it started)")
