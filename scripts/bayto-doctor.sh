@@ -43,6 +43,7 @@ done
 
 echo "Environment"
 case "$REPO" in
+  *.nosync*) ;;
   "$HOME"/Desktop/*|"$HOME"/Documents/*|*"Mobile Documents"*)
     if [ "$(uname)" = "Darwin" ]; then
       warn "this repository is in a folder iCloud syncs; it can swap files for unreadable placeholders (git, .venv, node_modules). Move it: mv '$REPO' ~/dev/bayto"
