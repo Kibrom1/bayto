@@ -20,7 +20,16 @@ SERVER_PID=""
 trap 'stop_server; rm -rf "$WORK"' EXIT
 
 pass() { printf '  ok    %s\n' "$1"; }
-fail() { printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | sed 's/^/          /' | tail -15; bad=1; }
+fail() {
+  printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | sed 's/^/          /' | tail -15
+  # In GitHub Actions also raise an annotation, which shows on the pull request and in the checks API.
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    local msg="$1"; [ -n "${2:-}" ] && msg="$1"$'\n'"$(printf '%s\n' "$2" | tail -15)"
+    msg="${msg//'%'/%25}"; msg="${msg//$'\r'/%0D}"; msg="${msg//$'\n'/%0A}"
+    echo "::error title=validate::$msg"
+  fi
+  bad=1
+}
 stage() { local s; for s in $WANT; do [ "$s" = "$1" ] && return 0; done; return 1; }
 WANT="${*:-static migrations boot blackbox web}"
 
