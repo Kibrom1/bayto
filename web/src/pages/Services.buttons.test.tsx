@@ -65,4 +65,20 @@ describe('Services buttons', () => {
     expect(within(t2).queryByRole('button', { name: 'Pause' })).toBeNull()
     expect(screen.queryByLabelText('Session id')).toBeNull()
   })
+
+  it('shows a health banner with Start all when something is down, and sends start_all', async () => {
+    const actions = stub({ postgres: 'running', observability: 'stopped', orchestrator: 'stopped', web: 'running' })
+    render(<MemoryRouter><Services /></MemoryRouter>)
+    const banner = await screen.findByRole('status')
+    expect(banner).toHaveTextContent('2 of 4 not running')
+    await userEvent.click(within(banner).getByRole('button', { name: 'Start all' }))
+    await waitFor(() => expect(actions).toContainEqual({ action: 'start_all', from_web: true }))
+  })
+
+  it('says everything is running when it is', async () => {
+    stub({ postgres: 'running', observability: 'running', orchestrator: 'running', web: 'running' })
+    render(<MemoryRouter><Services /></MemoryRouter>)
+    expect(await screen.findByRole('status')).toHaveTextContent('Everything is running.')
+    expect(screen.queryByRole('button', { name: 'Start all' })).toBeNull()
+  })
 })

@@ -50,3 +50,19 @@ export async function getLog(name: LogName): Promise<string> {
   const res = await fetch(`/control/api/log?name=${name}`)
   return res.ok ? res.text() : ''
 }
+
+export interface StartAllResult {
+  ok: boolean
+  steps: { name: string; ok: boolean; detail: string }[]
+  failed: string | null
+  log: string[]
+}
+
+export function parseStartAll(text: string): StartAllResult | null {
+  try {
+    const r = JSON.parse(text)
+    return r && Array.isArray(r.steps) ? r : null
+  } catch {
+    return null
+  }
+}

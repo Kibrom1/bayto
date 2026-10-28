@@ -1,7 +1,7 @@
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { controlAction, getControlState, getLog, getSessions, sessionOps, type SessionRow, type ControlState, type LogName } from '../api/control'
+import { controlAction, getControlState, getLog, getSessions, parseStartAll, sessionOps, type SessionRow, type ControlState, type LogName } from '../api/control'
 import { ConfirmDialog } from '../components/Dialog'
 import './Services.css'
 
@@ -166,6 +166,9 @@ export function Services() {
     }
   }
 
+  const down = state ? (Object.keys(state.services) as ServiceName[]).filter((n) => tone(state.services[n]) !== 'ok') : []
+  const startAll = parseStartAll(results['all']?.text ?? '')
+
   const services = state ? (Object.keys(state.services) as ServiceName[]) : []
   const result = (key: string) => results[key]
 
@@ -192,6 +195,22 @@ export function Services() {
 
       {state && (
         <>
+          <section className={`svc-alert ${down.length ? 'bad' : 'ok'}`} aria-label="Stack health" role="status">
+            <strong>{down.length === 0 ? 'Everything is running.' : `${down.length} of ${services.length} not running: ${down.map((n) => SERVICE_INFO[n].title).join(', ')}.`}</strong>
+            {down.length > 0 && (
+              <button type="button" className="btn primary sm" disabled={busy === 'all'}
+                onClick={() => act('all', { action: 'start_all' })}>
+                {busy === 'all' ? 'Starting… this can take a minute' : 'Start all'}
+              </button>
+            )}
+            {startAll && (
+              <ul className="svc-steps">
+                {startAll.steps.map((st) => <li key={st.name} className={st.ok ? '' : 'bad'}>{st.ok ? '✓' : '✗'} {SERVICE_INFO[st.name as ServiceName]?.title ?? st.name}: {st.detail}</li>)}
+              </ul>
+            )}
+            {startAll && !startAll.ok && startAll.log.length > 0 && <pre className="svc-console">{startAll.log.join('\n')}</pre>}
+          </section>
+
           <section className="svc-card" aria-label="Dev stack">
             <h2>Dev stack</h2>
             {services.map((name) => {

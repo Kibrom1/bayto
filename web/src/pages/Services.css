@@ -50,6 +50,7 @@
 
 .svc-alert { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4); border-radius: var(--radius); margin-bottom: var(--space-4); }
 .svc-alert.bad { background: var(--danger-soft); color: var(--danger); }
+.svc-alert.ok { background: var(--success-soft, var(--surface-2, transparent)); color: var(--success, inherit); }
 
 .pill { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.15rem 0.65rem; border-radius: 6px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; background: var(--surface-2); color: var(--ink-2); }
 .pill-dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; }
@@ -123,3 +124,6 @@
 .svc-row-note { font-size: 0.8rem; color: var(--ink-3, var(--ink-2)); max-width: 14rem; }
 .log-more { font: inherit; font-size: 0.72rem; background: none; border: 0; color: var(--accent, #8ab4ff); cursor: pointer; padding: 0; text-decoration: underline; }
 #svc-log { height: min(60vh, 520px); max-height: none; min-height: 160px; resize: vertical; }
+
+.svc-steps { list-style: none; margin: .5rem 0 0; padding: 0; width: 100%; }
+.svc-steps .bad { color: var(--svc-bad, #e5484d); }
