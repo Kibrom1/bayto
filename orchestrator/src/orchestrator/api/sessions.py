@@ -289,6 +289,14 @@ async def start_session(
     scorer_factory=Depends(get_hand_raise_scorer_factory),
     login_check=Depends(get_login_check),
 ) -> dict:
+    # Answer 404/409 before spending a `claude -p` call on the login check (and before its 503 can hide them).
+    async with sessionmaker() as db:
+        pre = await db.get(Session, session_id)
+        if pre is None:
+            raise HTTPException(404, detail=_error("not_found", "session not found"))
+        if pre.status != STATUS_CREATED:
+            raise HTTPException(409, detail=_error("invalid_transition",
+                                                     f"cannot start a session in status {pre.status!r}"))
     await login_check()
     async with sessionmaker() as db:
         row = await db.get(Session, session_id)
@@ -461,6 +469,14 @@ async def resume_session(
     Guard: only `needs_human` sessions can be resumed. A fresh `launch_runner()` for an
     already-active session (e.g. a double-tap of /resume) would create a second parallel
     runner, which is wrong -- the 409 prevents that."""
+    async with sessionmaker() as db:
+        pre = await db.get(Session, session_id)
+        if pre is None:
+            raise HTTPException(404, detail=_error("not_found", "session not found"))
+        if pre.status != STATUS_NEEDS_HUMAN:
+            raise HTTPException(409, detail=_error(
+                "invalid_transition",
+                f"can only resume a paused (needs_human) session (current status: {pre.status!r})"))
     await login_check()
     async with sessionmaker() as db:
         row = await db.get(Session, session_id)
