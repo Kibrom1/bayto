@@ -62,3 +62,12 @@ async def test_the_second_failure_in_a_row_pauses_the_session_with_the_reason(tm
         msgs = (await db.execute(select(MessageRow).where(MessageRow.session_id == session_id))).scalars().all()
     assert row.status == "needs_human"
     assert any("could not run its turn 2 times in a row" in m.body and "selected model" in m.body for m in msgs)
+
+
+def test_grpc_noise_on_stderr_does_not_hide_the_real_reason():
+    from orchestrator.sandbox.provider import failure_cause
+    noise = "I1027 22:47:03.867650 1541066 ev_poll_posix.cc:587] FD from fork parent still in poll list: fd(21, generation: 1)"
+    tail = '{"type":"result","is_error":true,"result":"There\'s an issue with the selected model (claude-sonnet-5)."}'
+    assert "selected model" in failure_cause(noise, tail)
+    assert "no error output" in failure_cause(noise, "")
+    assert failure_cause(noise + "\nbash: cd: /x: No such file or directory", tail) == "bash: cd: /x: No such file or directory"
