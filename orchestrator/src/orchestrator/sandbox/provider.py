@@ -12,6 +12,7 @@ input needing validation.
 """
 from __future__ import annotations
 
+import re
 import abc
 import uuid
 from collections.abc import Mapping
@@ -38,12 +39,18 @@ class SandboxProviderError(RuntimeError):
     """Base error for SandboxProvider implementations."""
 
 
+# gRPC/glog lines such as `I1027 22:47:03.867650 1541066 ev_poll_posix.cc:587] FD from fork parent ...`: harmless, and they
+# used to hide the real reason because they made stderr look non-empty.
+_GRPC_NOISE = re.compile(r"^[IWEF]\d{4} \d\d:\d\d:\d\d\.\d+\s+\d+\s+\S+:\d+\]")
+
+
 def failure_cause(stderr: str, stdout_tail: str = "") -> str:
     """One readable reason a sandbox command failed: stderr when there is any, else the `result` text of the last
     stream-json event that carried one, else the last stdout lines."""
     import json
-    if (stderr or "").strip():
-        return stderr.strip()
+    quiet = "\n".join(ln for ln in (stderr or "").splitlines() if ln.strip() and not _GRPC_NOISE.match(ln)).strip()
+    if quiet:
+        return quiet
     lines = [ln for ln in (stdout_tail or "").splitlines() if ln.strip()]
     for line in reversed(lines):
         try:
