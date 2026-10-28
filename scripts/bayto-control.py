@@ -161,18 +161,6 @@ def orch_env():
     if port_open(OBS_OTLP_PORT):
         # Observability is up: send traces and the audit trail to it. (Started later? restart the orchestrator.)
         e["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"http://127.0.0.1:{OBS_OTLP_PORT}"
-    # The OTLP port above speaks gRPC. OTEL_* variables left in the shell (for example from a Claude Code usage dashboard:
-    # OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf, OTEL_METRICS_EXPORTER=otlp) would make the API send HTTP to it, filling the
-    # log with BadStatusLine errors, so pin the protocol and keep metrics and logs off.
-    e["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
-    e["OTEL_METRICS_EXPORTER"] = "none"
-    e["OTEL_LOGS_EXPORTER"] = "none"
-    e["OTEL_TRACES_EXPORTER"] = "otlp" if port_open(OBS_OTLP_PORT) else "none"
-    for k in ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
-              "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL"):
-        e[k] = ""
-    if not port_open(OBS_OTLP_PORT):
-        e["OTEL_EXPORTER_OTLP_ENDPOINT"] = ""  # observability is off: do not inherit an endpoint from the shell
     return e
 
 
