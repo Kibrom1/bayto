@@ -71,3 +71,13 @@ def test_grpc_noise_on_stderr_does_not_hide_the_real_reason():
     assert "selected model" in failure_cause(noise, tail)
     assert "no error output" in failure_cause(noise, "")
     assert failure_cause(noise + "\nbash: cd: /x: No such file or directory", tail) == "bash: cd: /x: No such file or directory"
+
+
+def test_a_synthetic_assistant_message_is_the_reason():
+    import json
+    from orchestrator.sandbox.provider import failure_cause
+    status = json.dumps({"type": "system", "subtype": "status", "status": "requesting"})
+    err = json.dumps({"type": "assistant", "message": {"model": "<synthetic>", "role": "assistant",
+                      "content": [{"type": "text", "text": "There's an issue with the selected model (claude-sonnet-5). It may not exist."}]}})
+    assert "issue with the selected model" in failure_cause("", status + "\n" + err)
+    assert failure_cause("", status) == "no error output (the command printed nothing)"
