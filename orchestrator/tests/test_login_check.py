@@ -97,3 +97,20 @@ async def test_start_and_resume_stop_before_touching_the_session_when_login_is_b
     assert r.status_code == 503 and r.json()["detail"]["error"]["code"] == "moderator_login"
     async with live_sessionmaker() as db:
         assert (await db.get(Session, sid)).status == status
+
+
+@pytest.mark.parametrize("path,status,want", [("start", "active", 409), ("resume", "created", 409)])
+async def test_unknown_or_wrong_state_sessions_get_404_or_409_even_when_login_is_bad(live_sessionmaker, monkeypatch, path, status, want):
+    for v in ("BAYTO_SUMMARY_MODEL", "BAYTO_SYNTHESIS_MODEL", "BAYTO_HAND_RAISE_MODEL"):
+        monkeypatch.setenv(v, "m")
+    calls = []
+
+    async def refuse():
+        calls.append(1)
+        raise deps.HTTPException(503, detail={"error": {"code": "moderator_login", "detail": "run /login"}})
+    app.state.login_check = refuse
+    sid = await _session(live_sessionmaker, status)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        assert (await c.post(f"/sessions/{uuid.uuid4()}/{path}")).status_code == 404
+        assert (await c.post(f"/sessions/{sid}/{path}")).status_code == want
+    assert calls == []  # no claude -p call was spent on a request that could never succeed

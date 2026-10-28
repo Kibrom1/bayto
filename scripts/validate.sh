@@ -41,7 +41,9 @@ stop_server() {
 start_server() {
   local log="$1"; shift
   stop_server
-  ( cd "$REPO/orchestrator" && env "$@" $PYTHON -m uvicorn orchestrator.app:app --port "$PORT" >"$log" 2>&1 ) &
+  # Nothing may already answer on the port: a stale server would make the checks below test the wrong process.
+  if curl -fsS -m 2 "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; then echo "port $PORT is already in use" >"$log"; return 1; fi
+  ( cd "$REPO/orchestrator" && exec env "$@" $PYTHON -m uvicorn orchestrator.app:app --port "$PORT" >"$log" 2>&1 ) &
   SERVER_PID=$!
   local i
   for i in $(seq 1 60); do
@@ -123,7 +125,7 @@ if stage web; then
   if out="$(npx tsc -b 2>&1)"; then pass "type check"; else fail "type check" "$out"; fi
   if out="$(npm run build 2>&1)"; then pass "production build"; else fail "production build" "$out"; fi
   ( npx vite --port 5199 --strictPort >"$WORK/vite.log" 2>&1 ) & VITE=$!
-  ok=""; for i in $(seq 1 30); do [ "$(code http://127.0.0.1:5199/services)" = 200 ] && { ok=1; break; }; sleep 1; done
+  ok=""; for i in $(seq 1 30); do [ "$(code http://localhost:5199/services)" = 200 ] && { ok=1; break; }; sleep 1; done
   if [ -n "$ok" ]; then pass "dev server serves /services"; else fail "dev server did not serve /services" "$(tail -10 "$WORK/vite.log")"; fi
   kill "$VITE" 2>/dev/null; pkill -P "$VITE" 2>/dev/null; wait "$VITE" 2>/dev/null
 fi
