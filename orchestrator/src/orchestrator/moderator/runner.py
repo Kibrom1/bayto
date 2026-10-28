@@ -215,6 +215,9 @@ class ModeratorRunner:
         self._opening_done = self._pipeline
         self._retry_note: str | None = None  # why this pipeline turn is a repeat (set per grant)
         self._consecutive_quiet_rounds = 0
+        # seat -> (consecutive streaming-turn failures, why the last one failed). Two in a row end the wait: the seat's
+        # `claude` cannot run (bad model, not signed in inside the sandbox), and waiting out two grant timeouts only hides it.
+        self._stream_failures: dict[str, tuple[int, str]] = {}
         self._last_hand_raise_seq = 0
         self._last_interject_seq = 0
         self._grant_seat: str | None = None  # whose turn it is; picks which parts of long attachments to show
@@ -737,10 +740,24 @@ class ModeratorRunner:
                     if getattr(self._sandbox_provider, "supports_streaming", False):
                         try:
                             streamed = await self._stream_turn(view, participant)
-                        except Exception:
-                            log.exception("session %s: streaming turn for %s failed; using the seat path",
-                                          self._session_id, participant)
+                        except Exception as exc:
+                            cause = getattr(exc, "cause", None) or f"{type(exc).__name__}: {exc}"
+                            n = self._stream_failures.get(participant, (0, ""))[0] + 1
+                            if isinstance(exc, SandboxCommandError) and detect_limit_in_text(cause) is None:
+                                self._stream_failures[participant] = (n, cause)
+                            log.error("session %s: streaming turn for %s failed (%s in a row): %s",
+                                      self._session_id, participant, n, cause[:300], exc_info=n == 1)
+                        else:
+                            if streamed:
+                                self._stream_failures.pop(participant, None)
                         hit = self._turn_limit
+                        failures = self._stream_failures.get(participant)
+                        if not streamed and hit is None and failures and failures[0] >= 2:
+                            span.set_attribute("outcome", "seat_cannot_run")
+                            self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
+                            await self._escalate_to_human(
+                                view, f"{participant} could not run its turn {failures[0]} times in a row: {failures[1][:400]}")
+                            return
                     if not streamed and hit is None:
                         try:
                             await self._sandbox_provider.wake_role(self._sandbox, participant)
@@ -776,7 +793,9 @@ class ModeratorRunner:
 
             if response is None:
                 span.set_attribute("outcome", "timeout")
-                await self._escalate_to_human(view, f"{participant} did not respond after 2 grants")
+                last = self._stream_failures.get(participant)
+                await self._escalate_to_human(
+                    view, f"{participant} did not respond after 2 grants" + (f" (its last run failed: {last[1][:300]})" if last else ""))
                 return
 
             span.set_attribute("outcome", "responded")

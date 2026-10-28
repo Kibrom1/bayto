@@ -38,14 +38,39 @@ class SandboxProviderError(RuntimeError):
     """Base error for SandboxProvider implementations."""
 
 
+def failure_cause(stderr: str, stdout_tail: str = "") -> str:
+    """One readable reason a sandbox command failed: stderr when there is any, else the `result` text of the last
+    stream-json event that carried one, else the last stdout lines."""
+    import json
+    if (stderr or "").strip():
+        return stderr.strip()
+    lines = [ln for ln in (stdout_tail or "").splitlines() if ln.strip()]
+    for line in reversed(lines):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        for key in ("result", "error"):
+            text = obj.get(key)
+            if isinstance(text, str) and text.strip():
+                return text.strip()[:600]
+    return "; ".join(lines[-3:])[:600] if lines else "no error output (the command printed nothing)"
+
+
 class SandboxCommandError(SandboxProviderError):
     """A provider's underlying CLI/subprocess call exited non-zero."""
 
-    def __init__(self, argv: list[str], returncode: int, stderr: str) -> None:
+    def __init__(self, argv: list[str], returncode: int, stderr: str, stdout_tail: str = "") -> None:
         self.argv = argv
         self.returncode = returncode
         self.stderr = stderr
-        super().__init__(f"command {argv!r} exited {returncode}: {stderr}")
+        # `claude -p --output-format stream-json` reports its own failures (bad model, not logged in) as JSON on
+        # stdout and exits 1 with an empty stderr. Keep the last stdout lines so the error says why.
+        self.stdout_tail = stdout_tail
+        self.cause = failure_cause(stderr, stdout_tail)
+        super().__init__(f"command {argv!r} exited {returncode}: {self.cause}")
 
 
 @dataclass(frozen=True, slots=True)
