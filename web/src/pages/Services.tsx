@@ -1,7 +1,7 @@
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { controlAction, getControlState, getLog, type ControlState, type LogName } from '../api/control'
+import { controlAction, getControlState, getLog, getSessions, sessionOps, type SessionRow, type ControlState, type LogName } from '../api/control'
 import { ConfirmDialog } from '../components/Dialog'
 import './Services.css'
 
@@ -71,7 +71,8 @@ export function Services() {
   const [follow, setFollow] = useState(true)
   const logRef = useRef<HTMLPreElement>(null)
   const logCard = useRef<HTMLElement>(null)
-  const [sessionId, setSessionId] = useState('')
+  const [sessions, setSessions] = useState<SessionRow[] | null>(null)
+  const loadSessions = useCallback(async () => { try { setSessions(await getSessions()) } catch { /* panel down: the state poll reports it */ } }, [])
   const [sandboxName, setSandboxName] = useState('')
   const [sandboxOut, setSandboxOut] = useState('')
   const [summaryModel, setSummaryModel] = useState('')
@@ -124,11 +125,15 @@ export function Services() {
     // First load on the next tick (not synchronously in the effect), then poll.
     const first = setTimeout(refresh, 0)
     const t = setInterval(refresh, 3000)
+    const firstSessions = setTimeout(loadSessions, 0)
+    const ts = setInterval(loadSessions, 20000)
     return () => {
       clearTimeout(first)
+      clearTimeout(firstSessions)
       clearInterval(t)
+      clearInterval(ts)
     }
-  }, [refresh])
+  }, [refresh, loadSessions])
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -271,28 +276,25 @@ export function Services() {
 
           <section className="svc-card" aria-label="Sessions">
             <h2>Sessions</h2>
-            {state.sessions.length === 0 && <p className="svc-note">No sessions yet. Create one from a task.</p>}
-            {state.sessions.map((s) => (
+            {sessions === null && <p className="svc-note">Loading sessions…</p>}
+            {sessions?.length === 0 && <p className="svc-note">No sessions yet. Create one from a task.</p>}
+            {sessions?.map((s) => (
               <div className="svc-row" key={s.id}>
                 <div className="svc-row-main">
                   <div className="svc-row-title">{s.task}</div>
-                  <div className="svc-row-hint">
-                    <button type="button" className="svc-link" onClick={() => setSessionId(s.id)}>{s.id.slice(0, 8)}</button>
-                    {' · '}<Link to={`/room/${s.id}`}>Open room</Link>
-                  </div>
+                  <div className="svc-row-hint"><Link to={`/room/${s.id}`}>Open room</Link>{' · '}{s.id.slice(0, 8)}</div>
                 </div>
                 <StatusPill status={s.status} />
+                <div className="svc-row-actions">
+                  {sessionOps(s.status).map((op) => (
+                    <button key={op} type="button" className="btn" disabled={busy === `ses:${s.id}:${op}`}
+                      onClick={async () => { await act(`ses:${s.id}:${op}`, { action: 'session', id: s.id, op }); loadSessions() }}>
+                      {op[0].toUpperCase() + op.slice(1)}
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
-            <div className="svc-actions">
-              <input className="svc-input" value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="Session id" aria-label="Session id" />
-              {(['start', 'pause', 'resume', 'stop'] as const).map((op) => (
-                <button key={op} type="button" className="btn" disabled={!sessionId.trim() || busy === `ses:${op}`}
-                  onClick={() => act(`ses:${op}`, { action: 'session', id: sessionId.trim(), op })}>
-                  {op[0].toUpperCase() + op.slice(1)}
-                </button>
-              ))}
-            </div>
             {Object.entries(results).filter(([k]) => k.startsWith('ses:')).slice(-1).map(([k, r]) => (
               <div key={k} className={`svc-result${r.bad ? ' bad' : ''}`}>{r.text}</div>
             ))}

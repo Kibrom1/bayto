@@ -279,21 +279,26 @@ def orch_call(method, path, body=None):
         return 0, {"error": f"orchestrator unreachable: {e}"}
 
 
-def state():
+def sessions_list():
+    """One GET /tasks plus one GET per task's last session. Slow, so the page asks for it on demand, not on its 3s poll."""
     code, tasks = orch_call("GET", "/tasks")
-    sessions = []
+    out = []
     if code == 200:
         for t in tasks:
             sid = t.get("last_session_id")
             if sid:
                 c, s = orch_call("GET", f"/sessions/{sid}")
-                sessions.append({"task": t["title"], "id": sid,
-                                 "status": (s.get("session") or s).get("status") if c == 200 else f"error {c}"})
+                out.append({"task": t["title"], "id": sid,
+                            "status": (s.get("session") or s).get("status") if c == 200 else f"error {c}"})
+    return out
+
+
+def state():
+    """Cheap: process/container status and config only (no orchestrator calls)."""
     return {
         "services": {"postgres": pg_status(), "observability": obs_status(), "orchestrator": ORCH_PROC.status(),
                      "web": WEB_PROC.status()},
         "config": {**CONFIG, "api_key": "set" if CONFIG["api_key"] else ""},
-        "sessions": sessions,
     }
 
 
@@ -376,6 +381,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, "Bayto control API. The UI is the Services page: http://localhost:5173/services", "text/plain; charset=utf-8")
         if self.path == "/api/state":
             return self._send(200, json.dumps(state()))
+        if self.path == "/api/sessions":
+            return self._send(200, json.dumps(sessions_list()))
         if self.path.startswith("/api/log"):
             name = self.path.split("name=")[-1]
             if name in ("postgres", "observability"):

@@ -10,7 +10,23 @@ export interface ControlState {
     hand_raise_model: string
     api_key: string // "set" or ""; the key itself is never returned
   }
-  sessions: { task: string; id: string; status: string }[]
+}
+
+export interface SessionRow { task: string; id: string; status: string }
+
+export async function getSessions(): Promise<SessionRow[]> {
+  const res = await fetch('/control/api/sessions')
+  if (!res.ok) return []
+  const rows = await res.json()
+  return Array.isArray(rows) ? rows : []
+}
+
+/** Which session actions make sense for a status (the orchestrator rejects the rest with 409). */
+export function sessionOps(status: string): ('start' | 'pause' | 'resume' | 'stop')[] {
+  if (status === 'created') return ['start']
+  if (status === 'active') return ['pause', 'stop']
+  if (status === 'paused' || status === 'needs_human') return ['resume', 'stop']
+  return []
 }
 
 export async function getControlState(): Promise<ControlState> {
