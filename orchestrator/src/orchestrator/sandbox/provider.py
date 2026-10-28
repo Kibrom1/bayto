@@ -59,11 +59,18 @@ def failure_cause(stderr: str, stdout_tail: str = "") -> str:
             continue
         if not isinstance(obj, dict):
             continue
+        if obj.get("type") == "assistant":
+            msg = obj.get("message") or {}
+            if msg.get("model") == "<synthetic>":  # claude -p reports API/auth/model errors as a synthetic assistant message
+                text = " ".join(b.get("text", "") for b in (msg.get("content") or []) if isinstance(b, dict)).strip()
+                if text:
+                    return text[:600]
         for key in ("result", "error"):
             text = obj.get(key)
             if isinstance(text, str) and text.strip():
                 return text.strip()[:600]
-    return "; ".join(lines[-3:])[:600] if lines else "no error output (the command printed nothing)"
+    plain = [ln for ln in lines if not ln.lstrip().startswith("{")]
+    return "; ".join(plain[-3:])[:600] if plain else "no error output (the command printed nothing)"
 
 
 class SandboxCommandError(SandboxProviderError):
