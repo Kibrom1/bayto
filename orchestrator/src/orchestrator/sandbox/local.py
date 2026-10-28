@@ -26,6 +26,8 @@ as verified only at the DB/argv-shape level (see tests/test_local_sandbox.py).
 """
 from __future__ import annotations
 
+import collections
+
 import asyncio
 import json
 import logging
@@ -162,6 +164,7 @@ class _LineStream:
         except (BrokenPipeError, OSError):
             pass  # the process already exited; its exit code is reported by __next__
         self._done = False
+        self._tail: collections.deque[str] = collections.deque(maxlen=6)  # last stdout lines, for the error when stderr is empty
 
     def __iter__(self) -> "_LineStream":
         return self
@@ -171,12 +174,13 @@ class _LineStream:
             raise StopIteration
         line = self._proc.stdout.readline()  # type: ignore[union-attr]
         if line:
+            self._tail.append(line.strip()[:600])
             return line
         self._done = True
         err = self._proc.stderr.read() if self._proc.stderr else ""
         code = self._proc.wait()
         if code != 0:
-            raise SandboxCommandError(self._argv, code, err)
+            raise SandboxCommandError(self._argv, code, err, stdout_tail="\n".join(t for t in self._tail if t))
         raise StopIteration
 
     def kill(self) -> None:
@@ -471,7 +475,8 @@ class LocalSbxSandboxProvider(SandboxProvider):
                     if not env:
                         raise
                     # The child's stderr can echo its environment; the token must not reach logs or the room.
-                    raise SandboxCommandError(exc.argv, exc.returncode, redact(exc.stderr, env)) from None
+                    raise SandboxCommandError(exc.argv, exc.returncode, redact(exc.stderr, env),
+                                              stdout_tail=redact(exc.stdout_tail, env)) from None
                 pending = None
                 if line is None:
                     break
