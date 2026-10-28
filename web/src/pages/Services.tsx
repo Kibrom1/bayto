@@ -27,12 +27,31 @@ function StatusPill({ status }: { status: string }) {
 
 const LOG_NAMES: LogName[] = ['orchestrator', 'web', 'postgres', 'observability']
 const NOISE = /exporting (spans|metrics|logs) batch|Failed to export (spans|metrics|logs)|BadStatusLine/i
+// uvicorn access lines for requests that worked (the page itself polls every few seconds, so these bury everything else)
+const OK_REQUEST = /"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) [^"]*" [23]\d\d\b/
+const LONG_LINE = 300
 const logLevel = (line: string): 'err' | 'warn' | '' =>
   /\b(ERROR|CRITICAL|FATAL|Traceback|Exception)\b|command not found|exited with code [1-9]|failed/i.test(line) ? 'err' : /\bWARN(ING)?\b/.test(line) ? 'warn' : ''
 
 /** The last few meaningful lines of a log: what a failed service row shows so the cause is next to the failure. */
 export function logTail(log: string, n = 5): string[] {
-  return log.split('\n').map((l) => l.trimEnd()).filter((l) => l && !NOISE.test(l)).slice(-n)
+  return log.split('\n').map((l) => l.trimEnd()).filter((l) => l && !NOISE.test(l) && !OK_REQUEST.test(l)).slice(-n)
+}
+
+function LogLine({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  const long = text.length > LONG_LINE
+  return (
+    <span className={`log-line ${logLevel(text)}`}>
+      {long && !open ? text.slice(0, LONG_LINE) : text}
+      {long && (
+        <button type="button" className="log-more" onClick={() => setOpen(!open)}>
+          {open ? ' show less' : ` … show ${text.length - LONG_LINE} more characters`}
+        </button>
+      )}
+      {'\n'}
+    </span>
+  )
 }
 
 export function Services() {
@@ -48,6 +67,7 @@ export function Services() {
   const [procLogs, setProcLogs] = useState<Record<string, string>>({})
   const [filter, setFilter] = useState('')
   const [hideNoise, setHideNoise] = useState(true)
+  const [hideOk, setHideOk] = useState(true)
   const [follow, setFollow] = useState(true)
   const logRef = useRef<HTMLPreElement>(null)
   const logCard = useRef<HTMLElement>(null)
@@ -112,8 +132,8 @@ export function Services() {
 
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase()
-    return log.split('\n').filter((l) => (!hideNoise || !NOISE.test(l)) && (!q || l.toLowerCase().includes(q)))
-  }, [log, filter, hideNoise])
+    return log.split('\n').filter((l) => (!hideNoise || !NOISE.test(l)) && (!hideOk || !OK_REQUEST.test(l)) && (!q || l.toLowerCase().includes(q)))
+  }, [log, filter, hideNoise, hideOk])
 
   useEffect(() => {
     if (follow && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -195,15 +215,25 @@ export function Services() {
                   </div>
                   <StatusPill status={status} />
                   <div className="svc-row-actions">
-                    <button type="button" className="btn primary" disabled={running || working}
-                      onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'start' })}>
-                      {working ? 'Working…' : 'Start'}
-                    </button>
-                    <button type="button" className="btn" disabled={!running || working || name === 'web'}
-                      title={name === 'web' ? 'Stop it with Ctrl+C in the terminal running bayto-control.py' : undefined}
-                      onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'stop' })}>
-                      Stop
-                    </button>
+                    {!running ? (
+                      <button type="button" className="btn primary" disabled={working}
+                        onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'start' })}>
+                        {working ? 'Working…' : 'Start'}
+                      </button>
+                    ) : name === 'web' ? (
+                      <span className="svc-row-note">Stop it with Ctrl+C in the terminal running bayto-control.py</span>
+                    ) : (
+                      <>
+                        <button type="button" className="btn" disabled={working}
+                          onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'restart' })}>
+                          {working ? 'Working…' : 'Restart'}
+                        </button>
+                        <button type="button" className="btn" disabled={working}
+                          onClick={() => act(`svc:${name}`, { action: 'service', name, op: 'stop' })}>
+                          Stop
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               )
@@ -305,13 +335,14 @@ export function Services() {
             </div>
             <div className="svc-logbar">
               <input className="svc-input" type="search" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter lines" aria-label="Filter log lines" />
+              <label className="svc-check"><input type="checkbox" checked={hideOk} onChange={(e) => setHideOk(e.target.checked)} />Hide successful requests</label>
               <label className="svc-check"><input type="checkbox" checked={hideNoise} onChange={(e) => setHideNoise(e.target.checked)} />Hide telemetry noise</label>
               <label className="svc-check"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />Follow new output</label>
             </div>
             <pre id="svc-log" ref={logRef} className="svc-console" tabIndex={0}>
               {shown.length === 0 || (shown.length === 1 && !shown[0])
                 ? (log ? 'No lines match.' : 'No output yet.')
-                : shown.map((l, i) => <span key={i} className={`log-line ${logLevel(l)}`}>{l + '\n'}</span>)}
+                : shown.map((l, i) => <LogLine key={i} text={l} />)}
             </pre>
           </section>
         </>

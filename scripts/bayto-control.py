@@ -297,20 +297,36 @@ def state():
     }
 
 
+def restart(stopper, starter):
+    """Stop (if running), wait until it has really stopped, then start. Returns the start result with what stop said."""
+    stopped = stopper()
+    time.sleep(1)
+    started = starter()
+    return f"restart: {stopped}; then {started}"
+
+
 def do_action(a):
     kind = a.get("action")
     if kind == "service":
         name, op = a.get("name"), a.get("op")
-        if name == "postgres":
-            return pg_start() if op == "start" else pg_stop()
-        if name == "observability":
-            return obs_start() if op == "start" else obs_stop()
-        proc = {"orchestrator": ORCH_PROC, "web": WEB_PROC}.get(name)
-        if proc is None or op not in ("start", "stop"):
+        if op not in ("start", "stop", "restart"):
             return "bad request"
-        if name == "web" and op == "stop" and a.get("from_web"):
+        if name == "web" and op in ("stop", "restart") and a.get("from_web"):
             return "the web server serves this page; stop it from the terminal running bayto-control.py (Ctrl+C)"
-        return proc.start() if op == "start" else proc.stop()
+        if name == "postgres":
+            starter, stopper = pg_start, pg_stop
+        elif name == "observability":
+            starter, stopper = obs_start, obs_stop
+        else:
+            proc = {"orchestrator": ORCH_PROC, "web": WEB_PROC}.get(name)
+            if proc is None:
+                return "bad request"
+            starter, stopper = proc.start, proc.stop
+        if op == "start":
+            return starter()
+        if op == "stop":
+            return stopper()
+        return restart(stopper, starter)
     if kind == "config":
         for k in ("summary_model", "synthesis_model", "hand_raise_model"):
             if isinstance(a.get(k), str) and NAME_RE.match(a[k]):
