@@ -10,11 +10,19 @@ export class ApiError extends Error {
   }
 }
 
+/** What a 502/503/504 without a body means: nothing is listening on the API port. */
+export const API_DOWN = "Bayto's API isn't running. Start it from Services & logs."
+
+/** True when the message is the API-down sentence, so the UI can offer a link to the Services page. */
+export const isApiDown = (message: string) => message.includes(API_DOWN)
+
 export async function parseError(res: Response): Promise<string> {
   let body: any
   try {
     body = await res.json()
   } catch {
+    // A proxy error (the dev server cannot reach the API) has no JSON body: say what it means, not "Bad Gateway".
+    if (res.status === 502 || res.status === 503 || res.status === 504) return API_DOWN
     return res.statusText
   }
   const detail = body?.detail

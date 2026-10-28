@@ -362,6 +362,10 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(state()))
         if self.path.startswith("/api/log"):
             name = self.path.split("name=")[-1]
+            if name in ("postgres", "observability"):
+                code, out = run(["docker", "logs", "--tail", "300", PG_NAME if name == "postgres" else OBS_NAME], 15)
+                return self._send(200, out if code == 0 or out else "No container output (is Docker running and the service started?)",
+                                  "text/plain; charset=utf-8")
             proc = {"orchestrator": ORCH_PROC, "web": WEB_PROC}.get(name, ORCH_PROC)
             return self._send(200, "\n".join(proc.log), "text/plain; charset=utf-8")
         self._send(404, "not found", "text/plain")

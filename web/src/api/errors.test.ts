@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ApiError, isNotFound, parseError } from './errors'
+import { API_DOWN, ApiError, isApiDown, isNotFound, parseError } from './errors'
 
 const res = (body: unknown, status = 400) => new Response(JSON.stringify(body), { status })
 
@@ -13,7 +13,17 @@ describe('parseError', () => {
   })
   it('keeps plain string details and tolerates non-JSON', async () => {
     expect(await parseError(res({ detail: 'nope' }))).toBe('nope')
-    expect(await parseError(new Response('<html>', { status: 502, statusText: 'Bad Gateway' }))).toBe('Bad Gateway')
+    expect(await parseError(new Response('<html>', { status: 400, statusText: 'Bad Request' }))).toBe('Bad Request')
+  })
+  it('says the API is not running for a bodyless proxy error', async () => {
+    for (const status of [502, 503, 504]) {
+      expect(await parseError(new Response('', { status, statusText: 'Bad Gateway' }))).toBe(API_DOWN)
+    }
+    expect(isApiDown(`GET /tasks failed: 502 ${API_DOWN}`)).toBe(true)
+    expect(isApiDown('session not found')).toBe(false)
+  })
+  it('keeps the orchestrator own 503 message', async () => {
+    expect(await parseError(res({ detail: 'The moderator cannot reach Claude' }, 503))).toBe('The moderator cannot reach Claude')
   })
 })
 

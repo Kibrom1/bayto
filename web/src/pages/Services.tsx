@@ -1,7 +1,7 @@
 import { useDocumentTitle } from '../hooks/useDocumentTitle'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { controlAction, getControlState, getLog, type ControlState } from '../api/control'
+import { controlAction, getControlState, getLog, type ControlState, type LogName } from '../api/control'
 import { ConfirmDialog } from '../components/Dialog'
 import './Services.css'
 
@@ -25,8 +25,18 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`pill pill-${tone(status)}`}><span className="pill-dot" />{status}</span>
 }
 
+const LOG_NAMES: LogName[] = ['orchestrator', 'web', 'postgres', 'observability']
+const NOISE = /exporting (spans|metrics|logs) batch|Failed to export (spans|metrics|logs)|BadStatusLine/i
+const logLevel = (line: string): 'err' | 'warn' | '' =>
+  /\b(ERROR|CRITICAL|FATAL|Traceback|Exception)\b|command not found|exited with code [1-9]|failed/i.test(line) ? 'err' : /\bWARN(ING)?\b/.test(line) ? 'warn' : ''
+
+/** The last few meaningful lines of a log: what a failed service row shows so the cause is next to the failure. */
+export function logTail(log: string, n = 5): string[] {
+  return log.split('\n').map((l) => l.trimEnd()).filter((l) => l && !NOISE.test(l)).slice(-n)
+}
+
 export function Services() {
-  useDocumentTitle('Developer tools')
+  useDocumentTitle('Services & logs')
   const [state, setState] = useState<ControlState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -34,7 +44,13 @@ export function Services() {
   const [results, setResults] = useState<Record<string, { text: string; bad: boolean }>>({})
   const [log, setLog] = useState('')
   const [copied, setCopied] = useState(false)
-  const [logName, setLogName] = useState<'orchestrator' | 'web'>('orchestrator')
+  const [logName, setLogName] = useState<LogName>('orchestrator')
+  const [procLogs, setProcLogs] = useState<Record<string, string>>({})
+  const [filter, setFilter] = useState('')
+  const [hideNoise, setHideNoise] = useState(true)
+  const [follow, setFollow] = useState(true)
+  const logRef = useRef<HTMLPreElement>(null)
+  const logCard = useRef<HTMLElement>(null)
   const [sessionId, setSessionId] = useState('')
   const [sandboxName, setSandboxName] = useState('')
   const [sandboxOut, setSandboxOut] = useState('')
@@ -59,6 +75,8 @@ export function Services() {
       }
       const next = await getLog(logName)
       setLog((prev) => (prev === next ? prev : next))
+      const [o, w] = await Promise.all([getLog('orchestrator'), getLog('web')])
+      setProcLogs((prev) => (prev.orchestrator === o && prev.web === w ? prev : { orchestrator: o, web: w }))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -92,6 +110,20 @@ export function Services() {
     }
   }, [refresh])
 
+  const shown = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    return log.split('\n').filter((l) => (!hideNoise || !NOISE.test(l)) && (!q || l.toLowerCase().includes(q)))
+  }, [log, filter, hideNoise])
+
+  useEffect(() => {
+    if (follow && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [shown, follow])
+
+  function openLog(name: LogName) {
+    setLogName(name)
+    logCard.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
   async function act(key: string, body: Record<string, unknown>): Promise<string> {
     setBusy(key)
     try {
@@ -118,7 +150,7 @@ export function Services() {
       <header className="svc-header">
         <div>
           <p className="svc-kicker">For developers</p>
-          <h1>Developer tools</h1>
+          <h1>Services &amp; logs</h1>
           <p className="svc-lede">Start, stop and inspect the local pieces Bayto runs on: the orchestrator, the web app and the agent sandboxes. You only need this if you run Bayto yourself.</p>
         </div>
         <Link className="btn" to="/">← Tasks</Link>
@@ -151,6 +183,15 @@ export function Services() {
                       <div className="svc-row-hint"><a href="http://localhost:16686" target="_blank" rel="noreferrer">Open the viewer</a> and search for the tag <code>bayto.audit=true</code> to see the audit trail.</div>
                     )}
                     {r && <div className={`svc-result${r.bad ? ' bad' : ''}`} role={r.bad ? 'alert' : 'status'}>{r.text}</div>}
+                    {!running && !working && (name === 'orchestrator' || name === 'web') && logTail(procLogs[name] ?? '').length > 0 && (
+                      <div className="svc-tail" aria-label={`Last log lines of ${SERVICE_INFO[name].title}`}>
+                        <pre>{logTail(procLogs[name] ?? '').join('\n')}</pre>
+                        <button type="button" className="btn sm" onClick={() => openLog(name)}>View full log</button>
+                      </div>
+                    )}
+                    {!running && !working && (name === 'postgres' || name === 'observability') && (
+                      <button type="button" className="btn sm" onClick={() => openLog(name)}>View container log</button>
+                    )}
                   </div>
                   <StatusPill status={status} />
                   <div className="svc-row-actions">
@@ -251,18 +292,27 @@ export function Services() {
             {sandboxOut && <pre className="svc-console">{sandboxOut}</pre>}
           </section>
 
-          <section className="svc-card" aria-label="Logs">
+          <section className="svc-card" aria-label="Logs" ref={logCard}>
             <div className="svc-card-head">
               <h2>Logs</h2>
               <div className="svc-tabs" role="tablist">
-                {(['orchestrator', 'web'] as const).map((n) => (
+                {LOG_NAMES.map((n) => (
                   <button key={n} type="button" role="tab" aria-selected={logName === n}
-                    className={`svc-tab${logName === n ? ' on' : ''}`} onClick={() => setLogName(n)}>{n}</button>
+                    className={`svc-tab${logName === n ? ' on' : ''}`} onClick={() => setLogName(n)}>{SERVICE_INFO[n].title}</button>
                 ))}
               </div>
               <button type="button" className="btn sm" disabled={!log} onClick={copyLog}>{copied ? 'Copied' : 'Copy log'}</button>
             </div>
-            <pre id="svc-log" className="svc-console" tabIndex={0}>{log || 'No output yet.'}</pre>
+            <div className="svc-logbar">
+              <input className="svc-input" type="search" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter lines" aria-label="Filter log lines" />
+              <label className="svc-check"><input type="checkbox" checked={hideNoise} onChange={(e) => setHideNoise(e.target.checked)} />Hide telemetry noise</label>
+              <label className="svc-check"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />Follow new output</label>
+            </div>
+            <pre id="svc-log" ref={logRef} className="svc-console" tabIndex={0}>
+              {shown.length === 0 || (shown.length === 1 && !shown[0])
+                ? (log ? 'No lines match.' : 'No output yet.')
+                : shown.map((l, i) => <span key={i} className={`log-line ${logLevel(l)}`}>{l + '\n'}</span>)}
+            </pre>
           </section>
         </>
       )}

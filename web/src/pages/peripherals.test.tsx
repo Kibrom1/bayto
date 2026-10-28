@@ -15,9 +15,9 @@ describe('Services (developer tools)', () => {
     const fetchMock = vi.fn(async () => new Response('no', { status: 502 }))
     vi.stubGlobal('fetch', fetchMock)
     render(<MemoryRouter><Services /></MemoryRouter>)
-    expect(screen.getByRole('heading', { level: 1, name: 'Developer tools' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Services & logs' })).toBeInTheDocument()
     expect(screen.getByText(/only need this if you run Bayto yourself/)).toBeInTheDocument()
-    expect(document.title).toBe('Developer tools · Bayto')
+    expect(document.title).toBe('Services & logs · Bayto')
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent("The control panel isn't running")
     const before = fetchMock.mock.calls.length
@@ -27,10 +27,10 @@ describe('Services (developer tools)', () => {
 })
 
 describe('navigation', () => {
-  it('labels the services link "Developer tools"', async () => {
+  it('labels the services link "Services & logs"', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })))
     render(<MemoryRouter><Routes><Route element={<AppShell />}><Route path="/" element={<p>home</p>} /></Route></Routes></MemoryRouter>)
-    expect(await screen.findByRole('link', { name: 'Developer tools' })).toHaveAttribute('href', '/services')
+    expect(await screen.findByRole('link', { name: 'Services & logs' })).toHaveAttribute('href', '/services')
     expect(screen.queryByRole('link', { name: 'Services' })).toBeNull()
   })
 })
