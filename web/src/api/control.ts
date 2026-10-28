@@ -28,7 +28,9 @@ export async function controlAction(body: Record<string, unknown>): Promise<stri
   return res.text()
 }
 
-export async function getLog(name: 'orchestrator' | 'web'): Promise<string> {
+export type LogName = 'orchestrator' | 'web' | 'postgres' | 'observability'
+
+export async function getLog(name: LogName): Promise<string> {
   const res = await fetch(`/control/api/log?name=${name}`)
   return res.ok ? res.text() : ''
 }

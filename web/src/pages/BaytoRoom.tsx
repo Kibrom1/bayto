@@ -396,7 +396,8 @@ export function BaytoRoom() {
       {session.status === 'failed' && (
         <div className="notice error" role="alert">
           <p className="notice-line"><strong>This session failed.</strong> {friendlyFailure(session.failure_reason)}
-            {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}</p>
+            {!session.failure_reason && ' Check the orchestrator log on the Services page for the "failed to start" line.'}
+            {' '}<Link to="/services">Open Services &amp; logs</Link></p>
           {modeName !== 'build' && (
             <p className="notice-actions"><button type="button" className="btn primary" onClick={continueWithSameTeam}>Retry with same team</button></p>
           )}

@@ -46,7 +46,7 @@ export function AppShell() {
         </NavLink>
         <nav className="shell-nav" aria-label="Main">
           <NavLink to="/" end>Tasks</NavLink>
-          <NavLink to="/services">Developer tools</NavLink>
+          <NavLink to="/services">Services &amp; logs</NavLink>
         </nav>
         {feedback && (
           <a className="feedback-link" href={feedback} target="_blank" rel="noopener noreferrer">Send feedback</a>

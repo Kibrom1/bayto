@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { isApiDown } from '../api/errors'
 import { archiveSession, deleteSession } from '../api/sessions'
 import { ConfirmDialog } from '../components/Dialog'
 import { createTask, deleteTask, listTasks, type Task, type TaskCreateRequest } from '../api/tasks'
@@ -210,6 +211,7 @@ export function TaskBoard() {
       {error && (
         <p role="alert" className="alert bad">
           Couldn't load tasks: {error}
+          {isApiDown(error) && <> <Link to="/services">Open Services &amp; logs</Link></>}
           <button type="button" className="btn sm" style={{ marginLeft: 'var(--space-3)' }} onClick={() => { setError(null); refresh() }}>Retry</button>
         </p>
       )}

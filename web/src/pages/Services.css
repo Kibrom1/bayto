@@ -110,3 +110,10 @@
 .svc-details { font-size: 0.85rem; }
 .svc-details summary { cursor: pointer; }
 .svc-details code { display: block; margin-top: var(--space-1); overflow-wrap: anywhere; }
+
+.svc-tail { margin-top: var(--space-2); }
+.svc-tail pre { margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: #0a0b16; border: 1px solid var(--line); color: #c9cce6; font: 0.76rem/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.svc-logbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+.svc-logbar .svc-input { flex: 1 1 14rem; min-width: 0; }
+.log-line.err { color: #ff9a9a; }
+.log-line.warn { color: #f2cf7a; }
