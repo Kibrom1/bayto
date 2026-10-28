@@ -29,7 +29,7 @@
 }
 
 .svc-card h2 { margin: 0 0 var(--space-3); font-size: 1.15rem; }
-.svc-card-head { display: flex; align-items: center; justify-content: space-between; }
+.svc-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); }
 
 .svc-row {
   display: flex;
@@ -117,3 +117,9 @@
 .svc-logbar .svc-input { flex: 1 1 14rem; min-width: 0; }
 .log-line.err { color: #ff9a9a; }
 .log-line.warn { color: #f2cf7a; }
+.svc-tab { white-space: nowrap; }
+.svc-tabs { flex-wrap: wrap; }
+.svc-card-head .btn { margin-left: auto; }
+.svc-row-note { font-size: 0.8rem; color: var(--ink-3, var(--ink-2)); max-width: 14rem; }
+.log-more { font: inherit; font-size: 0.72rem; background: none; border: 0; color: var(--accent, #8ab4ff); cursor: pointer; padding: 0; text-decoration: underline; }
+#svc-log { height: min(60vh, 520px); max-height: none; min-height: 160px; resize: vertical; }
