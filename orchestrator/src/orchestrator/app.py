@@ -87,7 +87,19 @@ async def lifespan(app: FastAPI):
         await close()  # releases held execs; the teams die with them
 
 
-app = FastAPI(title="Bayto Orchestrator", lifespan=lifespan)
+def _make_app() -> FastAPI:
+    # FastAPI 0.14x configures its own OpenTelemetry from OTEL_* variables, and insists on http/protobuf. Bayto sets up
+    # tracing itself (telemetry.py, gRPC to OTEL_EXPORTER_OTLP_ENDPOINT), so turn FastAPI's auto-configuration off: it would
+    # otherwise take over the global provider and send HTTP to the gRPC port ("BadStatusLine" errors). Spans still reach
+    # the provider Bayto installs. Older FastAPI has no such option.
+    try:
+        return FastAPI(title="Bayto Orchestrator", lifespan=lifespan,
+                       telemetry={"auto_configure": False, "metrics": False, "logs": False})
+    except TypeError:
+        return FastAPI(title="Bayto Orchestrator", lifespan=lifespan)
+
+
+app = _make_app()
 
 # In-process session registries (M2.8), populated by api/runtime.py's launch_runner.
 app.state.running_sessions = {}  # session_id -> the ModeratorRunner's asyncio.Task
