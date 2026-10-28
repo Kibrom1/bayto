@@ -302,6 +302,66 @@ def state():
     }
 
 
+def wait_until(check, timeout, every=1.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        if check():
+            return True
+        time.sleep(every)
+    return check()
+
+
+def port_open(port, host="127.0.0.1"):
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def start_all(waiter=wait_until):
+    """Start the stack in dependency order, waiting for each part to be healthy. Idempotent: running parts are left alone.
+    Returns {"ok": bool, "steps": [{name, ok, detail}], "failed": name|None, "log": [last lines of the failed process]}."""
+    steps = []
+
+    def finish(name, ok, detail, log=None):
+        steps.append({"name": name, "ok": ok, "detail": detail})
+        if ok:
+            return None
+        return {"ok": False, "steps": steps, "failed": name, "log": log or []}
+
+    def docker_step(name, status, start, port, timeout):
+        if status() == "running":
+            return finish(name, True, "already running")
+        out = start()
+        ok = waiter(lambda: status() == "running" and port_open(port), timeout)
+        return finish(name, ok, out if ok else f"did not become ready in {timeout}s: {out}",
+                      None if ok else run(["docker", "logs", "--tail", "20", PG_NAME if name == "postgres" else OBS_NAME], 15)[1].splitlines())
+
+    def proc_step(name, proc, ready, timeout):
+        if proc.running() and ready():
+            return finish(name, True, "already running")
+        out = proc.start() if not proc.running() else "starting"
+        ok = waiter(ready, timeout)
+        return finish(name, ok, out if ok else f"not healthy after {timeout}s: {out}", None if ok else list(proc.log)[-20:])
+
+    def orch_ready():
+        code, _ = orch_call("GET", "/healthz")
+        return code == 200
+
+    for step in (
+        lambda: docker_step("postgres", pg_status, pg_start, 5432, 60),
+        lambda: docker_step("observability", obs_status, obs_start, OBS_OTLP_PORT, 60),
+        lambda: proc_step("orchestrator", ORCH_PROC, orch_ready, 120),
+        lambda: proc_step("web", WEB_PROC, lambda: port_open(5173) or port_open(5173, "::1"), 120),
+    ):
+        failed = step()
+        if failed:
+            return failed
+    return {"ok": True, "steps": steps, "failed": None, "log": []}
+
+
 def restart(stopper, starter):
     """Stop (if running), wait until it has really stopped, then start. Returns the start result with what stop said."""
     stopped = stopper()
@@ -332,6 +392,8 @@ def do_action(a):
         if op == "stop":
             return stopper()
         return restart(stopper, starter)
+    if kind == "start_all":
+        return json.dumps(start_all())
     if kind == "config":
         for k in ("summary_model", "synthesis_model", "hand_raise_model"):
             if isinstance(a.get(k), str) and NAME_RE.match(a[k]):

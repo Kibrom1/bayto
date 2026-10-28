@@ -33,6 +33,8 @@ jobs:
       - name: Test orchestrator
         working-directory: orchestrator
         run: python -m pytest -q
+      - name: Test control panel script
+        run: python -m pytest -q scripts/tests
       - name: Test agent-comms
         working-directory: agent-comms
         run: python -m pytest -q
