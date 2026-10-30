@@ -333,3 +333,31 @@ def test_concurrent_sends_get_gapless_unique_seq(handoff, request):
     seqs = sorted(json.loads(f.read_text())["seq"]
                   for f in (handoff.factory_dir / "messages").glob("*.json"))
     assert seqs == list(range(1, n_per_writer * n_writers + 1))
+
+
+# ----------------------------------------------------------------- durability
+
+def test_atomic_write_text_fsyncs_before_rename(monkeypatch, tmp_path):
+    """Writes must survive a crash right after rename, not just a clean exit.
+
+    temp+rename alone only makes the rename itself atomic; without an
+    fsync of the temp file's data before the rename, a crash (or sandbox
+    stop) can still leave the renamed file holding stale or truncated
+    content on some filesystems. transport.py's _atomic_write already does
+    this; this asserts handoff_compat's does too.
+    """
+    import importlib
+    import sys
+
+    sys.modules.pop("acp.handoff_compat", None)
+    mod = importlib.import_module("acp.handoff_compat")
+
+    fsynced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(mod.os, "fsync", lambda fd: (fsynced.append(fd), real_fsync(fd))[1])
+
+    target = tmp_path / "state.json"
+    mod._atomic_write_text(target, "hello")
+
+    assert fsynced, "_atomic_write_text did not call os.fsync before renaming into place"
+    assert target.read_text() == "hello"

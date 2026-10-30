@@ -84,6 +84,8 @@ def _atomic_write_text(target: Path, data: str) -> None:
     try:
         with os.fdopen(fd, "w") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
         os.chmod(tmp, 0o644)
         os.replace(tmp, target)
     except BaseException:
