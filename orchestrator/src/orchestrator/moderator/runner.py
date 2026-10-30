@@ -65,7 +65,7 @@ from ..models import SessionAgent, Task, TaskAttachment, Turn
 from ..models_catalog import get_model
 from ..recall import MAX_MESSAGES_SCANNED, MAX_SYNTHESES_SCANNED, RECALL_KINDS, SUMMARY_CHARS, Source, recall_block, synthesis_text
 from ..providers import ProviderError, provider_for, split_model_id
-from ..providers.gateway import BUILD_FLAG, gateway_build_allowed, gateway_env, gateway_model_name
+from ..providers.gateway import BUILD_FALLBACK_VAR, BUILD_FLAG, build_fallback_model, gateway_build_allowed, gateway_env, gateway_model_name
 from ..pubsub import PubSub
 from ..sandbox.provider import SandboxCommandError, SandboxInfo, SandboxProvider
 from ..sandbox.turns import TextDelta, ToolUse, TurnResult
@@ -724,7 +724,14 @@ class ModeratorRunner:
                 # Only a seat that runs on Claude can run out of Claude's usage. Build (pipeline) seats need tools and
                 # history, which the text-only local model cannot give, so for them a limit always pauses for a human.
                 claude_seat = external is None and gateway is None
-                cfg = await self._fallback_config() if claude_seat and not self._pipeline else lf.FallbackConfig(False, None)
+                if claude_seat and self._pipeline:
+                    # Build: only a gateway model keeps the seat's tools, so the fallback is the opt-in Build one (off by default).
+                    build_model = build_fallback_model()
+                    cfg = lf.FallbackConfig(bool(build_model), build_model)
+                elif claude_seat:
+                    cfg = await self._fallback_config()
+                else:
+                    cfg = lf.FallbackConfig(False, None)
                 on_local = await self._fallback_entry(participant) if cfg.usable else None
                 hit: LimitHit | None = None
                 used_local = False
@@ -892,10 +899,11 @@ class ModeratorRunner:
         once on the local model and True is returned. Otherwise the session is paused for a human with the reason and
         False is returned: a limit is never retried in a loop."""
         retry_at = hit.retry_at()
-        if self._pipeline or not cfg.usable:
+        if not cfg.usable:
             span.set_attribute("outcome", "limit_paused")
             if self._pipeline:
-                why = ("Build seats need tools, which a local model does not have, so they never fall back")
+                why = (f"Build seats need tools, so they fall back only to a gateway model with tool use: set {BUILD_FALLBACK_VAR}, "
+                       "BAYTO_GATEWAY_URL and BAYTO_ALLOW_GATEWAY_BUILD=1 and restart Bayto to turn that on")
             elif cfg.enabled:
                 why = f"the local fallback is on but has no model: set one for the task or {lf.ENV_MODEL}"
             else:
@@ -939,6 +947,15 @@ class ModeratorRunner:
         """One turn on the local model through the direct Ollama adapter. The prompt is the same one the Claude path
         gets (task, brief, retrieved passages, recall, summary, human notes): `_build_context`, never the bare
         assignment. Marked in the message meta, the audit trail and a live `message_meta` event."""
+        if self._pipeline:
+            # A Build seat keeps its tools: the same streamed `claude -p` turn, behind the gateway, for this turn only.
+            try:
+                await self._gateway_turn(view, participant, f"gateway/{model}")
+            except ProviderError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise ProviderError(f"{type(exc).__name__}: {str(exc)[:300]}") from exc
+            return
         provider_id, bare = split_model_id(model)
         row = await self._seat_row(participant)
         system = self._system_of(row) if row is not None else "You are one participant in a multi-agent discussion."

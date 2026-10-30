@@ -33,6 +33,21 @@ def gateway_build_allowed() -> bool:
     return os.environ.get(BUILD_FLAG, "").strip() == "1"
 
 
+BUILD_FALLBACK_VAR = "BAYTO_BUILD_FALLBACK_MODEL"
+
+
+def build_fallback_model() -> str | None:
+    """The bare gateway model name a Build seat switches to when Claude is out of usage, or None when that is off.
+
+    On only when ALL of these hold: BAYTO_BUILD_FALLBACK_MODEL names a model, the gateway is set up (BAYTO_GATEWAY_URL)
+    and Build seats may use a gateway (BAYTO_ALLOW_GATEWAY_BUILD=1). The seat keeps its tools and its permission flags:
+    only the model behind its `claude -p` changes, for that turn."""
+    name = (os.environ.get(BUILD_FALLBACK_VAR) or "").strip()
+    if not name or any(c in name for c in "\r\n\0 ") or gateway_url() is None or not gateway_build_allowed():
+        return None
+    return name
+
+
 def gateway_url() -> str | None:
     raw = os.environ.get(URL_VAR, "").strip().rstrip("/")
     parsed = urlparse(raw)

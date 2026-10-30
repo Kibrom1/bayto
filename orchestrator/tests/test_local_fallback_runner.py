@@ -37,6 +37,7 @@ class ScriptedStreaming(FakeStreamingProvider):
 
     async def run_turn(self, sandbox, role, prompt, *, env=None, model=None):
         self.prompts.append((role, prompt))
+        self.overrides.append((role, env, model))
         for e in (self.scripts.pop(0) if len(self.scripts) > 1 else self.scripts[0]):
             yield e
 
@@ -192,7 +193,62 @@ async def test_a_build_seat_never_falls_back(tmp_path, live_sessionmaker, ollama
     async with live_sessionmaker() as db:
         assert (await db.get(Session, session_id)).status == "needs_human"
     note = next(m for m in await _messages(live_sessionmaker, session_id, mirror) if m.kind == "note")
-    assert "never fall back" in note.body
+    assert "fall back only to a gateway model" in note.body and "BAYTO_BUILD_FALLBACK_MODEL" in note.body
+
+
+@pytest.fixture
+def build_fallback(monkeypatch):
+    monkeypatch.setenv("BAYTO_GATEWAY_URL", "http://host.docker.internal:11434")
+    monkeypatch.setenv("BAYTO_ALLOW_GATEWAY_BUILD", "1")
+    monkeypatch.setenv("BAYTO_STREAMING_TURNS", "1")
+    monkeypatch.setenv("BAYTO_BUILD_FALLBACK_MODEL", "qwen2.5-coder:14b")
+
+
+def test_the_build_fallback_needs_all_three_settings(monkeypatch):
+    from orchestrator.providers.gateway import build_fallback_model
+    for k in ("BAYTO_GATEWAY_URL", "BAYTO_ALLOW_GATEWAY_BUILD", "BAYTO_BUILD_FALLBACK_MODEL"):
+        monkeypatch.delenv(k, raising=False)
+    assert build_fallback_model() is None
+    monkeypatch.setenv("BAYTO_BUILD_FALLBACK_MODEL", "qwen2.5-coder:14b")
+    assert build_fallback_model() is None  # no gateway, Build not allowed
+    monkeypatch.setenv("BAYTO_GATEWAY_URL", "http://host.docker.internal:11434")
+    assert build_fallback_model() is None  # Build seats may not use a gateway yet
+    monkeypatch.setenv("BAYTO_ALLOW_GATEWAY_BUILD", "1")
+    assert build_fallback_model() == "qwen2.5-coder:14b"
+    monkeypatch.setenv("BAYTO_BUILD_FALLBACK_MODEL", "bad name\nx")
+    assert build_fallback_model() is None
+
+
+async def test_a_build_seat_on_a_limit_retries_the_turn_on_the_gateway_model_with_its_tools(tmp_path, live_sessionmaker, build_fallback):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {})
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, runner._pubsub, session_id=session_id)
+    provider = ScriptedStreaming([[LIMIT], [GOOD]])
+    runner._sandbox_provider = provider
+    await _turn(runner, mirror)
+    assert len(provider.prompts) == 2  # Claude once, then the local model once: no loop
+    first, second = provider.overrides
+    assert first[1] is None and first[2] is None  # the first try is plain Claude
+    assert second[2] == "qwen2.5-coder:14b" and second[1]["ANTHROPIC_BASE_URL"] == "http://host.docker.internal:11434"
+    assert provider.prompts[0][0] == provider.prompts[1][0]  # the same seat, so the same tool-permission flags apply
+    async with live_sessionmaker() as db:
+        assert (await db.get(Session, session_id)).status != "needs_human"
+    state = await _state(live_sessionmaker, session_id)
+    assert next(iter(state.values()))["model"] == "qwen2.5-coder:14b"
+    notes = [m for m in await _messages(live_sessionmaker, session_id, mirror) if m.kind == "note"]
+    assert any("usage limit was reached" in m.body and "qwen2.5-coder:14b" in m.body for m in notes)
+
+
+async def test_if_the_build_gateway_model_fails_the_session_pauses_with_both_reasons(tmp_path, live_sessionmaker, build_fallback):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {})
+    mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, runner._pubsub, session_id=session_id)
+    provider = ScriptedStreaming([[LIMIT], []])  # the second turn ends with no result at all
+    runner._sandbox_provider = provider
+    await _turn(runner, mirror)
+    assert len(provider.prompts) == 2
+    async with live_sessionmaker() as db:
+        assert (await db.get(Session, session_id)).status == "needs_human"
+    note = [m for m in await _messages(live_sessionmaker, session_id, mirror) if m.kind == "note"][-1]
+    assert "usage limit was reached" in note.body and "did not answer" in note.body
 
 
 async def test_if_the_local_model_fails_the_session_pauses_with_both_reasons(tmp_path, live_sessionmaker, ollama):
