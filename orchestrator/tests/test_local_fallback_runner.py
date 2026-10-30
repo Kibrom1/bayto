@@ -224,7 +224,7 @@ async def test_a_build_seat_on_a_limit_retries_the_turn_on_the_gateway_model_wit
     mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, runner._pubsub, session_id=session_id)
     provider = ScriptedStreaming([[LIMIT], [GOOD]])
     runner._sandbox_provider = provider
-    await runner.run_once()
+    await _turn(runner, mirror)
     assert len(provider.prompts) == 2  # Claude once, then the local model once: no loop
     first, second = provider.overrides
     assert first[1] is None and first[2] is None  # the first try is plain Claude
@@ -243,7 +243,7 @@ async def test_if_the_build_gateway_model_fails_the_session_pauses_with_both_rea
     mirror = MessageMirror(FileTransport(tmp_path), live_sessionmaker, runner._pubsub, session_id=session_id)
     provider = ScriptedStreaming([[LIMIT], []])  # the second turn ends with no result at all
     runner._sandbox_provider = provider
-    await runner.run_once()
+    await _turn(runner, mirror)
     assert len(provider.prompts) == 2
     async with live_sessionmaker() as db:
         assert (await db.get(Session, session_id)).status == "needs_human"
