@@ -409,7 +409,8 @@ def do_action(a):
         sid, op = a.get("id", ""), a.get("op")
         if not UUID_RE.match(sid) or op not in ("start", "pause", "resume", "stop"):
             return "bad request"
-        code, body = orch_call("POST", f"/sessions/{sid}/{op}")
+        # /stop requires a JSON body (omitting it is a 422); stopping from this page skips the paid write-up.
+        code, body = orch_call("POST", f"/sessions/{sid}/{op}", {"synthesize": False} if op == "stop" else None)
         return f"{op}: HTTP {code} {json.dumps(body)[:300]}"
     if kind == "sbx":
         op, name = a.get("op"), a.get("name", "")

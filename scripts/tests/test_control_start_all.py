@@ -66,3 +66,13 @@ def test_stops_at_the_first_failure_with_its_log(monkeypatch):
     assert r["log"] == ["boot", "Traceback: boom"]
     assert [s["name"] for s in r["steps"]] == ["postgres", "observability", "orchestrator"]  # web never attempted
     assert bc.WEB_PROC.started == 0
+
+
+def test_session_stop_sends_a_body_and_skips_the_write_up(monkeypatch):
+    calls = []
+    monkeypatch.setattr(bc, "orch_call", lambda m, p, b=None: calls.append((m, p, b)) or (202, {}))
+    sid = "05822fd7-2e46-4ab2-975b-87d3b55997f8"
+    bc.do_action({"action": "session", "id": sid, "op": "stop"})
+    bc.do_action({"action": "session", "id": sid, "op": "pause"})
+    assert calls[0] == ("POST", f"/sessions/{sid}/stop", {"synthesize": False})
+    assert calls[1] == ("POST", f"/sessions/{sid}/pause", None)
