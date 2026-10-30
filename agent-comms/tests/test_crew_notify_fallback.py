@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -140,3 +141,20 @@ def test_no_state_file_exits_zero_and_writes_nothing(mod, monkeypatch, tmp_path)
 
     assert code == 0
     assert list((factory_dir / "messages").glob("*fallback*.json")) == []
+
+
+def test_atomic_write_json_fsyncs_before_rename(mod, monkeypatch, tmp_path):
+    """Must fsync the temp file before the rename, matching transport.py's
+    _atomic_write and handoff_compat._atomic_write_text, so a reply already
+    "written" to messages/ cannot be lost (truncated/missing) on a crash
+    or sandbox stop right after the rename.
+    """
+    fsynced = []
+    real_fsync = os.fsync
+    monkeypatch.setattr(mod.os, "fsync", lambda fd: (fsynced.append(fd), real_fsync(fd))[1])
+
+    target = tmp_path / "out.json"
+    mod._atomic_write_json(target, {"a": 1})
+
+    assert fsynced, "_atomic_write_json did not call os.fsync before renaming into place"
+    assert json.loads(target.read_text()) == {"a": 1}

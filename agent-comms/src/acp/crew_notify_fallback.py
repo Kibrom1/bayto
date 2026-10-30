@@ -33,6 +33,8 @@ def _atomic_write_json(target: Path, obj: dict) -> None:
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(obj, f)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, target)
     except BaseException:
         if os.path.exists(tmp):
