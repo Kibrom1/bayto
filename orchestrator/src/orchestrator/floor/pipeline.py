@@ -52,7 +52,9 @@ class PipelineFloorPolicy:
             return self._go(view, self._route["start"], "start")
 
         if view.last_verdict is None:
-            if view.consecutive_same_speaker < MAX_MISSING_VERDICT_RETRIES:
+            if view.consecutive_same_speaker < MAX_MISSING_VERDICT_RETRIES or view.human_replied_since_last_turn:
+                # A person's note after the pause buys one more attempt. Without this, every Resume re-paused at once
+                # (the streak is counted from the stored turns), so the stuck seat never got another turn.
                 return Grant(participant=view.last_speaker, reason="report-verdict")
             return AskHuman(reason=f"{view.last_speaker} finished {view.consecutive_same_speaker} turns in a row "
                                    "without a VERDICT line")
