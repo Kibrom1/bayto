@@ -17,10 +17,10 @@ ROUTE = {
 SEATS = ["architect", "developer", "qa-tester", "reviewer"]
 
 
-def view(last_speaker=None, verdict=None, turns=None, consecutive=1, muted=()):
+def view(last_speaker=None, verdict=None, turns=None, consecutive=1, muted=(), human=False):
     return ConversationView(session_id=uuid.uuid4(), round=0, seat_order=SEATS, last_speaker=last_speaker,
                             last_verdict=verdict, turns_by_role=turns or {}, consecutive_same_speaker=consecutive,
-                            muted=set(muted))
+                            muted=set(muted), human_replied_since_last_turn=human)
 
 
 def nxt(v, **kw):
@@ -79,6 +79,12 @@ def test_missing_verdict_repeats_the_speaker_then_asks():
     assert nxt(view("developer", None, consecutive=1)) == Grant(participant="developer", reason="report-verdict")
     d = nxt(view("developer", None, consecutive=2))
     assert isinstance(d, AskHuman) and "VERDICT" in d.reason
+
+
+def test_a_person_note_after_the_pause_gives_the_speaker_another_attempt():
+    assert nxt(view("developer", None, consecutive=2)).__class__ is AskHuman
+    assert nxt(view("developer", None, consecutive=5, human=True)) == Grant(participant="developer",
+                                                                            reason="report-verdict")
 
 
 def test_missing_or_muted_next_seat_asks_a_human():
