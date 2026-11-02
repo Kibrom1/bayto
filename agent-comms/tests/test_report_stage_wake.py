@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from acp import Conversation, Roster, FileTransport
@@ -25,6 +27,25 @@ def test_ack_is_not_report(tmp_path):
     assert c.transport.reports() == []
     c.report("b", m.message_id, "pass", {"pytest": 0})
     assert c.transport.reports()[0]["verified"] is True
+
+
+def test_reports_with_dotted_ids_do_not_collide(tmp_path):
+    c = mk(tmp_path)
+    c.transport.report("c", "a.b", "pass", {"t": 0})
+    c.transport.report("b.c", "a", "fail", {"t": 1})
+    rs = c.transport.reports()
+    assert len(rs) == 2
+    assert {(r["message_id"], r["from"]) for r in rs} == {("a.b", "c"), ("a", "b.c")}
+
+
+def test_reports_reads_legacy_flat_files(tmp_path):
+    c = mk(tmp_path)
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "m1.b.json").write_text(json.dumps(
+        {"from": "b", "message_id": "m1", "status": "pass", "stage": None, "output_ref": None,
+         "checks": {}, "summary": "", "verified": True}))
+    c.transport.report("b", "m2", "pass", {})
+    assert {r["message_id"] for r in c.transport.reports()} == {"m1", "m2"}
 
 
 def test_pass_with_failing_check_rejected(tmp_path):
