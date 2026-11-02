@@ -489,6 +489,31 @@ async def test_stop_with_no_live_runtime_still_updates_status_and_warns(client, 
     assert row.status == "stopping"  # the status update itself does not depend on a live runtime
 
 
+async def test_stopping_a_session_with_no_live_runner_ends_it_instead_of_leaving_it_cancelling(client, live_sessionmaker):
+    """A paused session's runner loop has exited, so nothing would ever act on `cancelling`; it used to stay there and
+    block every new session of the task."""
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]})
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        row.status = "needs_human"
+        await db.commit()
+    for synthesize in (False, True):
+        resp = await client.post(f"/sessions/{session_id}/stop", json={"synthesize": synthesize})
+        assert resp.status_code == 202 and resp.json()["session"]["status"] == "finished"
+        async with live_sessionmaker() as db:
+            row = await db.get(Session, session_id)
+            assert row.status == "finished" and row.stop_reason == "user_stop_no_runner" and row.ended_at is not None
+            row.status = "needs_human"
+            await db.commit()
+    # and a new session of the same task can start once it has ended
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]})
+    assert resp.status_code in (200, 201)
+
+
 async def test_stop_a_session_that_was_never_started_is_conflict(client, live_sessionmaker):
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
     resp = await client.post("/sessions", json={

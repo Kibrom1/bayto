@@ -411,6 +411,23 @@ async def stop_session(
         log.warning("stop requested for session %s with no live runtime to record a durable "
                     "x-stop message (status still updated)", session_id)
 
+    # No runner loop is alive for this session (a paused session's loop has already exited, or the process restarted):
+    # nothing would ever act on `stopping`/`cancelling`, and a session stuck there blocks every new session of its task.
+    # Close it here, without a synthesis, since the runner that would write one is gone.
+    live = request.app.state.running_sessions.get(session_id)
+    if live is None or live.done():
+        async with sessionmaker() as db:
+            row = await db.get(Session, session_id)
+            if row is not None and row.status in (STATUS_STOPPING, STATUS_CANCELLING):
+                row.status = "finished"
+                row.stop_reason = "user_stop_no_runner"
+                row.ended_at = datetime.now(timezone.utc)
+                audit.emit(action="session.ended", summary="Session ended (user_stop_no_runner)", task_id=row.task_id,
+                           session_id=session_id, actor="system", subject_type="session", subject_id=session_id,
+                           detail={"stop_reason": row.stop_reason, "synthesized": False})
+                await db.commit()
+        new_status = "finished"
+
     # Fire-and-forget: ModeratorRunner notices the status change on its next iteration
     # (worst case the 300s turn-wait timeout) and winds down; this endpoint does not block
     # until that completes.
