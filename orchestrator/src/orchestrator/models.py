@@ -300,7 +300,7 @@ class Message(Base):
 class Report(Base):
     """Mirrors FileTransport.report()'s dict / report.v1.json field for field (see module
     docstring). Primary key is (message_id, from) -- the same natural key the file transport
-    uses for its `{message_id}.{role}.json` report files."""
+    uses for its `{message_id}/{role}.json` report files."""
 
     __tablename__ = "report"
 

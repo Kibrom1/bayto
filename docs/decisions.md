@@ -190,3 +190,6 @@ The old fallback matched limit words in any short reply, set a session-wide `fal
 - Rail is `#room-rail` (the toggle's aria-controls), keyboard focusable, with no duplicate landmark names; an empty moderator summary is hidden; roster meta phrases never break mid-phrase.
 - "Continue as Build" is a plain button (amber is for warnings); an ended room never shows "N new turns".
 - Board status labels match the filters (Finished, plus Paused, Failed, Interrupted); room tab title is the task title; New task retrieval switch uses the same plain label as the Context card.
+
+## 2026-11-02: report files move to reports/<message_id>/<role>.json
+`FileTransport.report` wrote `reports/{message_id}.{role}.json`, so `('a.b', 'c')` and `('a', 'b.c')` mapped to the same file `a.b.c.json` and one report silently overwrote the other. Reports now go to `reports/<message_id>/<role>.json`, which cannot collide. `reports()` still reads the old flat files too, so existing runs keep working.

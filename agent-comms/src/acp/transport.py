@@ -125,12 +125,17 @@ class FileTransport:
                "verified": all(v == 0 for v in checks.values())}
         if status == "pass" and not rec["verified"]:
             raise ValueError("cannot report pass with a failing check")
-        _atomic_write(d / f"{message_id}.{role}.json", json.dumps(rec))
+        (d / message_id).mkdir(parents=True, exist_ok=True)
+        _atomic_write(d / message_id / f"{role}.json", json.dumps(rec))
         return rec
 
     def reports(self) -> list[dict]:
         d = self.root / "reports"
-        return [json.loads(p.read_text()) for p in sorted(d.glob("*.json"))] if d.exists() else []
+        if not d.exists():
+            return []
+        # reports/<message_id>/<role>.json, plus legacy flat reports/<message_id>.<role>.json
+        paths = sorted(list(d.glob("*.json")) + list(d.glob("*/*.json")))
+        return [json.loads(p.read_text()) for p in paths]
 
     # --- stage state ---
     STAGES = ("open", "in-progress", "needs-human", "blocked-access", "review", "finished")
