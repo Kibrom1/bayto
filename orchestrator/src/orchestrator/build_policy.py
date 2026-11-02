@@ -108,8 +108,8 @@ def permission_summary(workspace: dict | None) -> list[dict]:
     for role, base, note in (
         ("build-architect", (), "Plans and reads the code. No shell."),
         ("build-developer", ("Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)",
-                             "Bash(git log:*)"), "Edits files and commits to the build branch."),
-        ("build-tester", ("Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"),
+                             "Bash(git log:*)", "Bash(git show:*)"), "Edits files and commits to the build branch."),
+        ("build-tester", ("Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"),
          "Runs the test command and reports the exit code. Does not edit files."),
         ("build-reviewer", ("Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"),
          "Reads the diff. No shell beyond git read commands."),

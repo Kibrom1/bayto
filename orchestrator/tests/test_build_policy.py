@@ -145,3 +145,20 @@ def test_permission_summary_shows_who_can_run_tests():
     ok = {r["role"]: r for r in permission_summary({"test_command": "uv run pytest"})}
     assert ok["build-tester"]["can_run_tests"] and ok["build-developer"]["can_run_tests"]
     assert not ok["build-reviewer"]["can_run_tests"] and not ok["build-architect"]["can_run_tests"]
+
+
+def test_developer_and_tester_may_read_a_commit_with_git_show():
+    from orchestrator.build_policy import permission_summary
+    from orchestrator.seed import BUILD_TEMPLATES
+    shell = {r["role"]: r["can_run"] for r in permission_summary({})}
+    for role in ("build-developer", "build-tester", "build-reviewer"):
+        assert "git show" in shell[role]
+    seeded = {t["role"]: t["tools"] for t in BUILD_TEMPLATES}
+    for role in ("build-developer", "build-tester"):
+        assert "Bash(git show:*)" in seeded[role]
+    assert "Bash(git push:*)" not in seeded["build-developer"]  # still never allowed
+
+
+def test_the_seat_prompts_say_to_run_one_command_per_call():
+    from orchestrator.seed import BUILD_TEMPLATES
+    assert all("one command per call" in t["system_prompt"] for t in BUILD_TEMPLATES)

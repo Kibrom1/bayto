@@ -165,7 +165,8 @@ AGENT_TEMPLATES = [
 _VERDICT_RULE = (
     "\n\nFinish every reply with exactly one last line `VERDICT: <word>`. The pipeline routes on that line and "
     "repeats your turn if it is missing. Work only inside the task's workspace. Never run git push, never add "
-    "a remote, never use the network. Say plainly what you did and what you did not do."
+    "a remote, never use the network. Run one command per call: commands joined with `;`, `|` or `$(...)` are "
+    "refused, and `&&` works only for the task's own test command. Say plainly what you did and what you did not do."
 )
 BUILD_TEMPLATES = [
     dict(
@@ -183,7 +184,7 @@ BUILD_TEMPLATES = [
     dict(
         name="Build Developer", role="build-developer", stance="smallest-change",
         tools=["Write", "Edit", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)",
-               "Bash(git diff:*)", "Bash(git log:*)"],
+               "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
         system_prompt=(
             "You implement the plan in the workspace with the smallest change that satisfies it. Follow the "
             "repository's existing style. Run the project's tests yourself before you hand off. Commit your work "
@@ -195,7 +196,7 @@ BUILD_TEMPLATES = [
     ),
     dict(
         name="Build Tester", role="build-tester", stance="prove-it-runs",
-        tools=["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"],
+        tools=["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)"],
         system_prompt=(
             "You decide whether the change works, with evidence. Run the project's test command and any acceptance "
             "checks from the plan. Report for every command: the command line, its exit code, and the last lines of "
