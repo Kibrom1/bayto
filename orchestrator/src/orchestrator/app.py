@@ -30,6 +30,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from acp import Envelope  # noqa: F401  (proves acp is a real dependency, kept from M1)
 
+from . import auto_resume
 from .api import (agents_router, app_config_router, attachments_router, export_router, model_catalog_router, modes_router, pull_request_router,
                   search_router, sessions_router, tasks_router)
 from .api.runtime import launch_runner
@@ -81,7 +82,28 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("startup reconciliation failed entirely (e.g. Postgres unreachable at boot) "
                       "-- continuing to serve; no session was automatically relaunched this boot")
+    resume_task = None
+    if auto_resume.enabled():
+        async def _auto_resume(session_id: uuid.UUID) -> str:
+            """One ordinary resume of a session the runner paused for a Claude usage limit."""
+            from types import SimpleNamespace
+            from fastapi import HTTPException
+            from .api.deps import default_login_check
+            from .api.sessions import resume_session
+            try:
+                await resume_session(
+                    session_id, SimpleNamespace(app=app), sessionmaker, app.state.sandbox_provider_factory(),
+                    app.state.summarizer_factory(), app.state.synthesizer_factory(), app.state.scorer_factory,
+                    getattr(app.state, "login_check", default_login_check))
+            except HTTPException as exc:
+                return "gone" if exc.status_code in (404, 409) else "retry"
+            return "ok"
+
+        resume_task = asyncio.create_task(auto_resume.loop(_auto_resume))
+        log.info("auto-resume after a Claude usage limit is on (%s=1)", auto_resume.ENV)
     yield
+    if resume_task is not None:
+        resume_task.cancel()
     close = getattr(sandbox_provider, "close", None)
     if close is not None:
         await close()  # releases held execs; the teams die with them

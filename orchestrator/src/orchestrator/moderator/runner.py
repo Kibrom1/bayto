@@ -52,6 +52,7 @@ from sqlalchemy import any_, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..conversation import OrchestratorConversation
+from .. import auto_resume
 from .. import local_fallback as lf
 from ..limits import LimitHit, detect_limit_in_text
 from .. import audit
@@ -912,6 +913,7 @@ class ModeratorRunner:
             await self._escalate_to_human(
                 view, f"{participant} could not take its turn because Claude's usage limit was reached{reset} ({why}). "
                       "Resume after the limit resets" + ("" if self._pipeline else ", or turn on the local fallback in the task settings"))
+            auto_resume.schedule(self._session_id, retry_at)  # a no-op unless BAYTO_AUTO_RESUME_ON_LIMIT=1
             self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
             return False
         previous = await self._fallback_entry(participant)

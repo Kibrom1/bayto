@@ -196,6 +196,25 @@ async def test_a_build_seat_never_falls_back(tmp_path, live_sessionmaker, ollama
     assert "fall back only to a gateway model" in note.body and "BAYTO_BUILD_FALLBACK_MODEL" in note.body
 
 
+async def test_a_limit_pause_is_scheduled_for_auto_resume_only_when_it_is_on(tmp_path, live_sessionmaker, ollama, monkeypatch):
+    from orchestrator import auto_resume
+    auto_resume._due.clear()
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {})
+    runner._sandbox_provider = ScriptedStreaming([[LIMIT]])
+    monkeypatch.delenv(auto_resume.ENV, raising=False)
+    await runner.run_once()
+    assert auto_resume.pending() == {}  # off by default
+    async with live_sessionmaker() as db:
+        row = await db.get(Session, session_id)
+        row.status = "active"
+        await db.commit()
+    monkeypatch.setenv(auto_resume.ENV, "1")
+    runner._sandbox_provider = ScriptedStreaming([[LIMIT]])
+    await runner.run_once()
+    assert list(auto_resume.pending()) == [session_id]
+    auto_resume._due.clear()
+
+
 @pytest.fixture
 def build_fallback(monkeypatch):
     monkeypatch.setenv("BAYTO_GATEWAY_URL", "http://host.docker.internal:11434")
