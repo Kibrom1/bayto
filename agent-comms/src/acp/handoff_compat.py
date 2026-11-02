@@ -36,6 +36,7 @@ import string
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -131,14 +132,10 @@ class Factory:
         val = self.state().get(key, "")
         return "" if val is None else str(val)
 
-    def state_set(self, key: str, value: str) -> None:
-        st = self.state()
-        st[key] = value
-        st["updated_at"] = now()
-        _atomic_write_json(self.state_file, st)
-
-    def next_seq(self) -> int:
-        # Serialised by a claim directory: two writers cannot take the same seq.
+    @contextmanager
+    def _state_lock(self):
+        # Serialised by a claim directory: every read-modify-write of state.json
+        # holds it, so neither a seq bump nor a stage change can be lost.
         lock = self.claims / ".seq.lock"
         self.claims.mkdir(parents=True, exist_ok=True)
         tries = 0
@@ -152,13 +149,24 @@ class Factory:
                     raise Die(f"could not take the sequence lock at {lock}")
                 time.sleep(0.05)
         try:
+            yield
+        finally:
+            lock.rmdir()
+
+    def state_set(self, key: str, value: str) -> None:
+        with self._state_lock():
+            st = self.state()
+            st[key] = value
+            st["updated_at"] = now()
+            _atomic_write_json(self.state_file, st)
+
+    def next_seq(self) -> int:
+        with self._state_lock():
             st = self.state()
             seq = int(st.get("seq", 0)) + 1
             st["seq"] = seq
             st["updated_at"] = now()
             _atomic_write_json(self.state_file, st)
-        finally:
-            lock.rmdir()
         return seq
 
 

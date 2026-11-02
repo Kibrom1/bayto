@@ -281,6 +281,15 @@ def test_stage_rejects_unknown_value(handoff):
     assert handoff("stage", "not-a-stage").returncode == 2
 
 
+def test_state_lock_is_released_after_stage(handoff, request):
+    if "bash-reference" in request.node.callspec.id:
+        pytest.skip("reference handoff's cmd_stage does not take the seq lock")
+    _init(handoff)
+    p = handoff("stage", "implementing")
+    assert p.returncode == 0
+    assert not (handoff.factory_dir / "claims" / ".seq.lock").exists()
+
+
 # ---------------------------------------------------------------- state / doctor
 
 def test_state_prints_json(handoff):
@@ -335,6 +344,30 @@ def test_concurrent_sends_get_gapless_unique_seq(handoff, request):
     assert seqs == list(range(1, n_per_writer * n_writers + 1))
 
 
+def test_concurrent_stage_and_send_do_not_lose_updates(handoff, request):
+    if "bash-reference" in request.node.callspec.id:
+        pytest.skip("state.json lock fix is specific to the acp shim")
+    _init(handoff)
+    env = {**os.environ, "FACTORY_DIR": str(handoff.factory_dir)}
+    n = 10
+    procs = []
+    for j in range(n):
+        procs.append(subprocess.Popen(
+            [*handoff.prefix, "send", "--to", "developer", "--from", "coordinator",
+             "--kind", "note", "--body", f"m{j}"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+        procs.append(subprocess.Popen(
+            [*handoff.prefix, "stage", "implementing"],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+    for p in procs:
+        _, err = p.communicate(timeout=30)
+        assert p.returncode == 0, err
+
+    st = json.loads(handoff("state").stdout)
+    assert st["seq"] == n
+    assert st["stage"] == "implementing"
+
+
 # ----------------------------------------------------------------- durability
 
 def test_atomic_write_text_fsyncs_before_rename(monkeypatch, tmp_path):
@@ -361,3 +394,33 @@ def test_atomic_write_text_fsyncs_before_rename(monkeypatch, tmp_path):
 
     assert fsynced, "_atomic_write_text did not call os.fsync before renaming into place"
     assert target.read_text() == "hello"
+
+
+def test_state_set_waits_for_seq_lock(tmp_path):
+    """state_set must take the same lock as next_seq, or a stage change can
+    overwrite a concurrent seq bump and hand out a duplicate seq."""
+    import importlib
+    import sys
+    import threading
+
+    sys.modules.pop("acp.handoff_compat", None)
+    mod = importlib.import_module("acp.handoff_compat")
+
+    fac = mod.Factory(tmp_path)
+    (tmp_path / "state.json").write_text(json.dumps({"seq": 5, "stage": "queued"}))
+    lock = fac.claims / ".seq.lock"
+    lock.mkdir(parents=True)
+
+    t = threading.Thread(target=fac.state_set, args=("stage", "review"))
+    t.start()
+    time.sleep(0.3)
+    assert fac.state()["stage"] == "queued", "state_set wrote while the seq lock was held"
+
+    lock.rmdir()
+    t.join(timeout=5)
+    assert not t.is_alive()
+    st = fac.state()
+    assert st["stage"] == "review"
+    assert st["seq"] == 5
+    assert not lock.exists()
+    assert fac.next_seq() == 6
