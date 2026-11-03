@@ -56,7 +56,7 @@ VALID_STAGES = [
     "finished", "failed",
 ]
 
-CLAIM_KEY_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,120}$")
+CLAIM_KEY_RE = re.compile(r"[a-zA-Z0-9_:-][a-zA-Z0-9._:-]{0,119}")
 
 
 class Die(Exception):
@@ -375,6 +375,8 @@ def cmd_ack(fac: Factory, args: list[str]) -> int:
     role, msg_id = args[0], args[1]
     if not in_list(role, fac.roles()):
         raise Die(f"ack: unknown role {role}")
+    if not msg_id or msg_id in (".", "..") or any(c in msg_id for c in ("/", "\\", "\0")):
+        raise Die(f"ack: bad MESSAGE_ID {msg_id!r}")
     d = fac.consumed / role
     d.mkdir(parents=True, exist_ok=True)
     (d / msg_id).touch()
@@ -554,8 +556,8 @@ def cmd_claim(fac: Factory, args: list[str]) -> int:
     if not args:
         raise Die("claim: KEY is required")
     key = args[0]
-    if not CLAIM_KEY_RE.match(key):
-        raise Die("claim: KEY must be alphanumeric with . _ : -")
+    if not CLAIM_KEY_RE.fullmatch(key):
+        raise Die("claim: KEY must be alphanumeric with . _ : - and may not start with '.'")
     fac.claims.mkdir(parents=True, exist_ok=True)
     d = fac.claims / key
     try:

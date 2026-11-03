@@ -81,3 +81,39 @@ def test_single_fire_claim(tmp_path):
     t = FileTransport(tmp_path)
     assert t.claim("wake-1") is True
     assert t.claim("wake-1") is False
+
+
+BAD_NAMES = ["", ".", "..", "../x", "a/b", "a\\b", "a\x00b"]
+
+
+def _env(message_id):
+    return Envelope(conversation_id="c1", from_="moderator", to=["*"], kind="note", message_id=message_id)
+
+
+@pytest.mark.parametrize("bad", BAD_NAMES)
+def test_unsafe_names_rejected_without_writes(tmp_path, bad):
+    t = FileTransport(tmp_path / "root")
+    calls = [
+        lambda: t.send(_env(bad)),
+        lambda: t.ack(bad, "m"),
+        lambda: t.ack("r", bad),
+        lambda: t.claim(bad),
+        lambda: t.report(bad, "m", "implemented"),
+        lambda: t.report("r", bad, "implemented"),
+    ]
+    for call in calls:
+        before = sorted(tmp_path.rglob("*"))
+        with pytest.raises(ValueError):  # pydantic ValidationError is a ValueError too
+            call()
+        assert sorted(tmp_path.rglob("*")) == before
+
+
+def test_normal_names_still_work(tmp_path):
+    t = FileTransport(tmp_path)
+    for name in ("build-architect", "0123456789abcdef0123456789abcdef", "wake-human-abc"):
+        e = t.send(_env(name))
+        assert [m.message_id for m in t.read("advocate") if m.message_id == name] == [e.message_id]
+        t.ack("advocate", name)
+        assert all(m.message_id != name for m in t.read("advocate"))
+        t.report(name, name, "implemented")
+        assert t.claim(name) is True

@@ -193,3 +193,6 @@ The old fallback matched limit words in any short reply, set a session-wide `fal
 
 ## 2026-11-02: report files move to reports/<message_id>/<role>.json
 `FileTransport.report` wrote `reports/{message_id}.{role}.json`, so `('a.b', 'c')` and `('a', 'b.c')` mapped to the same file `a.b.c.json` and one report silently overwrote the other. Reports now go to `reports/<message_id>/<role>.json`, which cannot collide. `reports()` still reads the old flat files too, so existing runs keep working.
+
+## 2026-11-02: input safety for FileTransport and handoff claim/ack
+`FileTransport` put role, message_id and claim names into paths unchecked, so `../` names wrote outside its root; `send`, `ack`, `claim` and `report` now reject empty, `.`, `..`, and names with `/`, `\` or NUL (ValueError, CLI exit 2) before any write. `handoff claim .seq.lock` created the directory the state lock uses and jammed every later send/stage; claim keys now must not start with `.` and are matched with `fullmatch` (a trailing newline used to pass). `handoff ack` rejects the same bad MESSAGE_IDs with exit 2. Report filenames are unchanged (the dotted-id collision is a separate item).
