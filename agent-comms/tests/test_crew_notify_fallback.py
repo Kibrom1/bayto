@@ -158,3 +158,93 @@ def test_atomic_write_json_fsyncs_before_rename(mod, monkeypatch, tmp_path):
 
     assert fsynced, "_atomic_write_json did not call os.fsync before renaming into place"
     assert json.loads(target.read_text()) == {"a": 1}
+
+
+def test_stale_seq_lock_is_broken(mod, tmp_path):
+    """A lock left behind by a crashed command must not block the fallback for good."""
+    import time
+
+    factory_dir = tmp_path / "factory"
+    _write_state(factory_dir, seq=5)
+    lock = factory_dir / "claims" / ".seq.lock"
+    lock.mkdir()
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+
+    started = time.monotonic()
+    assert mod._next_seq(factory_dir) == 6
+    assert time.monotonic() - started < 2
+    assert not lock.exists()
+
+
+def _stale_lock_with_break_dir(mod, tmp_path, break_age):
+    import time
+
+    factory_dir = tmp_path / "factory"
+    _write_state(factory_dir, seq=5)
+    lock = factory_dir / "claims" / ".seq.lock"
+    brk = factory_dir / "claims" / ".seq.lock.break"
+    lock.mkdir()
+    brk.mkdir()
+    now_ = time.time()
+    os.utime(lock, (now_ - 120, now_ - 120))
+    os.utime(brk, (now_ - break_age, now_ - break_age))
+    return factory_dir, lock, brk
+
+
+def test_stale_lock_is_not_broken_while_another_process_is_breaking_it(mod, monkeypatch, tmp_path):
+    factory_dir, lock, brk = _stale_lock_with_break_dir(mod, tmp_path, break_age=0)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    with pytest.raises(RuntimeError, match="remove it"):
+        mod._next_seq(factory_dir)
+    assert lock.exists()
+    assert brk.exists()
+
+
+def test_clock_skew_does_not_make_a_live_lock_look_stale(mod, monkeypatch, tmp_path):
+    """The process clock runs more than 60 s ahead of the filesystem's clock."""
+    import time
+
+    factory_dir = tmp_path / "factory"
+    _write_state(factory_dir, seq=5)
+    lock = factory_dir / "claims" / ".seq.lock"
+    lock.mkdir()
+    real_time = time.time
+    monkeypatch.setattr(mod.time, "time", lambda: real_time() + 1000)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    with pytest.raises(RuntimeError, match="remove it"):
+        mod._next_seq(factory_dir)
+    assert lock.exists()
+    assert not (factory_dir / "claims" / ".seq.lock.break").exists()
+
+
+def test_unremovable_stale_break_dir_does_not_hang(mod, monkeypatch, tmp_path):
+    factory_dir, lock, brk = _stale_lock_with_break_dir(mod, tmp_path, break_age=120)
+    (brk / "junk").write_text("x")  # rmdir of a non-empty directory fails
+    # writing into brk reset its mtime: make both stale again, after the write
+    import time
+
+    old = time.time() - 120
+    os.utime(brk, (old, old))
+    os.utime(lock, (old, old))
+    assert time.time() - brk.stat().st_mtime > mod.SEQ_LOCK_STALE_SECS
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    real_break, calls = mod._break_stale_lock, []
+
+    def counting_break(path):
+        calls.append(path)
+        assert len(calls) <= 500, "spin: _break_stale_lock called more than 500 times"
+        return real_break(path)
+
+    monkeypatch.setattr(mod, "_break_stale_lock", counting_break)
+    with pytest.raises(RuntimeError, match="remove it"):
+        mod._next_seq(factory_dir)
+    assert lock.exists()
+    assert (brk / "junk").exists()
+
+
+def test_stale_break_dir_left_by_a_crash_is_cleared(mod, tmp_path):
+    factory_dir, lock, brk = _stale_lock_with_break_dir(mod, tmp_path, break_age=120)
+    assert mod._next_seq(factory_dir) == 6
+    assert not lock.exists()
+    assert not brk.exists()

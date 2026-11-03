@@ -29,6 +29,7 @@ Usage (unchanged from the bash handoff):
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import re
@@ -57,6 +58,71 @@ VALID_STAGES = [
 ]
 
 CLAIM_KEY_RE = re.compile(r"[a-zA-Z0-9_:-][a-zA-Z0-9._:-]{0,119}")
+
+
+SEQ_LOCK_STALE_SECS = 60  # a seq lock older than this was left by a crashed command
+
+
+def _fs_now(directory: Path) -> float:
+    """The current time as the filesystem under `directory` stamps it (a just-made file's mtime)."""
+    fd, name = tempfile.mkstemp(dir=directory, prefix=".clock-")
+    os.close(fd)
+    try:
+        return os.stat(name).st_mtime
+    finally:
+        os.unlink(name)
+
+
+def _break_stale_lock(lock: Path) -> bool:
+    """Remove a stale sequence lock; True if the caller may retry at once.
+
+    Only one process may break it: it first takes "<lock>.break" (a directory, so mkdir is
+    atomic) and re-checks the age while holding that, otherwise two waiters could both judge the
+    lock stale and the second would remove the lock the first had just taken. A break directory
+    older than the threshold was left by a crash and is cleared. False means another process is
+    breaking it (or the removal failed, or the lock is not stale): wait and count a try.
+
+    Ages here are measured against the filesystem's own clock, not time.time(): on a mounted
+    FACTORY_DIR the file server stamps the mtimes, and a clock that differs from this process's
+    would otherwise make a live lock look stale. The caller's cheap time.time() test only decides
+    whether to look.
+    """
+    brk = lock.with_name(lock.name + ".break")
+    try:
+        brk.mkdir()
+    except FileExistsError:
+        try:
+            brk_age = _fs_now(lock.parent) - brk.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        if brk_age > SEQ_LOCK_STALE_SECS:
+            try:
+                brk.rmdir()
+            except FileNotFoundError:
+                return True  # someone else cleared it: retry at once
+            except OSError:
+                return False  # cannot clear it (a file, or not empty): wait and count a try
+            return True
+        return False
+    try:
+        try:
+            # brk was just made, so its mtime is "now" on the filesystem's clock
+            age = brk.stat().st_mtime - lock.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        if age <= SEQ_LOCK_STALE_SECS:
+            return False  # not stale (re-taken meanwhile, or this clock is ahead): wait, count
+        try:
+            lock.rmdir()
+        except OSError:
+            return False
+        print(f"handoff: removed stale sequence lock {lock} (age {int(age)}s)", file=sys.stderr)
+        return True
+    finally:
+        try:
+            brk.rmdir()
+        except OSError:
+            pass
 
 
 class Die(Exception):
@@ -167,14 +233,27 @@ class Factory:
                 lock.mkdir()
                 break
             except FileExistsError:
+                # A crash between mkdir and rmdir leaves the lock behind for good.
+                # Holders keep it for milliseconds, so one older than the threshold is stale.
+                try:
+                    age = time.time() - lock.stat().st_mtime
+                except FileNotFoundError:
+                    continue  # released meanwhile: retry at once
+                if age > SEQ_LOCK_STALE_SECS and _break_stale_lock(lock):
+                    continue
                 tries += 1
                 if tries > 100:
-                    raise Die(f"could not take the sequence lock at {lock}")
+                    raise Die(f"could not take the sequence lock at {lock} (or {lock}.break); "
+                              "if no handoff command is running, remove it")
                 time.sleep(0.05)
         try:
             yield
         finally:
-            lock.rmdir()
+            try:
+                lock.rmdir()
+            except FileNotFoundError:
+                print(f"handoff: sequence lock was removed while held "
+                      f"(held longer than {SEQ_LOCK_STALE_SECS}s?)", file=sys.stderr)
 
     def state_set(self, key: str, value: str) -> None:
         with self._state_lock():
@@ -397,6 +476,8 @@ def cmd_ack(fac: Factory, args: list[str]) -> int:
     fac.require_init()
     if len(args) < 2:
         raise Die("ack: ROLE and MESSAGE_ID are required")
+    if len(args) > 2:
+        raise Die(f"ack: unexpected argument {args[2]}")
     role, msg_id = args[0], args[1]
     if not in_list(role, fac.roles()):
         raise Die(f"ack: unknown role {role}")
@@ -431,6 +512,12 @@ def cmd_wait(fac: Factory, args: list[str]) -> int:
             raise Die(f"wait: unexpected argument {a}")
     if not role:
         raise Die("wait: --to is required")
+    if not in_list(role, fac.roles()):
+        raise Die(f"wait: unknown role {role}")
+    if timeout < 0:
+        raise Die("wait: --timeout must be >= 0")
+    if not math.isfinite(interval) or interval <= 0:
+        raise Die("wait: --interval must be a positive number")
 
     deadline = time.monotonic() + timeout
     while True:
@@ -519,6 +606,8 @@ def cmd_latest_report(fac: Factory, args: list[str]) -> int:
     if not args or args[0].startswith("--"):
         raise Die("latest-report: ROLE is required")
     role = args[0]
+    if not in_list(role, fac.roles()):
+        raise Die(f"latest-report: unknown role {role}")
     attempt = ""
     as_json = False
     i = 1
@@ -566,7 +655,10 @@ def cmd_latest_report(fac: Factory, args: list[str]) -> int:
 
 def cmd_reports(fac: Factory, args: list[str]) -> int:
     fac.require_init()
-    as_json = bool(args) and args[0] == "--json"
+    for a in args:
+        if a != "--json":
+            raise Die(f"reports: unexpected argument {a}")
+    as_json = bool(args)
     files = [f for f in fac.reports.glob("*.json") if not f.name.startswith("latest-")]
     if not files:
         if as_json:
@@ -589,6 +681,8 @@ def cmd_claim(fac: Factory, args: list[str]) -> int:
     fac.require_init()
     if not args:
         raise Die("claim: KEY is required")
+    if len(args) > 1:
+        raise Die(f"claim: unexpected argument {args[1]}")
     key = args[0]
     if not CLAIM_KEY_RE.fullmatch(key):
         raise Die("claim: KEY must be alphanumeric with . _ : - and may not start with '.'")
@@ -612,6 +706,8 @@ def cmd_stage(fac: Factory, args: list[str]) -> int:
     if not args:
         print(fac.state_get("stage"))
         return 0
+    if len(args) > 1:
+        raise Die(f"stage: unexpected argument {args[1]}")
     stage = args[0]
     if stage not in VALID_STAGES:
         raise Die(f"stage: unknown stage {stage}")

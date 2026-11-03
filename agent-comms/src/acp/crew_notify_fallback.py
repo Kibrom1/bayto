@@ -5,6 +5,7 @@ import json
 import random
 import string
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://host.docker.internal:11434/api/generate")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "llama3")
 FACTORY_DIR = Path(os.getenv("FACTORY_DIR", str(Path.home() / "work" / "factory")))
+SEQ_LOCK_STALE_SECS = 60  # a seq lock older than this was left by a crashed command
 
 
 def now() -> str:
@@ -71,6 +73,62 @@ def _find_assignment(messages_dir: Path, role: str) -> dict | None:
     return last_assignment
 
 
+def _fs_now(directory: Path) -> float:
+    """The current time as the filesystem under `directory` stamps it (a just-made file's mtime)."""
+    fd, name = tempfile.mkstemp(dir=directory, prefix=".clock-")
+    os.close(fd)
+    try:
+        return os.stat(name).st_mtime
+    finally:
+        os.unlink(name)
+
+
+def _break_stale_lock(lock: Path) -> bool:
+    """Remove a stale sequence lock; True if the caller may retry at once.
+
+    Same protocol as handoff_compat._break_stale_lock (this module is copied standalone, so it
+    cannot import it): take "<lock>.break" first and re-check the age while holding it, so two
+    waiters cannot both break the lock and end up holding it together. Ages are measured against
+    the filesystem's own clock, not time.time(), so a skewed clock cannot make a live lock look stale.
+    """
+    brk = lock.with_name(lock.name + ".break")
+    try:
+        brk.mkdir()
+    except FileExistsError:
+        try:
+            brk_age = _fs_now(lock.parent) - brk.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        if brk_age > SEQ_LOCK_STALE_SECS:
+            try:
+                brk.rmdir()
+            except FileNotFoundError:
+                return True  # someone else cleared it: retry at once
+            except OSError:
+                return False  # cannot clear it (a file, or not empty): wait and count a try
+            return True
+        return False
+    try:
+        try:
+            # brk was just made, so its mtime is "now" on the filesystem's clock
+            age = brk.stat().st_mtime - lock.stat().st_mtime
+        except FileNotFoundError:
+            return True
+        if age <= SEQ_LOCK_STALE_SECS:
+            return False  # not stale (re-taken meanwhile, or this clock is ahead): wait, count
+        try:
+            lock.rmdir()
+        except OSError:
+            return False
+        print(f"handoff: removed stale sequence lock {lock} (age {int(age)}s)", file=sys.stderr)
+        return True
+    finally:
+        try:
+            brk.rmdir()
+        except OSError:
+            pass
+
+
 def _next_seq(factory_dir: Path) -> int | None:
     # Serialised by a claim directory, same lock pattern as
     # handoff_compat.Factory.next_seq() uses for $FACTORY_DIR/state.json.
@@ -86,10 +144,17 @@ def _next_seq(factory_dir: Path) -> int | None:
             lock.mkdir()
             break
         except FileExistsError:
+            # same stale-lock recovery as handoff_compat (this module is copied standalone)
+            try:
+                age = time.time() - lock.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if age > SEQ_LOCK_STALE_SECS and _break_stale_lock(lock):
+                continue
             tries += 1
             if tries > 100:
-                raise RuntimeError(f"could not take the sequence lock at {lock}")
-            import time
+                raise RuntimeError(f"could not take the sequence lock at {lock} (or {lock}.break); "
+                                   "if no handoff command is running, remove it")
             time.sleep(0.05)
     try:
         state = json.loads(state_file.read_text())
@@ -98,7 +163,11 @@ def _next_seq(factory_dir: Path) -> int | None:
         state["updated_at"] = now()
         _atomic_write_json(state_file, state)
     finally:
-        lock.rmdir()
+        try:
+            lock.rmdir()
+        except FileNotFoundError:
+            print(f"handoff: sequence lock was removed while held "
+                  f"(held longer than {SEQ_LOCK_STALE_SECS}s?)", file=sys.stderr)
     return seq
 
 
