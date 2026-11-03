@@ -268,6 +268,27 @@ def test_claim_rejects_bad_key(handoff):
     assert handoff("claim", "not a valid key!").returncode == 2
 
 
+def test_claim_rejects_reserved_keys(handoff, request):
+    if "bash-reference" in request.node.callspec.id:
+        pytest.skip("reference handoff does not validate claim keys this way")
+    _init(handoff)
+    for key in (".", "..", ".seq.lock", "abc\n"):
+        assert handoff("claim", key).returncode == 2
+    claims = handoff.factory_dir / "claims"
+    assert not claims.exists() or list(claims.iterdir()) == []
+    assert handoff("stage", "implementing").returncode == 0
+
+
+def test_ack_rejects_path_like_message_id(handoff, request):
+    if "bash-reference" in request.node.callspec.id:
+        pytest.skip("reference handoff does not validate message ids this way")
+    _init(handoff)
+    before = sorted(handoff.factory_dir.rglob("*"))
+    for bad in ("", "../x", "a/b", ".", "..", "a\\b"):
+        assert handoff("ack", "developer", bad).returncode == 2
+    assert sorted(handoff.factory_dir.rglob("*")) == before
+
+
 def test_stage_get_and_set(handoff):
     _init(handoff)
     assert handoff("stage").stdout.strip() == "queued"

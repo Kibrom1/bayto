@@ -18,6 +18,13 @@ class Transport(Protocol):
     def all(self) -> list[Envelope]: ...
 
 
+def _safe_component(name: str) -> str:
+    """Reject names that could escape the transport root when used as a path part."""
+    if not name or name in (".", "..") or any(c in name for c in ("/", "\\", "\0")):
+        raise ValueError(f"invalid name: {name!r}")
+    return name
+
+
 def _atomic_write(path: Path, data: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-")
     try:
@@ -49,6 +56,7 @@ class FileTransport:
         self._seq_path = self.root / ".seq"
 
     def send(self, env: Envelope) -> Envelope:
+        _safe_component(env.message_id)
         with open(self._lock_path, "a+") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
@@ -91,12 +99,15 @@ class FileTransport:
         return res
 
     def ack(self, recipient: str, message_id: str) -> None:
+        _safe_component(recipient)
+        _safe_component(message_id)
         d = self.consumed / recipient
         d.mkdir(parents=True, exist_ok=True)
         _atomic_write(d / message_id, "1")
 
     def claim(self, name: str) -> bool:
         """Single-fire claim via mkdir (atomic)."""
+        _safe_component(name)
         try:
             (self.root / "claims").mkdir(exist_ok=True)
             (self.root / "claims" / name).mkdir()
@@ -116,6 +127,8 @@ class FileTransport:
         failed) -- review discipline, not this flag, is the backstop against empty-check
         reports of a passing status.
         """
+        _safe_component(role)
+        _safe_component(message_id)
         d = self.root / "reports"
         d.mkdir(exist_ok=True)
         checks = checks or {}
