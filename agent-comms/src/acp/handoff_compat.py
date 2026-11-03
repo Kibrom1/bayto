@@ -63,6 +63,29 @@ class Die(Exception):
     """A fatal usage/validation error: always reported as exit code 2."""
 
 
+def _opt(args: list[str], i: int, cmd: str) -> str:
+    """The value after the flag at args[i], or a usage error if it is missing."""
+    if i + 1 >= len(args):
+        raise Die(f"{cmd}: {args[i]} needs a value")
+    return args[i + 1]
+
+
+def _int(value: str, flag: str, cmd: str) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        raise Die(f"{cmd}: {flag} must be an integer") from None
+
+
+def _attempt(value, cmd: str) -> str:
+    """--attempt as a canonical positive integer string; ' 1', '+1', '1_0', '01' are rejected."""
+    value = str(value)
+    if not (value.isascii() and value.isdigit()) or value != str(_int(value, "--attempt", cmd)) \
+            or int(value) < 1:
+        raise Die(f"{cmd}: --attempt must be a positive integer")
+    return value
+
+
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -184,13 +207,14 @@ def cmd_init(fac: Factory, args: list[str]) -> int:
     while i < len(args):
         a = args[i]
         if a == "--run":
-            run, i = args[i + 1], i + 2
+            run, i = _opt(args, i, "init"), i + 2
         elif a == "--task":
-            task, i = args[i + 1], i + 2
+            task, i = _opt(args, i, "init"), i + 2
         elif a == "--attempt":
-            attempt, i = args[i + 1], i + 2
+            attempt, i = _opt(args, i, "init"), i + 2
         else:
             raise Die(f"init: unexpected argument {a}")
+    attempt = _attempt(attempt, "init")
     if not run:
         raise Die("init: --run is required")
     if not task:
@@ -225,23 +249,23 @@ def cmd_send(fac: Factory, args: list[str]) -> int:
     while i < len(args):
         a = args[i]
         if a == "--to":
-            to, i = args[i + 1], i + 2
+            to, i = _opt(args, i, "send"), i + 2
         elif a == "--from":
-            frm, i = args[i + 1], i + 2
+            frm, i = _opt(args, i, "send"), i + 2
         elif a == "--kind":
-            kind, i = args[i + 1], i + 2
+            kind, i = _opt(args, i, "send"), i + 2
         elif a == "--body":
-            body, i = args[i + 1], i + 2
+            body, i = _opt(args, i, "send"), i + 2
         elif a == "--body-file":
-            body_file, i = args[i + 1], i + 2
+            body_file, i = _opt(args, i, "send"), i + 2
         elif a == "--attempt":
-            attempt, i = args[i + 1], i + 2
+            attempt, i = _opt(args, i, "send"), i + 2
         elif a == "--base-commit":
-            base, i = args[i + 1], i + 2
+            base, i = _opt(args, i, "send"), i + 2
         elif a == "--output-commit":
-            output, i = args[i + 1], i + 2
+            output, i = _opt(args, i, "send"), i + 2
         elif a == "--task-version":
-            version, i = args[i + 1], i + 2
+            version, i = _opt(args, i, "send"), i + 2
         elif a == "--no-ack":
             requires_ack, i = False, i + 1
         else:
@@ -262,6 +286,7 @@ def cmd_send(fac: Factory, args: list[str]) -> int:
         raise Die("send: --body or --body-file is required")
     if not attempt:
         attempt = fac.state_get("attempt")
+    attempt = _attempt(attempt, "send")
 
     run = fac.state_get("run_id")
     task = fac.state_get("task_id")
@@ -331,7 +356,7 @@ def _parse_role_kind_json(fac: Factory, args: list[str], cmd: str) -> tuple[str,
     while i < len(args):
         a = args[i]
         if a == "--kind":
-            kind, i = args[i + 1], i + 2
+            kind, i = _opt(args, i, cmd), i + 2
         elif a == "--json":
             as_json, i = True, i + 1
         else:
@@ -392,13 +417,16 @@ def cmd_wait(fac: Factory, args: list[str]) -> int:
     while i < len(args):
         a = args[i]
         if a == "--to":
-            role, i = args[i + 1], i + 2
+            role, i = _opt(args, i, "wait"), i + 2
         elif a == "--kind":
-            kind, i = args[i + 1], i + 2
+            kind, i = _opt(args, i, "wait"), i + 2
         elif a == "--timeout":
-            timeout, i = int(args[i + 1]), i + 2
+            timeout, i = _int(_opt(args, i, "wait"), "--timeout", "wait"), i + 2
         elif a == "--interval":
-            interval, i = float(args[i + 1]), i + 2
+            try:
+                interval, i = float(_opt(args, i, "wait")), i + 2
+            except ValueError:
+                raise Die("wait: --interval must be a number") from None
         else:
             raise Die(f"wait: unexpected argument {a}")
     if not role:
@@ -425,25 +453,25 @@ def cmd_report(fac: Factory, args: list[str]) -> int:
     while i < len(args):
         a = args[i]
         if a == "--from":
-            frm, i = args[i + 1], i + 2
+            frm, i = _opt(args, i, "report"), i + 2
         elif a == "--status":
-            status, i = args[i + 1], i + 2
+            status, i = _opt(args, i, "report"), i + 2
         elif a == "--stage":
-            stage, i = args[i + 1], i + 2
+            stage, i = _opt(args, i, "report"), i + 2
         elif a == "--output-commit":
-            output, i = args[i + 1], i + 2
+            output, i = _opt(args, i, "report"), i + 2
         elif a == "--attempt":
-            attempt, i = args[i + 1], i + 2
+            attempt, i = _opt(args, i, "report"), i + 2
         elif a == "--summary":
-            summary, i = args[i + 1], i + 2
+            summary, i = _opt(args, i, "report"), i + 2
         elif a == "--body-file":
-            body_file, i = args[i + 1], i + 2
+            body_file, i = _opt(args, i, "report"), i + 2
         elif a == "--check":
-            raw = args[i + 1]
+            raw = _opt(args, i, "report")
             name, _, exit_s = raw.rpartition("=")
             if not name:
                 raise Die("report: --check expects NAME=EXITCODE")
-            checks.append({"name": name, "exit": int(exit_s) if exit_s else 1})
+            checks.append({"name": name, "exit": _int(exit_s, "--check exit code", "report") if exit_s else 1})
             i += 2
         else:
             raise Die(f"report: unexpected argument {a}")
@@ -454,6 +482,7 @@ def cmd_report(fac: Factory, args: list[str]) -> int:
         raise Die(f"report: --status must be one of: {' '.join(VALID_STATUS)}")
     if not attempt:
         attempt = fac.state_get("attempt")
+    attempt = _attempt(attempt, "report")
     body = ""
     if body_file:
         p = Path(body_file)
@@ -496,23 +525,28 @@ def cmd_latest_report(fac: Factory, args: list[str]) -> int:
     while i < len(args):
         a = args[i]
         if a == "--attempt":
-            attempt, i = args[i + 1], i + 2
+            attempt, i = _opt(args, i, "latest-report"), i + 2
         elif a == "--json":
             as_json, i = True, i + 1
         else:
             raise Die(f"latest-report: unexpected argument {a}")
     if not attempt:
         attempt = fac.state_get("attempt")
+    attempt = _attempt(attempt, "latest-report")
     task = fac.state_get("task_id")
 
+    # the glob prefix "<role>-" also matches roles like "<role>-tester", so check "from"
     newest = None
     newest_seq = -1
     for f in fac.reports.glob(f"{task}-a{attempt}-{role}-*.json"):
         data = json.loads(f.read_text())
+        if data.get("from") != role:
+            continue
         if data["seq"] > newest_seq:
             newest_seq, newest = data["seq"], f
     if newest is None:
-        any_attempt = any(fac.reports.glob(f"{task}-a*-{role}-*.json"))
+        any_attempt = any(json.loads(f.read_text()).get("from") == role
+                          for f in fac.reports.glob(f"{task}-a*-{role}-*.json"))
         if any_attempt:
             return fail(f"only stale reports found for {role} (no report for attempt {attempt})", 4)
         return fail(f"no report from {role} yet", 3)
