@@ -59,6 +59,19 @@ def repo_dirty(repo: str | None) -> str:
     return out.stdout.strip() if out.returncode == 0 else f"git status failed: {out.stderr.strip()[:200]}"
 
 
+def sync_main(repo: str | None, base: str = "main") -> str:
+    """Put --repo on the latest `base` (checkout + fast-forward pull) so a round starts from what is already merged,
+    not from an old copy that makes the team redo fixed work. Returns "" on success, else why not. A dirty tree is
+    refused before anything changes."""
+    if not repo:
+        return ""
+    for cmd in (["git", "-C", repo, "checkout", base], ["git", "-C", repo, "pull", "--ff-only", "origin", base]):
+        out = subprocess.run(cmd, capture_output=True, text=True)
+        if out.returncode != 0:
+            return f"{' '.join(cmd[3:])} failed: {(out.stderr or out.stdout).strip()[:300]}"
+    return ""
+
+
 def new_session(api: str, template: dict) -> str | None:
     s = template["session"]
     roster = [{"agent_id": t["agent_id"], "seat_order": i, **({"model": t["model"]} if t.get("model") else {}),
@@ -119,6 +132,7 @@ def main() -> int:
     p.add_argument("--hours", type=float, default=24)
     p.add_argument("--repo")
     p.add_argument("--stop-file", default="STOP")
+    p.add_argument("--base", default="main", help="branch the Build repo is updated to before each round")
     a = p.parse_args()
     code, template = call(a.api, "GET", f"/sessions/{a.template}")
     if code != 200:
@@ -130,6 +144,11 @@ def main() -> int:
         dirty = repo_dirty(a.repo)
         if dirty:
             print(f"the Build repo is not clean, waiting 5 minutes:\n{dirty[:400]}", flush=True)
+            time.sleep(300)
+            continue
+        problem = sync_main(a.repo, a.base)
+        if problem:
+            print(f"could not update the Build repo to {a.base}, waiting 5 minutes: {problem}", flush=True)
             time.sleep(300)
             continue
         sid = new_session(a.api, template)
