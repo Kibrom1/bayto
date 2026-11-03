@@ -196,3 +196,6 @@ The old fallback matched limit words in any short reply, set a session-wide `fal
 
 ## 2026-11-02: input safety for FileTransport and handoff claim/ack
 `FileTransport` put role, message_id and claim names into paths unchecked, so `../` names wrote outside its root; `send`, `ack`, `claim` and `report` now reject empty, `.`, `..`, and names with `/`, `\` or NUL (ValueError, CLI exit 2) before any write. `handoff claim .seq.lock` created the directory the state lock uses and jammed every later send/stage; claim keys now must not start with `.` and are matched with `fullmatch` (a trailing newline used to pass). `handoff ack` rejects the same bad MESSAGE_IDs with exit 2. Report filenames are unchanged (the dotted-id collision is a separate item).
+
+## 2026-11-02: handoff usage errors exit 2; latest-report matches the exact role
+In `handoff_compat.py`, a flag with no value (`send --to`) or a non-integer `--attempt`, `--check` exit code or `--timeout` ended in a traceback and exit 1, and a bad `--attempt` was only noticed after `next_seq()` had already used a number. Flag values now go through `_opt` and `_int`, which raise `Die` (exit 2, `handoff: ...`), and `--attempt` is validated before a seq is taken. `latest-report ROLE` globbed `...-ROLE-*.json`, so `qa` also matched `qa-tester`'s files; it now keeps only reports whose `from` equals ROLE.

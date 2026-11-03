@@ -311,6 +311,77 @@ def test_state_lock_is_released_after_stage(handoff, request):
     assert not (handoff.factory_dir / "claims" / ".seq.lock").exists()
 
 
+# ---------------------------------------------------------------- usage errors
+
+
+def _shim_only(request):
+    if "bash-reference" in request.node.callspec.id:
+        pytest.skip("the reference handoff has its own usage-error behaviour")
+
+
+def _assert_usage_error(p):
+    assert p.returncode == 2
+    assert p.stderr.startswith("handoff:")
+    assert "Traceback" not in p.stderr
+
+
+def test_flag_without_value_is_a_usage_error(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    _assert_usage_error(handoff("send", "--to"))
+
+
+def test_bad_attempt_does_not_consume_a_seq(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    p = handoff("send", "--to", "developer", "--from", "coordinator", "--kind", "assignment",
+                "--body", "x", "--attempt", "x")
+    _assert_usage_error(p)
+    _assert_usage_error(handoff("report", "--from", "developer", "--status", "implemented",
+                                "--attempt", "x"))
+    state = json.loads((handoff.factory_dir / "state.json").read_text())
+    assert state["seq"] == 0
+
+
+def test_report_non_integer_check_is_a_usage_error(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    _assert_usage_error(handoff("report", "--from", "developer", "--status", "implemented",
+                                "--check", "t=x"))
+
+
+def test_wait_non_integer_timeout_is_a_usage_error(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    _assert_usage_error(handoff("wait", "--to", "developer", "--timeout", "x"))
+
+
+def test_latest_report_ignores_roles_sharing_a_prefix(handoff, request):
+    _shim_only(request)
+    handoff.factory_dir.mkdir(parents=True)
+    (handoff.factory_dir / "roster.json").write_text(
+        json.dumps({"roles": ["coordinator", "qa", "qa-tester"]}))
+    _init(handoff)
+    handoff("report", "--from", "qa", "--status", "review-pass", "--check", "t=0", check=True)
+    handoff("report", "--from", "qa-tester", "--status", "review-fail", "--check", "t=1", check=True)
+    latest = json.loads(handoff("latest-report", "qa", "--json", check=True).stdout)
+    assert latest["from"] == "qa"
+    assert latest["status"] == "review-pass"
+
+
+def test_attempt_is_canonical(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    state_file = handoff.factory_dir / "state.json"
+    for bad in ("0", "-1", "01", " 1", "+1", "1_0"):
+        _assert_usage_error(handoff("report", "--from", "developer", "--status", "implemented",
+                                    "--attempt", bad))
+        assert json.loads(state_file.read_text())["seq"] == 0, bad
+    handoff("report", "--from", "developer", "--status", "implemented", "--attempt", "1", check=True)
+    p = handoff("latest-report", "developer", "--attempt", "1", "--json", check=True)
+    assert json.loads(p.stdout)["from"] == "developer"
+
+
 # ---------------------------------------------------------------- state / doctor
 
 def test_state_prints_json(handoff):
