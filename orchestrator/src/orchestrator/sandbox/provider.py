@@ -123,6 +123,11 @@ class SandboxProvider(abc.ABC):
         the create command only if its last known status is not running/creating).
         Sandbox.task_id is unique, so this is the only entry point that inserts a row."""
 
+    async def check_login(self, sandbox: SandboxInfo) -> None:
+        """Fail fast, with the reason, when the `claude` login INSIDE the sandbox does not work. The host's login is a
+        different one: with the sandbox's expired, every seat sat out two 60 s acknowledgement waits (about 6 minutes
+        for three seats) before the first turn failed. Not abstract: the default checks nothing."""
+
     @abc.abstractmethod
     async def start_team(self, sandbox: SandboxInfo) -> None:
         """Start one session per roles/team.tsv participant inside the sandbox, and return once the team is up.
