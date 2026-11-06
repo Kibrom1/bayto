@@ -168,6 +168,14 @@ class SessionRuntime:
     runner_task: asyncio.Task
 
 
+def should_start_team(mode_config, sandbox_provider) -> bool:
+    """Whether the sandbox's long-lived seats need to run. A streamed Build turn is a fresh `claude -p` that reads only
+    files the launcher already put in the sandbox (roles, tool flags, team.tsv), and Build seats may not use `crew` or
+    `handoff`, so nothing ever wakes a seat. Starting them costs a process boot and one model call per seat,
+    plus up to two minutes of acknowledgement waiting each. Discussion modes keep them: their fallback wakes a seat."""
+    return not (mode_config.floor_policy == "pipeline" and getattr(sandbox_provider, "supports_streaming", False))
+
+
 async def launch_runner(
     session_id: uuid.UUID,
     *,
@@ -226,9 +234,14 @@ async def launch_runner(
             session_stages[session_id] = "creating the sandbox (sbx env create)"
         sandbox = await sandbox_provider.create(
             task_id, name=f"sbx-{task_id}", seats=seats, **({"workspace": repo_path} if repo_path else {}))
-        session_stages[session_id] = "starting the agent team in the sandbox"
-        log.info("session %s: %s", session_id, session_stages[session_id])
-        await sandbox_provider.start_team(sandbox)
+        session_stages[session_id] = "checking the claude login inside the sandbox"
+        await sandbox_provider.check_login(sandbox)
+        if should_start_team(mode_config, sandbox_provider):
+            session_stages[session_id] = "starting the agent team in the sandbox"
+            log.info("session %s: %s", session_id, session_stages[session_id])
+            await sandbox_provider.start_team(sandbox)
+        else:
+            log.info("session %s: Build runs fresh streamed turns, so the long-lived seats are not started", session_id)
         session_stages.pop(session_id, None)
 
         transport = FileTransport(session_dir)

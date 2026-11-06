@@ -553,3 +553,49 @@ async def test_wake_role_still_raises_on_other_failures():
     provider = LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
     with pytest.raises(SandboxCommandError):
         await provider.wake_role(_fake_info(name="sbx-1"), "historian")
+
+
+# ---- the login probe inside the sandbox
+
+def _probe_runner(result):
+    runner = FakeSbxRunner({"exec bash": result})
+    return runner, LocalSbxSandboxProvider(sessionmaker=None, runner=runner)
+
+
+def _probe_calls(runner):
+    return [c for c in runner.calls if c[0] == "exec" and "claude -p ping" in c[-1]]
+
+
+async def test_check_login_passes_and_is_not_repeated_within_two_minutes():
+    ok = subprocess.CompletedProcess([], 0, stdout='{"type":"result","is_error":false,"result":"ok"}', stderr="")
+    runner, provider = _probe_runner(ok)
+    sandbox = _fake_info(name="sbx-a")
+
+    await provider.check_login(sandbox)
+    await provider.check_login(sandbox)
+
+    assert len(_probe_calls(runner)) == 1
+
+
+async def test_check_login_names_the_expired_login_and_how_to_fix_it():
+    out = '{"type":"result","is_error":true,"result":"Login expired \u00b7 Please run /login"}'
+    runner, provider = _probe_runner(subprocess.CompletedProcess([], 1, stdout=out, stderr=""))
+
+    with pytest.raises(SandboxProviderError) as exc:
+        await provider.check_login(_fake_info(name="sbx-b"))
+
+    assert "Login expired" in str(exc.value) and "sbx exec -it sbx-b claude" in str(exc.value)
+    with pytest.raises(SandboxProviderError):
+        await provider.check_login(_fake_info(name="sbx-b"))  # a failure is never cached as a pass
+
+
+async def test_check_login_does_not_block_a_start_when_the_account_is_out_of_usage():
+    out = '{"type":"result","is_error":true,"result":"You\'ve hit your limit \u00b7 resets 5pm (America/New_York)"}'
+    runner, provider = _probe_runner(subprocess.CompletedProcess([], 1, stdout=out, stderr=""))
+
+    await provider.check_login(_fake_info(name="sbx-c"))  # must not raise
+
+
+def test_the_probe_runs_the_first_seats_claude_model_from_team_tsv():
+    from orchestrator.sandbox.local import LOGIN_PROBE
+    assert "team.tsv" in LOGIN_PROBE and "claude -p ping" in LOGIN_PROBE and "--max-turns 1" in LOGIN_PROBE

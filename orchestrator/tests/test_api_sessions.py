@@ -219,6 +219,33 @@ async def test_create_session_rejects_an_unknown_agent(client, live_sessionmaker
 
 # ---------------------------------------------------------------- POST /sessions/{id}/start
 
+async def test_start_fails_fast_with_the_reason_when_the_sandbox_login_is_expired(client, live_sessionmaker, tmp_path):
+    task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
+    resp = await client.post("/sessions", json={
+        "task_id": str(task_id), "mode_id": str(mode_id), "roster": [{"agent_id": str(agent_ids[0]), "seat_order": 0}]})
+    session_id = uuid.UUID(resp.json()["session"]["id"])
+    sandbox_provider = FakeSandboxProvider()
+    sandbox_provider.login_error = "the claude login inside the sandbox does not work (Login expired)"
+    _wire_fakes(sandbox_provider)
+
+    assert (await client.post(f"/sessions/{session_id}/start")).status_code == 202
+
+    row = await _wait_for_status(live_sessionmaker, session_id, "failed")
+    assert "Login expired" in row.failure_reason and "checking the claude login" in row.failure_reason
+    assert sandbox_provider.started_teams == []  # no seat was started to wait out its acknowledgement
+
+
+def test_a_streamed_build_does_not_start_the_long_lived_seats_but_everything_else_does():
+    from types import SimpleNamespace as NS
+    from orchestrator.api.runtime import should_start_team
+    build, chat = NS(floor_policy="pipeline"), NS(floor_policy="round-robin")
+    streaming, plain = NS(supports_streaming=True), NS(supports_streaming=False)
+    assert not should_start_team(build, streaming)
+    assert should_start_team(build, plain)       # without streaming Build pauses, but the team stays as it was
+    assert should_start_team(chat, streaming)    # a discussion's fallback wakes a seat
+    assert should_start_team(chat, plain)
+
+
 async def test_start_runs_the_session_to_completion(client, live_sessionmaker, tmp_path):
     task_id, mode_id, agent_ids = await _seed(live_sessionmaker)
     resp = await client.post("/sessions", json={

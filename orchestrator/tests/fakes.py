@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 
-from orchestrator.sandbox.provider import SandboxDrift, SandboxInfo, SandboxProvider
+from orchestrator.sandbox.provider import SandboxDrift, SandboxInfo, SandboxProvider, SandboxProviderError
 
 
 class FakeSandboxProvider(SandboxProvider):
@@ -23,6 +23,8 @@ class FakeSandboxProvider(SandboxProvider):
         self.created_for: list[uuid.UUID] = []
         self.workspaces: list[str | None] = []
         self.started_teams: list[str] = []
+        self.login_checks: list[str] = []
+        self.login_error: str | None = None  # set to make check_login fail, as an expired sandbox login does
         self._on_wake = on_wake
         self._sandboxes: dict[uuid.UUID, SandboxInfo] = {}
         self._reconcile_result = reconcile_result or []
@@ -37,6 +39,11 @@ class FakeSandboxProvider(SandboxProvider):
                             status="running", image=None, created_at=None, closed_at=None)
         self._sandboxes[task_id] = info
         return info
+
+    async def check_login(self, sandbox: SandboxInfo) -> None:
+        self.login_checks.append(sandbox.name)
+        if self.login_error:
+            raise SandboxProviderError(self.login_error)
 
     async def start_team(self, sandbox: SandboxInfo) -> None:
         self.started_teams.append(sandbox.name)

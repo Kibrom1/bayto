@@ -34,6 +34,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from ..child_env import child_env
+from ..limits import detect_limit_in_text
 from ..models import Sandbox
 from ..providers.gateway import check_override, redact
 from .provider import (
@@ -53,6 +55,7 @@ from .provider import (
     SandboxInfo,
     SandboxProvider,
     SandboxProviderError,
+    failure_cause,
 )
 from .turns import TextDelta, ToolUse, TurnEvent, TurnResult, parse_stream_line
 
@@ -98,6 +101,15 @@ _AWK_MODEL = r'''"$(awk -v r="$role" '$1==r {print $4}' "$WORKSPACE_DIR/team.tsv
 TURN_SCRIPT_OVERRIDE = TURN_SCRIPT.replace('role="$1"\n', 'role="$1"\n' + _OVERRIDE_HEADER, 1).replace(
     "model=" + _AWK_MODEL, 'model="${2:-$(awk -v r="$role" \'$1==r {print $4}\' "$WORKSPACE_DIR/team.tsv")}"', 1)
 assert TURN_SCRIPT_OVERRIDE.count("read -r count") == 1 and "${2:-$(awk" in TURN_SCRIPT_OVERRIDE
+# One tiny headless call as the first seat's model, from the workspace, exactly as a turn would run it: a login that
+# expired inside the sandbox shows up here in seconds, not after every seat's acknowledgement wait.
+LOGIN_PROBE = r'''export WORKSPACE_DIR="$HOME/work" PATH="$HOME/work/bin:$HOME/.local/bin:$PATH"
+cd "$WORKSPACE_DIR/app" 2>/dev/null || cd "$WORKSPACE_DIR"
+model="$(awk 'NF && $4 !~ /\// {print $4; exit}' "$WORKSPACE_DIR/team.tsv" 2>/dev/null)"
+exec claude -p ping --model "${model:-claude-haiku-5-5}" --max-turns 1 --tools "" --output-format json < /dev/null
+'''
+LOGIN_OK_SECONDS = 120.0   # a passed probe is not repeated for a couple of minutes (same as the host's check)
+LOGIN_PROBE_TIMEOUT = 90.0
 TEAM_READY_PROBE = f'test -f "{TEAM_DIR}/team-started"'
 # Exit 0 only if a holder from an earlier start is still alive and the team came up.
 TEAM_ALIVE_PROBE = f'p=$(cat "{HOLDER_PID}" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" && test -f "{TEAM_DIR}/team-started"'
@@ -319,6 +331,7 @@ class LocalSbxSandboxProvider(SandboxProvider):
         self._sbxenv_path = sbxenv_path
         # 8 agents took 437 s in M1.12 and 512 s in the 2026-10-08 live check; 900 s leaves headroom.
         self._team_ready_timeout = team_ready_timeout
+        self._login_ok: dict[str, float] = {}
         self._team_poll_interval = team_poll_interval
         self._held: dict[str, HeldExec] = {}
         # Streamed turns are opt-in until they have been checked on a live team (m5-turn-live.sh).
@@ -406,6 +419,33 @@ class LocalSbxSandboxProvider(SandboxProvider):
             await session.commit()
             await session.refresh(row)
             return _sandbox_info(row)
+
+    async def check_login(self, sandbox: SandboxInfo) -> None:
+        name = sandbox.name
+        now = time.monotonic()
+        if now < self._login_ok.get(name, 0.0):
+            return
+        argv = ["exec", name, "bash", "-lc", LOGIN_PROBE]
+        try:
+            result = await asyncio.to_thread(self._runner.run, argv, timeout=LOGIN_PROBE_TIMEOUT)
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxProviderError(
+                f"the claude login check inside {name} did not finish within {LOGIN_PROBE_TIMEOUT:.0f} s") from exc
+        failed = result.returncode != 0
+        if not failed:
+            try:
+                obj = json.loads((result.stdout or "").strip().splitlines()[-1])
+                failed = isinstance(obj, dict) and bool(obj.get("is_error"))
+            except (ValueError, IndexError):
+                pass  # no JSON on a clean exit: nothing says it failed
+        if failed:
+            cause = failure_cause(result.stderr or "", result.stdout or "")
+            if detect_limit_in_text(cause) is not None:
+                return  # out of usage is not a broken login; the turn's own limit handling deals with it
+            raise SandboxProviderError(
+                f"the claude login inside the sandbox does not work ({cause[:300]}). Sign in inside it with "
+                f"`sbx exec -it {name} claude` and /login, then start again")
+        self._login_ok[name] = now + LOGIN_OK_SECONDS
 
     async def start_team(self, sandbox: SandboxInfo) -> None:
         """Make sure the team is running, and return once it is up.
