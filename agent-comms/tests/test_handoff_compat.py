@@ -382,6 +382,44 @@ def test_attempt_is_canonical(handoff, request):
     assert json.loads(p.stdout)["from"] == "developer"
 
 
+def test_wait_unknown_role_is_a_usage_error(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    started = time.monotonic()
+    _assert_usage_error(handoff("wait", "--to", "nobody", "--timeout", "30"))
+    assert time.monotonic() - started < 5  # it did not sit out the timeout
+
+
+def test_wait_bad_interval_or_timeout_is_a_usage_error(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    for interval in ("0", "-1", "nan", "inf"):
+        _assert_usage_error(handoff("wait", "--to", "developer", "--timeout", "1",
+                                    "--interval", interval))
+    _assert_usage_error(handoff("wait", "--to", "developer", "--timeout", "-1"))
+
+
+def test_latest_report_unknown_role_is_a_usage_error(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    _assert_usage_error(handoff("latest-report", "nobody", "--json"))
+
+
+def test_extra_arguments_are_usage_errors(handoff, request):
+    _shim_only(request)
+    _init(handoff)
+    msg_id = handoff("send", "--to", "developer", "--from", "coordinator", "--kind", "note",
+                     "--body", "hi", check=True).stdout.strip()
+    for args in (("ack", "developer", msg_id, "extra"), ("claim", "k1", "k2"),
+                 ("stage", "implementing", "extra"), ("reports", "junk"),
+                 ("reports", "--json", "extra")):
+        _assert_usage_error(handoff(*args))
+    fd = handoff.factory_dir
+    assert not (fd / "consumed" / "developer" / msg_id).exists()
+    assert not (fd / "claims" / "k1").exists()
+    assert handoff("stage", check=True).stdout.strip() == "queued"
+
+
 # ---------------------------------------------------------------- state / doctor
 
 def test_state_prints_json(handoff):
@@ -516,3 +554,111 @@ def test_state_set_waits_for_seq_lock(tmp_path):
     assert st["seq"] == 5
     assert not lock.exists()
     assert fac.next_seq() == 6
+
+
+def _load_handoff_module():
+    import importlib
+
+    sys.modules.pop("acp.handoff_compat", None)
+    return importlib.import_module("acp.handoff_compat")
+
+
+def test_stale_seq_lock_is_broken(tmp_path):
+    """A lock left behind by a crashed command must not block handoff for good."""
+    mod = _load_handoff_module()
+    fac = mod.Factory(tmp_path)
+    (tmp_path / "state.json").write_text(json.dumps({"seq": 5, "stage": "queued"}))
+    lock = fac.claims / ".seq.lock"
+    lock.mkdir(parents=True)
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+
+    started = time.monotonic()
+    assert fac.next_seq() == 6
+    assert time.monotonic() - started < 2
+    assert not lock.exists()
+
+
+def test_fresh_seq_lock_is_not_broken(tmp_path, monkeypatch):
+    mod = _load_handoff_module()
+    fac = mod.Factory(tmp_path)
+    (tmp_path / "state.json").write_text(json.dumps({"seq": 5, "stage": "queued"}))
+    before = (tmp_path / "state.json").read_text()
+    lock = fac.claims / ".seq.lock"
+    lock.mkdir(parents=True)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+
+    with pytest.raises(mod.Die, match="remove it"):
+        fac.state_set("stage", "review")
+    assert lock.exists()
+    assert (tmp_path / "state.json").read_text() == before
+
+
+def _stale_lock_with_break_dir(tmp_path, break_age):
+    mod = _load_handoff_module()
+    fac = mod.Factory(tmp_path)
+    (tmp_path / "state.json").write_text(json.dumps({"seq": 5, "stage": "queued"}))
+    lock = fac.claims / ".seq.lock"
+    brk = fac.claims / ".seq.lock.break"
+    lock.mkdir(parents=True)
+    brk.mkdir()
+    now_ = time.time()
+    os.utime(lock, (now_ - 120, now_ - 120))
+    os.utime(brk, (now_ - break_age, now_ - break_age))
+    return mod, fac, lock, brk
+
+
+def test_stale_lock_is_not_broken_while_another_process_is_breaking_it(tmp_path, monkeypatch):
+    mod, fac, lock, brk = _stale_lock_with_break_dir(tmp_path, break_age=0)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    with pytest.raises(mod.Die, match="remove it"):
+        fac.state_set("stage", "review")
+    assert lock.exists()  # the other breaker's lock must not be removed from under it
+    assert brk.exists()
+
+
+def test_clock_skew_does_not_make_a_live_lock_look_stale(tmp_path, monkeypatch):
+    """The process clock runs more than 60 s ahead of the filesystem's clock."""
+    mod = _load_handoff_module()
+    fac = mod.Factory(tmp_path)
+    (tmp_path / "state.json").write_text(json.dumps({"seq": 5, "stage": "queued"}))
+    lock = fac.claims / ".seq.lock"
+    lock.mkdir(parents=True)  # fresh: its mtime is the filesystem's "now"
+    real_time = time.time
+    monkeypatch.setattr(mod.time, "time", lambda: real_time() + 1000)
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    with pytest.raises(mod.Die, match="remove it"):
+        fac.state_set("stage", "review")
+    assert lock.exists()  # a held lock must not be broken because of a skewed clock
+    assert not (fac.claims / ".seq.lock.break").exists()
+
+
+def test_unremovable_stale_break_dir_does_not_hang(tmp_path, monkeypatch):
+    mod, fac, lock, brk = _stale_lock_with_break_dir(tmp_path, break_age=120)
+    (brk / "junk").write_text("x")  # rmdir of a non-empty directory fails
+    # writing into brk reset its mtime: make both stale again, after the write
+    old = time.time() - 120
+    os.utime(brk, (old, old))
+    os.utime(lock, (old, old))
+    assert time.time() - brk.stat().st_mtime > mod.SEQ_LOCK_STALE_SECS
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    real_break, calls = mod._break_stale_lock, []
+
+    def counting_break(path):
+        calls.append(path)
+        assert len(calls) <= 500, "spin: _break_stale_lock called more than 500 times"
+        return real_break(path)
+
+    monkeypatch.setattr(mod, "_break_stale_lock", counting_break)
+    with pytest.raises(mod.Die, match="remove it"):
+        fac.state_set("stage", "review")
+    assert lock.exists()
+    assert (brk / "junk").exists()
+
+
+def test_stale_break_dir_left_by_a_crash_is_cleared(tmp_path):
+    mod, fac, lock, brk = _stale_lock_with_break_dir(tmp_path, break_age=120)
+    fac.state_set("stage", "review")
+    assert fac.state()["stage"] == "review"
+    assert not lock.exists()
+    assert not brk.exists()

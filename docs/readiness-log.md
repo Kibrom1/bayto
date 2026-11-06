@@ -36,6 +36,8 @@ Test commands the team may run: `cd agent-comms && uv run pytest`, `cd orchestra
 
 | Date | Issue | Severity | Change | Test | PR |
 |---|---|---|---|---|---|
+| 2026-11-02 | `handoff wait --to <typo>` waited out the whole timeout; `wait --interval -1/nan/inf` crashed; extra arguments to `ack`/`claim`/`stage`/`reports` were silently ignored | medium | unknown roles, bad timings and extra arguments exit 2 with a `handoff:` message before anything is written | `test_wait_unknown_role_is_a_usage_error`, `test_wait_bad_interval_or_timeout_is_a_usage_error`, `test_latest_report_unknown_role_is_a_usage_error`, `test_extra_arguments_are_usage_errors` | #247 |
+| 2026-11-02 | A crash mid-send/stage left `claims/.seq.lock` behind, so every later `handoff send`/`stage`/`report` failed for good ("could not take the sequence lock") | high | a lock older than 60 s is removed with a message; the error says how to clear it by hand | `test_stale_seq_lock_is_broken` (handoff and crew-notify-fallback), `test_fresh_seq_lock_is_not_broken` | #247 |
 | 2026-11-02 | Build seats were refused `git show`, and seats joined commands with `;` (refused) | low | developer and tester may run `git show`; every seat prompt says one command per call | `test_build_policy.py` | #241 |
 | 2026-11-02 | `handoff stage` rewrote `state.json` without the seq lock `send` holds: lost update, duplicate message seq | high | `Factory._state_lock()` taken by `state_set` and `next_seq` | `test_state_set_waits_for_seq_lock`, `test_concurrent_stage_and_send_do_not_lose_updates` | #240 |
 | 2026-11-01 | A session stopped while paused stayed in `stopping`/`cancelling` and blocked the task | high | stop with no live runner ends the session (`user_stop_no_runner`) | `test_api_sessions.py` | #238 |
