@@ -24,6 +24,9 @@ BUILD_DENY = (
     "Bash(curl:*)", "Bash(wget:*)", "Bash(ssh:*)", "Bash(scp:*)", "Bash(nc:*)",
     "Bash(rm -rf:*)", "Bash(sudo:*)",
     "WebFetch", "WebSearch",
+    # The pipeline runs the next seat itself. `crew send` also wakes that seat's idle long-lived process, which then
+    # repeats the work in a conversation that keeps growing; a seat's reply is its final text.
+    "Bash(crew:*)", "Bash(crew-notify:*)", "Bash(handoff:*)",
     # Git runs hooks and config from .git on the host. These path rules are a first line only: a shell
     # redirect writes the same files, so git_guard.py also restores them after the session.
     "Write(.git/**)", "Edit(.git/**)", "Bash(git -c:*)",

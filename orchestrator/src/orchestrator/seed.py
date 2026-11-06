@@ -164,7 +164,7 @@ AGENT_TEMPLATES = [
 # command and the network/denylist rules are added when the team is provisioned (docs/build-mode-design.md, B5).
 _VERDICT_RULE = (
     "\n\nFinish every reply with exactly one last line `VERDICT: <word>`. The pipeline routes on that line and "
-    "repeats your turn if it is missing. Work only inside the task's workspace. Never run git push, never add "
+    "repeats your turn if it is missing. Your reply reaches the next seat by itself: do not use `crew` or `handoff`. Work only inside the task's workspace. Never run git push, never add "
     "a remote, never use the network. Run one command per call: commands joined with `;`, `|` or `$(...)` are "
     "refused, and `&&` works only for the task's own test command. Say plainly what you did and what you did not do."
 )
