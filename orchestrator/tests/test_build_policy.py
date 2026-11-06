@@ -162,3 +162,9 @@ def test_developer_and_tester_may_read_a_commit_with_git_show():
 def test_the_seat_prompts_say_to_run_one_command_per_call():
     from orchestrator.seed import BUILD_TEMPLATES
     assert all("one command per call" in t["system_prompt"] for t in BUILD_TEMPLATES)
+
+
+def test_build_seats_cannot_wake_their_long_lived_counterparts():
+    for role in BUILD_ROLES:
+        _, deny = build_seat_tools(role, ["Bash(crew:*)", "Bash(handoff:*)"], None)
+        assert {"Bash(crew:*)", "Bash(crew-notify:*)", "Bash(handoff:*)"} <= set(deny)

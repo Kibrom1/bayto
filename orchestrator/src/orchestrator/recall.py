@@ -24,6 +24,7 @@ from .retrieval import rank
 RECALL_BUDGET_CHARS = 8_000
 MAX_MESSAGES_SCANNED = 200
 MAX_SYNTHESES_SCANNED = 20
+MAX_EARLIER_SUMMARIES = 3  # newest only: a task can have dozens of sessions, and this text is re-read on every model call
 SUMMARY_CHARS = 1_500  # an earlier session's rolling summary, when it is shown beside the recalled passages
 RECALL_KINDS = ("answer", "assignment")
 

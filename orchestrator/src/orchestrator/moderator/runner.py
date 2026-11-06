@@ -64,7 +64,7 @@ from ..models import Message as MessageRow
 from ..models import Session as SessionRow
 from ..models import SessionAgent, Task, TaskAttachment, Turn
 from ..models_catalog import get_model
-from ..recall import MAX_MESSAGES_SCANNED, MAX_SYNTHESES_SCANNED, RECALL_KINDS, SUMMARY_CHARS, Source, recall_block, synthesis_text
+from ..recall import MAX_EARLIER_SUMMARIES, MAX_MESSAGES_SCANNED, MAX_SYNTHESES_SCANNED, RECALL_KINDS, SUMMARY_CHARS, Source, recall_block, synthesis_text
 from ..providers import ProviderError, provider_for, split_model_id
 from ..providers.gateway import BUILD_FALLBACK_VAR, BUILD_FLAG, build_fallback_model, gateway_build_allowed, gateway_env, gateway_model_name
 from ..pubsub import PubSub
@@ -746,18 +746,23 @@ class ModeratorRunner:
                 elif claude_seat:
                     self._turn_limit = None
                     if getattr(self._sandbox_provider, "supports_streaming", False):
-                        try:
-                            streamed = await self._stream_turn(view, participant)
-                        except Exception as exc:
-                            cause = getattr(exc, "cause", None) or f"{type(exc).__name__}: {exc}"
-                            n = self._stream_failures.get(participant, (0, ""))[0] + 1
-                            if isinstance(exc, SandboxCommandError) and detect_limit_in_text(cause) is None:
-                                self._stream_failures[participant] = (n, cause)
-                            log.error("session %s: streaming turn for %s failed (%s in a row): %s",
-                                      self._session_id, participant, n, cause[:300], exc_info=n == 1)
-                        else:
-                            if streamed:
-                                self._stream_failures.pop(participant, None)
+                        # Build retries a failed turn as a fresh turn: its fallback must not be a long-lived seat,
+                        # whose conversation grows with every wake (about 3.5x the tokens of a fresh turn, measured).
+                        for _attempt in range(2 if self._pipeline else 1):
+                            try:
+                                streamed = await self._stream_turn(view, participant)
+                            except Exception as exc:
+                                cause = getattr(exc, "cause", None) or f"{type(exc).__name__}: {exc}"
+                                n = self._stream_failures.get(participant, (0, ""))[0] + 1
+                                if isinstance(exc, SandboxCommandError) and detect_limit_in_text(cause) is None:
+                                    self._stream_failures[participant] = (n, cause)
+                                log.error("session %s: streaming turn for %s failed (%s in a row): %s",
+                                          self._session_id, participant, n, cause[:300], exc_info=n == 1)
+                            else:
+                                if streamed:
+                                    self._stream_failures.pop(participant, None)
+                            if streamed or self._turn_limit is not None:
+                                break
                         hit = self._turn_limit
                         failures = self._stream_failures.get(participant)
                         if not streamed and hit is None and failures and failures[0] >= 2:
@@ -766,6 +771,14 @@ class ModeratorRunner:
                             await self._escalate_to_human(
                                 view, f"{participant} could not run its turn {failures[0]} times in a row: {failures[1][:400]}")
                             return
+                    if self._pipeline and not streamed and hit is None:
+                        span.set_attribute("outcome", "seat_cannot_run")
+                        self._pubsub.publish({"type": "turn_error", "data": {"session_id": str(self._session_id), "from": participant}})
+                        reason = ("Build needs streamed turns: set BAYTO_STREAMING_TURNS=1 and restart Bayto"
+                                  if not getattr(self._sandbox_provider, "supports_streaming", False)
+                                  else "its run ended with an error")
+                        await self._escalate_to_human(view, f"{participant} could not run its turn: {reason}")
+                        return
                     if not streamed and hit is None:
                         try:
                             await self._sandbox_provider.wake_role(self._sandbox, participant)
@@ -788,7 +801,7 @@ class ModeratorRunner:
                     used_local = True
                 if used_local:
                     response = await self._await_response(queue, participant, self._config.grant_timeout_seconds)
-                elif response is None and claude_seat:
+                elif response is None and claude_seat and not self._pipeline:
                     # One retry: re-wake (not re-send -- the assignment is already sitting
                     # unread) and wait again, per the architect's "retry the same grant once
                     # more."
@@ -1187,8 +1200,8 @@ class ModeratorRunner:
             prev_sessions = (await session.execute(
                 select(SessionRow.id, SessionRow.rolling_summary)
                 .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id,
-                       SessionRow.archived_at.is_(None))
-                .order_by(SessionRow.started_at.desc())
+                       SessionRow.archived_at.is_(None), SessionRow.rolling_summary.is_not(None))
+                .order_by(SessionRow.started_at.desc().nulls_last()).limit(MAX_EARLIER_SUMMARIES)
             )).all()
             prev_summaries = [f"Session {s.id}: {s.rolling_summary[:SUMMARY_CHARS]}" for s in prev_sessions if s.rolling_summary]
             # Passages of those same sessions (never another task's, never an archived one's) that match this seat.
@@ -1199,10 +1212,13 @@ class ModeratorRunner:
                 earlier = (await session.execute(
                     select(Artifact.content_json).join(SessionRow, SessionRow.id == Artifact.session_id)
                     .where(SessionRow.task_id == row.task_id, SessionRow.id != self._session_id,
-                           SessionRow.archived_at.is_(None), Artifact.type == "synthesis").order_by(SessionRow.started_at.desc())
+                           SessionRow.archived_at.is_(None), Artifact.type == "synthesis")
+                    .order_by(SessionRow.started_at.desc().nulls_last()).limit(1)
                 )).scalars().all()
                 prev_summaries += [f"Earlier synthesis: {json.dumps(c)[:6000]}" for c in earlier]
-                recall_sources = [s for s in recall_sources if s.kind != "synthesis"]  # already given whole above
+                # The newest is given above; older ones stay reachable through recall, within its budget.
+                given = {synthesis_text(c) for c in earlier}
+                recall_sources = [s for s in recall_sources if s.kind != "synthesis" or s.text not in given]
         recalled = recall_block(recall_sources, await self._recall_query(task_text, summary))
         if recalled:
             prev_summaries.append(recalled)

@@ -31,6 +31,9 @@ from orchestrator.moderator import (
 )
 from orchestrator.pubsub import PubSub
 
+from orchestrator.sandbox.provider import SandboxCommandError
+from orchestrator.sandbox.turns import TurnResult
+
 from fakes import FakeSandboxProvider, fake_sandbox
 
 CONV_ID = "c1"
@@ -975,6 +978,31 @@ BUILD_ROUTE = {
 }
 
 
+def _stream_build_seats(runner, mirror, sandbox, replies):
+    # Build seats run as streamed turns only. `sandbox.turns` records them; `sandbox.woken` must stay empty.
+    async def run_turn(_sandbox, role, prompt, *, env=None, model=None):
+        sandbox.turns.append(role)
+        sandbox.prompts.append(prompt)
+        reply = replies[role].pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        if reply is None:  # the run ended with an error result, not a limit
+            yield TurnResult(text="", tokens_in=1, tokens_out=1, cost=0.0, session_id="s", is_error=True)
+            return
+        yield TurnResult(text=reply, tokens_in=1, tokens_out=1, cost=0.0, session_id="s")
+
+    send = runner._conversation.send
+
+    async def send_and_mirror(*args, **kw):  # the mirror normally polls on a timer
+        sent = await send(*args, **kw)
+        if kw.get("kind") == "answer":
+            await mirror.poll_once()
+        return sent
+
+    runner._conversation.send = send_and_mirror
+    sandbox.turns, sandbox.prompts, sandbox.supports_streaming, sandbox.run_turn = [], [], True, run_turn
+
+
 async def _build_session(live_sessionmaker, tmp_path, script, *, max_fix_cycles=3):
     """Seats the four Build roles in a deliberately non-pipeline order and plays `script` (role -> list of
     reply bodies, consumed in order) through the real runner, mirror and database."""
@@ -987,14 +1015,13 @@ async def _build_session(live_sessionmaker, tmp_path, script, *, max_fix_cycles=
                       route=BUILD_ROUTE, moderator=None)
     replies = {role: list(bodies) for role, bodies in script.items()}
 
-    async def on_wake(role):
-        await _respond(transport, mirror, role, replies[role].pop(0))
-
     runner, transport, mirror, sandbox = mk_runner(
         tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id, mode=mode,
-        policy=PipelineFloorPolicy(BUILD_ROUTE, max_fix_cycles=max_fix_cycles), on_wake=on_wake,
+        policy=PipelineFloorPolicy(BUILD_ROUTE, max_fix_cycles=max_fix_cycles),
         stop_rules=StopRulesConfig(max_fix_cycles=max_fix_cycles),
     )
+
+    _stream_build_seats(runner, mirror, sandbox, replies)
     return session_id, runner, sandbox
 
 
@@ -1017,7 +1044,7 @@ async def test_build_pipeline_plans_builds_fails_fixes_passes_and_finishes(tmp_p
     result = await _run_to_stop(runner)
 
     # No opening lap: the architect starts even though the reviewer is seat 0, and each role speaks as routed.
-    assert sandbox.woken == ["architect", "developer", "qa-tester", "developer", "qa-tester", "reviewer"]
+    assert sandbox.turns == ["architect", "developer", "qa-tester", "developer", "qa-tester", "reviewer"]
     assert result.reason == "build-complete"
     async with live_sessionmaker() as db:
         row = await db.get(Session, session_id)
@@ -1034,7 +1061,7 @@ async def test_build_pipeline_pauses_for_a_human_when_fix_cycles_run_out(tmp_pat
     result = await _run_to_stop(runner)
 
     assert result.reason == "needs_human"
-    assert sandbox.woken == ["architect", "developer", "qa-tester", "developer", "qa-tester"]
+    assert sandbox.turns == ["architect", "developer", "qa-tester", "developer", "qa-tester"]
     async with live_sessionmaker() as db:
         row = await db.get(Session, session_id)
         assert row.status == "needs_human"  # paused with the work kept, not failed
@@ -1086,26 +1113,16 @@ async def test_build_pipeline_sends_a_bare_pass_back_and_tells_the_tester_why(tm
         "reviewer": ["ok\nVERDICT: approve"],
     }
 
-    async def on_wake(role):
-        await _respond(transport, mirror, role, replies[role].pop(0))
-
     runner, transport, mirror, sandbox = mk_runner(
         tmp_path=tmp_path, live_sessionmaker=live_sessionmaker, session_id=session_id, mode=mode,
-        policy=PipelineFloorPolicy(BUILD_ROUTE, require_evidence={"qa-tester.report.pass"}), on_wake=on_wake)
-
-    prompts = []
-    original = runner._build_context
-
-    async def spy(view):
-        text = await original(view)
-        prompts.append(text)
-        return text
-    runner._build_context = spy
+        policy=PipelineFloorPolicy(BUILD_ROUTE, require_evidence={"qa-tester.report.pass"}))
+    _stream_build_seats(runner, mirror, sandbox, replies)
 
     result = await _run_to_stop(runner)
 
     assert result.reason == "build-complete"
-    assert sandbox.woken == ["architect", "developer", "qa-tester", "qa-tester", "reviewer"]
+    assert sandbox.turns == ["architect", "developer", "qa-tester", "qa-tester", "reviewer"]
+    prompts = sandbox.prompts
     retry_prompt = prompts[3]  # the tester's second turn
     assert "without showing its work" in retry_prompt and "exit code" in retry_prompt
     assert "NOTE:" not in prompts[4]  # the note does not leak into the reviewer's turn
@@ -1198,6 +1215,64 @@ async def test_build_turn_prompt_includes_an_earlier_sessions_synthesis(tmp_path
     prompt = await runner._build_context(await runner._build_view())
 
     assert "Earlier synthesis" in prompt and "use a queue, not cron" in prompt
+
+
+async def test_build_prompt_bounds_what_it_carries_from_earlier_sessions(tmp_path, live_sessionmaker):
+    from datetime import datetime, timedelta, timezone
+    session_id, runner, _ = await _build_session(live_sessionmaker, tmp_path, {})
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    async with live_sessionmaker() as db:
+        current = await db.get(Session, session_id)
+        for i in range(6):
+            old = Session(task_id=current.task_id, mode_id=current.mode_id, status="finished",
+                          started_at=start + timedelta(days=i), rolling_summary=f"summary-{i}")
+            db.add(old)
+            await db.flush()
+            db.add(Artifact(session_id=old.id, type="synthesis", content_json={"decision": f"synthesis-{i}"},
+                            source_turn_ids=[]))
+        await db.commit()
+
+    prompt = await runner._build_context(await runner._build_view())
+
+    assert [i for i in range(6) if f"summary-{i}" in prompt] == [3, 4, 5]
+    assert prompt.count("Earlier synthesis") == 1 and "Earlier synthesis: {\"decision\": \"synthesis-5\"}" in prompt
+
+
+async def test_build_retries_a_failed_turn_as_a_fresh_turn_and_never_wakes_a_seat(tmp_path, live_sessionmaker):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {
+        "architect": [None, "Plan.\nVERDICT: planned"],
+        "developer": [SandboxCommandError(["exec"], 1, "", "boom"), "Done.\nVERDICT: implemented"],
+        "qa-tester": ["Passed.\nVERDICT: pass"], "reviewer": ["Fine.\nVERDICT: approved"]})
+
+    await _run_to_stop(runner)
+
+    assert sandbox.turns == ["architect", "architect", "developer", "developer", "qa-tester", "reviewer"]
+    assert sandbox.woken == []
+
+
+async def test_build_pauses_when_the_retry_fails_too(tmp_path, live_sessionmaker):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {"architect": [None, None]})
+
+    result = await _run_to_stop(runner)
+
+    assert result.reason == "needs_human" and sandbox.turns == ["architect", "architect"] and sandbox.woken == []
+
+
+async def test_build_without_streamed_turns_pauses_with_the_setting_to_change(tmp_path, live_sessionmaker):
+    session_id, runner, sandbox = await _build_session(live_sessionmaker, tmp_path, {})
+    sandbox.supports_streaming = False
+    bodies, send = [], runner._conversation.send
+
+    async def recording_send(*args, **kw):
+        bodies.append(kw.get("body") or "")
+        return await send(*args, **kw)
+
+    runner._conversation.send = recording_send
+
+    result = await _run_to_stop(runner)
+
+    assert result.reason == "needs_human" and sandbox.woken == []
+    assert any("BAYTO_STREAMING_TURNS=1" in b for b in bodies)
 
 
 # ---- A human message sent mid-session reaches the agents' prompts
@@ -1342,14 +1417,14 @@ async def test_blocked_architect_goes_again_with_the_humans_answer_after_resume(
     runner._mirror_sync = MessageMirror(FileTransport(tmp_path), live_sessionmaker, PubSub(), session_id=session_id).poll_once
 
     first = await _run_to_stop(runner)
-    assert first.reason == "needs_human" and sandbox.woken == ["architect"]
+    assert first.reason == "needs_human" and sandbox.turns == ["architect"]
 
     # Resume without an answer: it pauses again at once and does not wake anyone.
     async with live_sessionmaker() as db:
         (await db.get(Session, session_id)).status = "active"
         await db.commit()
     again = await _run_to_stop(runner)
-    assert again.reason == "needs_human" and sandbox.woken == ["architect"]
+    assert again.reason == "needs_human" and sandbox.turns == ["architect"]
 
     # The person answers (no mirror poll by hand), then resumes: the architect goes again and the build carries on.
     await runner._conversation.send(sender="human", to=["*"], kind="note", body="Scope: add a hello() function.")
@@ -1357,7 +1432,7 @@ async def test_blocked_architect_goes_again_with_the_humans_answer_after_resume(
         (await db.get(Session, session_id)).status = "active"
         await db.commit()
     final = await _run_to_stop(runner)
-    assert sandbox.woken == ["architect", "architect", "developer", "qa-tester", "reviewer"]
+    assert sandbox.turns == ["architect", "architect", "developer", "qa-tester", "reviewer"]
     assert final.reason == "build-complete"
 
 
